@@ -1,4 +1,5 @@
 import './style.css'
+import { icons } from '../../shared/icons.js'
 
 // Configuration des couleurs (même que le formateur)
 const COLORS = [
@@ -34,7 +35,9 @@ const state = {
   multipleChoice: false,
   selectedColors: new Set(),
   hasVoted: false,
-  stagiaireId: null
+  stagiaireId: null,
+  prenom: '',
+  prenomEdit: false // Mode édition du nom
 }
 
 // Éléments DOM
@@ -53,11 +56,22 @@ function init() {
   }
   state.stagiaireId = savedId
 
+  // Récupérer le prénom s'il existe
+  const savedPrenom = localStorage.getItem('vote_stagiaire_prenom')
+  if (savedPrenom) {
+    state.prenom = savedPrenom
+  }
+
   // Vérifier si on a déjà un code session enregistré
   const savedCode = localStorage.getItem('vote_session_code')
   if (savedCode) {
     state.sessionCode = savedCode
-    connectWebSocket(savedCode)
+    // Ne connecter que si on a un prénom
+    if (state.prenom) {
+      connectWebSocket(savedCode)
+    } else {
+      render()
+    }
   } else {
     render()
   }
@@ -73,11 +87,12 @@ function connectWebSocket(sessionCode) {
     console.log('WebSocket connecté')
     updateConnectionStatus(true)
 
-    // S'identifier comme stagiaire
+    // S'identifier comme stagiaire avec le nom
     send({
       type: 'stagiaire_join',
       sessionCode: sessionCode,
-      stagiaireId: state.stagiaireId
+      stagiaireId: state.stagiaireId,
+      name: state.prenom
     })
   }
 
@@ -178,6 +193,12 @@ function handleMessage(msg) {
         render()
       }
       break
+
+    case 'name_updated':
+      // Confirmation de mise à jour du nom
+      state.prenomEdit = false
+      render()
+      break
   }
 }
 
@@ -220,10 +241,11 @@ function render() {
   app.innerHTML = `
     <div class="container">
       ${state.appState === AppState.JOINING ? renderJoinHTML() : ''}
-      ${state.appState === AppState.WAITING ? renderWaitingHTML() : ''}
-      ${state.appState === AppState.VOTING ? renderVotingHTML() : ''}
-      ${state.appState === AppState.VOTED ? renderVotedHTML() : ''}
-      ${state.appState === AppState.CLOSED ? renderClosedHTML() : ''}
+      ${state.prenomEdit ? renderEditNameHTML() : ''}
+      ${state.appState === AppState.WAITING && !state.prenomEdit ? renderWaitingHTML() : ''}
+      ${state.appState === AppState.VOTING && !state.prenomEdit ? renderVotingHTML() : ''}
+      ${state.appState === AppState.VOTED && !state.prenomEdit ? renderVotedHTML() : ''}
+      ${state.appState === AppState.CLOSED && !state.prenomEdit ? renderClosedHTML() : ''}
     </div>
   `
 
@@ -235,8 +257,21 @@ function render() {
 function renderJoinHTML() {
   return `
     <div class="card">
-      <h2 class="card-title">🗳️ Vote Coloré</h2>
+      <h2 class="card-title">${icons.vote(' class="icon icon-md"')} Vote Coloré</h2>
       <form class="join-form" id="joinForm">
+        <div class="input-group">
+          <label for="prenom">Votre prénom</label>
+          <input
+            type="text"
+            id="prenom"
+            class="session-input"
+            placeholder="Ex: Marie"
+            value="${state.prenom}"
+            autocomplete="name"
+            autocapitalize="words"
+            required
+          />
+        </div>
         <div class="input-group">
           <label for="sessionCode">Code de session</label>
           <input
@@ -264,16 +299,49 @@ function renderJoinHTML() {
 function renderWaitingHTML() {
   return `
     <header class="header">
-      <h1>🗳️ Vote Coloré</h1>
+      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
       <div class="session-code-display valid">
-        ✓ ${state.sessionCode}
+        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
       </div>
     </header>
     <div class="card">
       <div class="waiting-state">
-        <div class="waiting-icon">⏳</div>
+        <div class="waiting-icon">${icons.hourglass(' class="icon icon-xl"')}</div>
         <div class="waiting-text">En attente du prochain vote...</div>
+        <div class="waiting-name">Bonjour, <strong>${escapeHtml(state.prenom)}</strong> !</div>
+        <button type="button" class="btn btn-secondary btn-small" id="editNameBtn">
+          ${icons.pencil(' class="icon icon-sm"')} Modifier mon nom
+        </button>
       </div>
+    </div>
+  `
+}
+
+// Rendu du formulaire de modification du nom
+function renderEditNameHTML() {
+  return `
+    <div class="card edit-name-modal">
+      <h2 class="card-title">Modifier mon nom</h2>
+      <form class="join-form" id="editNameForm">
+        <div class="input-group">
+          <label for="editPrenom">Ton prénom</label>
+          <input
+            type="text"
+            id="editPrenom"
+            class="session-input"
+            placeholder="Ex: Marie"
+            value="${state.prenom}"
+            autocomplete="name"
+            autocapitalize="words"
+            required
+            autofocus
+          />
+        </div>
+        <div class="button-row">
+          <button type="button" class="btn btn-secondary" id="cancelEditName">Annuler</button>
+          <button type="submit" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </form>
     </div>
   `
 }
@@ -284,9 +352,9 @@ function renderVotingHTML() {
 
   return `
     <header class="header">
-      <h1>🗳️ Vote Coloré</h1>
+      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
       <div class="session-code-display valid">
-        ✓ ${state.sessionCode}
+        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
       </div>
     </header>
     <div class="card">
@@ -357,14 +425,14 @@ function renderVotedHTML() {
 
   return `
     <header class="header">
-      <h1>🗳️ Vote Coloré</h1>
+      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
       <div class="session-code-display valid">
-        ✓ ${state.sessionCode}
+        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
       </div>
     </header>
     <div class="card">
       <div class="voted-state">
-        <div class="voted-icon">✓</div>
+        <div class="voted-icon">${icons.check(' class="icon icon-xl"')}</div>
         <div class="voted-title">Vote enregistré !</div>
         <div class="voted-subtitle">${selectedNames}</div>
       </div>
@@ -376,14 +444,14 @@ function renderVotedHTML() {
 function renderClosedHTML() {
   return `
     <header class="header">
-      <h1>🗳️ Vote Coloré</h1>
+      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
       <div class="session-code-display valid">
-        ✓ ${state.sessionCode}
+        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
       </div>
     </header>
     <div class="card">
       <div class="vote-closed-state">
-        <div class="closed-icon">⏹</div>
+        <div class="closed-icon">${icons.stop(' class="icon icon-xl"')}</div>
         <div class="waiting-text">Le vote est terminé</div>
       </div>
     </div>
@@ -396,6 +464,30 @@ function attachEventListeners() {
   const joinForm = document.getElementById('joinForm')
   if (joinForm) {
     joinForm.addEventListener('submit', handleJoin)
+  }
+
+  // Formulaire d'édition du nom
+  const editNameForm = document.getElementById('editNameForm')
+  if (editNameForm) {
+    editNameForm.addEventListener('submit', handleEditName)
+  }
+
+  // Bouton d'édition du nom
+  const editNameBtn = document.getElementById('editNameBtn')
+  if (editNameBtn) {
+    editNameBtn.addEventListener('click', () => {
+      state.prenomEdit = true
+      render()
+    })
+  }
+
+  // Bouton annuler l'édition
+  const cancelEditBtn = document.getElementById('cancelEditName')
+  if (cancelEditBtn) {
+    cancelEditBtn.addEventListener('click', () => {
+      state.prenomEdit = false
+      render()
+    })
   }
 
   // Boutons de vote (choix unique)
@@ -415,23 +507,75 @@ function attachEventListeners() {
   }
 }
 
+// Échapper le HTML pour éviter les XSS
+function escapeHtml(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
 // Gérer la connexion
 function handleJoin(e) {
   e.preventDefault()
 
-  const input = document.getElementById('sessionCode')
-  const code = input.value.trim()
+  const prenomInput = document.getElementById('prenom')
+  const codeInput = document.getElementById('sessionCode')
+  const prenom = prenomInput.value.trim()
+  const code = codeInput.value.trim()
+
+  // Validation du prénom
+  if (prenom.length < 2) {
+    prenomInput.classList.add('error')
+    showError('Le prénom doit contenir au moins 2 caractères')
+    return
+  }
 
   // Validation du code (4 chiffres)
   if (!/^\d{4}$/.test(code)) {
-    input.classList.add('error')
+    codeInput.classList.add('error')
     showError('Le code doit contenir 4 chiffres')
     return
   }
 
-  input.classList.remove('error')
+  prenomInput.classList.remove('error')
+  codeInput.classList.remove('error')
+
+  state.prenom = prenom
   state.sessionCode = code
+
+  // Sauvegarder le prénom
+  localStorage.setItem('vote_stagiaire_prenom', prenom)
+
   connectWebSocket(code)
+}
+
+// Gérer l'édition du nom
+function handleEditName(e) {
+  e.preventDefault()
+
+  const input = document.getElementById('editPrenom')
+  const newPrenom = input.value.trim()
+
+  if (newPrenom.length < 2) {
+    input.classList.add('error')
+    showError('Le prénom doit contenir au moins 2 caractères')
+    return
+  }
+
+  input.classList.remove('error')
+
+  state.prenom = newPrenom
+  localStorage.setItem('vote_stagiaire_prenom', newPrenom)
+
+  // Envoyer la mise à jour au serveur
+  send({
+    type: 'update_name',
+    name: newPrenom
+  })
+
+  // Fermer le modal
+  state.prenomEdit = false
+  render()
 }
 
 // Gérer le vote à choix unique

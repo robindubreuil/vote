@@ -11,6 +11,7 @@ import (
 // Client représente une connexion WebSocket
 type Client struct {
 	ID        string
+	Name      string // Prénom du stagiaire (vide pour le formateur)
 	SessionID string
 	Type      string // "trainer" ou "stagiaire"
 	Conn      *websocket.Conn
@@ -44,13 +45,14 @@ type BroadcastMessage struct {
 
 // SessionState représente l'état d'une session de vote
 type SessionState struct {
-	SessionCode  string
-	Trainer      *Client
-	Stagiaires   map[string]*Client
-	VoteState    string // "idle", "active", "closed"
-	ActiveColors []string
+	SessionCode   string
+	Trainer       *Client
+	Stagiaires    map[string]*Client
+	StagiaireNames map[string]string // stagiaireID -> prénom (persiste après déconnexion)
+	VoteState     string             // "idle", "active", "closed"
+	ActiveColors  []string
 	MultipleChoice bool
-	Votes        map[string][]string // stagiaireID -> couleurs
+	Votes         map[string][]string // stagiaireID -> couleurs
 }
 
 // NewHub crée un nouveau Hub
@@ -91,6 +93,7 @@ func (h *Hub) registerClient(client *Client) {
 				SessionCode:    client.SessionID,
 				Trainer:        client,
 				Stagiaires:     make(map[string]*Client),
+				StagiaireNames: make(map[string]string),
 				VoteState:      "idle",
 				Votes:          make(map[string][]string),
 			}
@@ -222,10 +225,61 @@ func (h *Hub) notifyTrainerSessionUpdate(session *SessionState) {
 		return
 	}
 
+	// Construire la liste des stagiaires connectés avec leurs noms
+	stagiaires := make([]map[string]interface{}, 0, len(session.Stagiaires))
+	for id, client := range session.Stagiaires {
+		name := client.Name
+		if name == "" {
+			// Fallback sur le nom stocké si pas de nom dans le client
+			name = session.StagiaireNames[id]
+		}
+		stagiaires = append(stagiaires, map[string]interface{}{
+			"id":   id,
+			"name": name,
+		})
+	}
+
 	sendJSON(session.Trainer, map[string]interface{}{
-		"type":           "connected_count",
-		"count":          len(session.Stagiaires),
+		"type":        "connected_count",
+		"count":       len(session.Stagiaires),
+		"stagiaires":  stagiaires,
 	})
+}
+
+// UpdateStagiaireName met à jour le nom d'un stagiaire et notifie le formateur
+func (h *Hub) UpdateStagiaireName(sessionID, stagiaireID, name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	session, exists := h.Sessions[sessionID]
+	if !exists {
+		return
+	}
+
+	// Stocker le nom (persiste même après déconnexion)
+	session.StagiaireNames[stagiaireID] = name
+
+	// Mettre à jour le nom du client connecté si présent
+	if client, exists := session.Stagiaires[stagiaireID]; exists {
+		client.Name = name
+	}
+
+	// Récupérer ou construire la liste des stagiaires
+	stagiaires := make([]map[string]interface{}, 0, len(session.Stagiaires))
+	for id, client := range session.Stagiaires {
+		stagiaires = append(stagiaires, map[string]interface{}{
+			"id":   id,
+			"name": client.Name,
+		})
+	}
+
+	// Envoyer la liste complète au formateur pour synchronisation
+	if session.Trainer != nil {
+		sendJSON(session.Trainer, map[string]interface{}{
+			"type":        "stagiaire_names_updated",
+			"stagiaires":  stagiaires,
+		})
+	}
 }
 
 // GetSession récupère l'état d'une session
