@@ -454,6 +454,9 @@ function renderVotedHTML() {
         <div class="voted-icon">${icons.check(' class="icon icon-xl"')}</div>
         <div class="voted-title">Vote enregistré !</div>
         <div class="voted-subtitle">${selectedNames}</div>
+        <button type="button" class="btn btn-secondary btn-small" id="changeVoteBtn" style="margin-top: 1rem;">
+          ${icons.pencil(' class="icon icon-sm"')} Modifier mon vote
+        </button>
       </div>
     </div>
   `
@@ -523,6 +526,16 @@ function attachEventListeners() {
   const submitBtn = document.getElementById('submitVote')
   if (submitBtn) {
     submitBtn.addEventListener('click', handleSubmitVote)
+  }
+
+  // Bouton modifier le vote
+  const changeVoteBtn = document.getElementById('changeVoteBtn')
+  if (changeVoteBtn) {
+    changeVoteBtn.addEventListener('click', () => {
+      state.appState = AppState.VOTING
+      state.hasVoted = false
+      render()
+    })
   }
 }
 

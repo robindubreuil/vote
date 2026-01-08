@@ -741,5 +741,13 @@ function resetVote() {
   render()
 }
 
+// Demander confirmation avant de quitter la page
+window.addEventListener('beforeunload', (e) => {
+  // Annuler l'événement et retourner une chaîne pour afficher la confirmation
+  e.preventDefault()
+  e.returnValue = ''
+  return ''
+})
+
 // Démarrage
 init()
