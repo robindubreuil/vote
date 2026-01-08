@@ -32,6 +32,21 @@ body {
   line-height: 1.5;
 }
 
+/* SVG Icons - Bootstrap Icons (MIT) */
+.icon {
+  display: inline-block;
+  vertical-align: text-bottom;
+  flex-shrink: 0;
+}
+
+.icon-xs { width: 0.75rem; height: 0.75rem; }
+.icon-sm { width: 1rem; height: 1rem; }
+.icon-md { width: 1.25rem; height: 1.25rem; }
+.icon-lg { width: 1.5rem; height: 1.5rem; }
+.icon-xl { width: 2rem; height: 2rem; }
+
+.icon.text-success { color: var(--success-color); }
+
 #app {
   min-height: 100vh;
   display: flex;
@@ -188,6 +203,27 @@ body {
   font-size: 1.1rem;
 }
 
+.btn-secondary {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #475569;
+}
+
+.btn-small {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  width: auto;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
 /* État d'attente */
 .waiting-state {
   text-align: center;
@@ -208,6 +244,22 @@ body {
 .waiting-text {
   font-size: 1.2rem;
   color: var(--text-secondary);
+}
+
+.waiting-name {
+  font-size: 1.1rem;
+  color: var(--text-primary);
+  margin-top: 0.5rem;
+}
+
+/* Modal d'édition du nom */
+.edit-name-modal {
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* Grille de vote */
