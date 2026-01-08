@@ -1,0 +1,14 @@
+Package: vote
+Version: 1.1.0-1
+Architecture: amd64
+Maintainer: Robin <63008968+robindubreuil@users.noreply.github.com>
+Installed-Size: 13697
+Depends: libc6 (>= 2.34)
+Section: web
+Priority: optional
+Homepage: https://github.com/robin/vote
+Description: Real-time voting application
+ Vote Coloré is a real-time voting system with WebSocket support.
+ It allows trainers to create voting sessions and trainees to vote
+ on predefined colors. Features include multiple choice support,
+ real-time statistics, and automatic reconnection.

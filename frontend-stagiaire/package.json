@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run version && vite build && node ../scripts/compress-assets.js dist",
     "preview": "vite preview",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "version": "node ../scripts/gen-version.js",
+    "compress": "node ../scripts/compress-assets.js dist"
   },
   "devDependencies": {
     "vite": "^7.2.4",

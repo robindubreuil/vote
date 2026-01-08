@@ -1,0 +1,35 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Create vote user and group if they don't exist
+        if ! getent passwd vote > /dev/null 2>&1; then
+            adduser --system --group --home /var/lib/vote \
+                --gecos "Vote Coloré server" --shell /usr/sbin/nologin \
+                vote || true
+        fi
+
+        # Create and set permissions for runtime directories
+        install -d -o vote -g vote -m 0755 /var/lib/vote
+        install -d -o vote -g vote -m 0755 /var/log/vote
+
+        # Enable the service but don't start it (admin will start it)
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+            systemctl enable vote.service || true
+        fi
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
