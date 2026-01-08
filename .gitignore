@@ -1,0 +1,49 @@
+# Build artifacts
+*.tar.xz
+*.tar.gz
+*.zip
+
+# Go binaries and build artifacts
+vote-server
+vote-backend
+backend/vote-server
+backend/vote-backend
+backend/coverage.out
+_build/
+*.out
+*.test
+
+# Debian build artifacts
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/vote/
+debian/*.debhelper
+
+# Node modules (redundant but explicit)
+node_modules/
+
+# Editor files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.sw?
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build outputs
+dist/
+dist-ssr/
+*.local
