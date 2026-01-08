@@ -28,6 +28,7 @@ type Message struct {
 	SessionID      string   `json:"sessionId,omitempty"`
 	TrainerID      string   `json:"trainerId,omitempty"`
 	StagiaireID    string   `json:"stagiaireId,omitempty"`
+	Name           string   `json:"name,omitempty"` // Prénom du stagiaire
 	Colors         []string `json:"colors,omitempty"`
 	Couleurs       []string `json:"couleurs,omitempty"`
 	MultipleChoice bool     `json:"multipleChoice,omitempty"`
@@ -123,6 +124,9 @@ func (c *Client) handleMessage(data []byte) {
 	case "reset_vote":
 		c.handleResetVote(msg)
 
+	case "update_name":
+		c.handleUpdateName(msg)
+
 	default:
 		log.Printf("Type de message inconnu: %s", msg.Type)
 	}
@@ -147,6 +151,7 @@ func (c *Client) handleTrainerJoin(msg Message) {
 func (c *Client) handleStagiaireJoin(msg Message) {
 	c.Type = "stagiaire"
 	c.ID = msg.StagiaireID
+	c.Name = msg.Name
 	c.SessionID = msg.SessionCode
 
 	session := c.Hub.GetSession(msg.SessionCode)
@@ -155,6 +160,13 @@ func (c *Client) handleStagiaireJoin(msg Message) {
 			"type": "join_error",
 		})
 		return
+	}
+
+	// Stocker le nom dans la session (persiste après déconnexion)
+	if msg.Name != "" {
+		c.Hub.mu.Lock()
+		session.StagiaireNames[c.ID] = msg.Name
+		c.Hub.mu.Unlock()
 	}
 
 	c.Hub.Register <- c
@@ -209,6 +221,11 @@ func (c *Client) handleVote(msg Message) {
 	c.Hub.mu.Lock()
 	// Enregistrer ou mettre à jour le vote
 	session.Votes[msg.StagiaireID] = msg.Couleurs
+	// Récupérer le nom du stagiaire
+	stagiaireName := session.StagiaireNames[msg.StagiaireID]
+	if stagiaireName == "" {
+		stagiaireName = c.Name
+	}
 	c.Hub.mu.Unlock()
 
 	// Envoyer la confirmation au stagiaire
@@ -216,11 +233,12 @@ func (c *Client) handleVote(msg Message) {
 		"type": "vote_accepted",
 	})
 
-	// Notifier le formateur
+	// Notifier le formateur avec le nom du stagiaire
 	trainerData, err := json.Marshal(map[string]interface{}{
-		"type":       "vote_received",
+		"type":        "vote_received",
 		"stagiaireId": msg.StagiaireID,
-		"couleurs":   msg.Couleurs,
+		"stagiaireName": stagiaireName,
+		"couleurs":    msg.Couleurs,
 	})
 	if err != nil {
 		log.Printf("Erreur marshaling vote_received: %v", err)
@@ -319,4 +337,22 @@ func fallbackGenerateID() string {
 		nano = nano >> 4 // Shift pour varier l'index
 	}
 	return string(b)
+}
+
+// handleUpdateName gère la mise à jour du nom d'un stagiaire
+func (c *Client) handleUpdateName(msg Message) {
+	if msg.Name == "" {
+		return
+	}
+
+	c.Hub.UpdateStagiaireName(c.SessionID, c.ID, msg.Name)
+
+	// Mettre à jour le nom du client actuel aussi
+	c.Name = msg.Name
+
+	// Confirmation au stagiaire
+	sendJSON(c, map[string]interface{}{
+		"type": "name_updated",
+		"name": msg.Name,
+	})
 }

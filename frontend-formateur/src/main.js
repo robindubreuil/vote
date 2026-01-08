@@ -1,4 +1,5 @@
 import './style.css'
+import { icons } from '../../shared/icons.js'
 
 // Configuration des couleurs disponibles
 const COLORS = [
@@ -24,7 +25,9 @@ const state = {
   selectedColors: new Set(['rouge', 'vert', 'bleu']), // Par défaut
   multipleChoice: false,
   connectedCount: 0,
-  votes: [], // { stagiaireId, couleurs: [] }
+  votes: [], // { stagiaireId, stagiaireName, couleurs: [] }
+  stagiaires: [], // [{ id, name }] Liste des stagiaires connectés
+  stagiaireNames: {}, // { id: name } Map des noms pour lookup rapide
   voteStartTime: null,
   timerInterval: null
 }
@@ -111,10 +114,40 @@ function handleMessage(msg) {
       render()
       break
 
-    case 'session_joined':
-      // Un stagiaire a rejoint
-      state.connectedCount = msg.connectedCount || 0
+    case 'connected_count':
+      // Mise à jour des stagiaires connectés avec leurs noms
+      state.connectedCount = msg.count || 0
+      if (msg.stagiaires) {
+        state.stagiaires = msg.stagiaires
+        // Mettre à jour la map des noms
+        state.stagiaireNames = {}
+        msg.stagiaires.forEach(s => {
+          if (s.name) {
+            state.stagiaireNames[s.id] = s.name
+          }
+        })
+      }
       renderHeader()
+      break
+
+    case 'stagiaire_names_updated':
+      // Mise à jour des noms des stagiaires
+      if (msg.stagiaires) {
+        state.stagiaires = msg.stagiaires
+        state.stagiaireNames = {}
+        msg.stagiaires.forEach(s => {
+          if (s.name) {
+            state.stagiaireNames[s.id] = s.name
+          }
+        })
+        // Mettre à jour les votes existants avec les nouveaux noms
+        state.votes.forEach(vote => {
+          if (state.stagiaireNames[vote.stagiaireId]) {
+            vote.stagiaireName = state.stagiaireNames[vote.stagiaireId]
+          }
+        })
+        renderVoteResults()
+      }
       break
 
     case 'stagiaire_left':
@@ -131,12 +164,21 @@ function handleMessage(msg) {
       break
 
     case 'vote_received':
-      // Nouveau vote d'un stagiaire
+      // Nouveau vote d'un stagiaire avec son nom
       const existingIndex = state.votes.findIndex(v => v.stagiaireId === msg.stagiaireId)
+      const voteData = {
+        couleurs: msg.couleurs,
+        stagiaireId: msg.stagiaireId,
+        stagiaireName: msg.stagiaireName || state.stagiaireNames[msg.stagiaireId] || ''
+      }
+      // Mettre à jour la map des noms
+      if (msg.stagiaireName) {
+        state.stagiaireNames[msg.stagiaireId] = msg.stagiaireName
+      }
       if (existingIndex >= 0) {
-        state.votes[existingIndex] = { couleurs: msg.couleurs, stagiaireId: msg.stagiaireId }
+        state.votes[existingIndex] = voteData
       } else {
-        state.votes.push({ couleurs: msg.couleurs, stagiaireId: msg.stagiaireId })
+        state.votes.push(voteData)
       }
       renderVoteResults()
       break
@@ -181,7 +223,7 @@ function startTimer() {
       const elapsed = Math.floor((Date.now() - state.voteStartTime) / 1000)
       const mins = Math.floor(elapsed / 60).toString().padStart(2, '0')
       const secs = (elapsed % 60).toString().padStart(2, '0')
-      timerEl.textContent = `⏱ ${mins}:${secs}`
+      timerEl.innerHTML = `${icons.timer(' class="icon icon-sm"')} ${mins}:${secs}`
     }
   }, 1000)
 }
@@ -232,29 +274,81 @@ function renderHeader() {
 }
 
 function renderHeaderHTML() {
+  // Construire la liste des stagiaires pour la popover
+  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
+    const nameA = (a.name || 'Anonyme').toLowerCase()
+    const nameB = (b.name || 'Anonyme').toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+
+  const stagiairesListHTML = sortedStagiaires.map(s => `
+    <div class="stagiaire-popover-item">
+      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
+      <span class="stagiaire-popover-status online"></span>
+    </div>
+  `).join('')
+
   return `
     <header class="header">
-      <h1>🗳️ Vote Coloré - Formateur</h1>
+      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
       <div class="session-info">
         ${state.sessionCode ? `<span class="session-code">${state.sessionCode}</span>` : ''}
-        <div class="connected-count">
+        <div class="connected-count popover-trigger">
           <span class="dot"></span>
-          ${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}
+          <span class="count-text">${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}</span>
+          ${state.connectedCount > 0 ? `<span class="popover-arrow">${icons.chevronDown(' class="icon icon-xs"')}</span>` : ''}
         </div>
+        ${state.connectedCount > 0 ? `
+          <div class="stagiaires-popover">
+            <div class="popover-header">
+              <span class="popover-title">Stagiaires connectés</span>
+              <span class="popover-count">${state.connectedCount}</span>
+            </div>
+            <div class="popover-list">
+              ${stagiairesListHTML}
+            </div>
+          </div>
+        ` : ''}
       </div>
     </header>
   `
 }
 
 function renderHeaderContent() {
+  // Construire la liste des stagiaires pour la popover
+  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
+    const nameA = (a.name || 'Anonyme').toLowerCase()
+    const nameB = (b.name || 'Anonyme').toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+
+  const stagiairesListHTML = sortedStagiaires.map(s => `
+    <div class="stagiaire-popover-item">
+      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
+      <span class="stagiaire-popover-status online"></span>
+    </div>
+  `).join('')
+
   return `
-    <h1>🗳️ Vote Coloré - Formateur</h1>
+    <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
     <div class="session-info">
       ${state.sessionCode ? `<span class="session-code">${state.sessionCode}</span>` : ''}
-      <div class="connected-count">
+      <div class="connected-count popover-trigger">
         <span class="dot"></span>
-        ${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}
+        <span class="count-text">${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}</span>
+        ${state.connectedCount > 0 ? `<span class="popover-arrow">${icons.chevronDown(' class="icon icon-xs"')}</span>` : ''}
       </div>
+      ${state.connectedCount > 0 ? `
+        <div class="stagiaires-popover">
+          <div class="popover-header">
+            <span class="popover-title">Stagiaires connectés</span>
+            <span class="popover-count">${state.connectedCount}</span>
+          </div>
+          <div class="popover-list">
+            ${stagiairesListHTML}
+          </div>
+        </div>
+      ` : ''}
     </div>
   `
 }
@@ -291,7 +385,7 @@ function renderConfigHTML() {
 
       <div class="button-row">
         <button class="btn btn-primary btn-large" id="startVote" ${state.selectedColors.size < 2 ? 'disabled' : ''}>
-          🚀 Lancer le vote
+          ${icons.rocket(' class="icon icon-md"')} Lancer le vote
         </button>
       </div>
     </div>
@@ -305,11 +399,11 @@ function renderVoteHTML() {
   return `
     <div class="card">
       <div class="vote-header">
-        <div class="vote-timer">⏱ 00:00</div>
-        <div class="vote-stats">📊 ${state.votes.length} / ${state.connectedCount} votes</div>
+        <div class="vote-timer">${icons.timer(' class="icon icon-sm"')} 00:00</div>
+        <div class="vote-stats">${icons.chart(' class="icon icon-sm"')} ${state.votes.length} / ${state.connectedCount} votes</div>
       </div>
 
-      <div class="stats-grid">
+      <div class="stats-grid stats-grid-3cols">
         <div>
           <div class="stats-header">Par couleur</div>
           <div class="color-bars">
@@ -340,15 +434,22 @@ function renderVoteHTML() {
             ${renderCombinationsHTML(activeColors)}
           </div>
         </div>
+
+        <div>
+          <div class="stats-header">Par stagiaire</div>
+          <div class="stagiaires-votes-list">
+            ${renderStagiairesVotesHTML(activeColors)}
+          </div>
+        </div>
       </div>
 
       <div class="button-row">
         ${state.voteState === 'active' ? `
-          <button class="btn btn-danger" id="closeVote">⏹ Fermer le vote</button>
-          <button class="btn btn-secondary" id="configVote">⚙ Modifier la config</button>
+          <button class="btn btn-danger" id="closeVote">${icons.stop(' class="icon icon-md"')} Fermer le vote</button>
+          <button class="btn btn-secondary" id="configVote">${icons.settings(' class="icon icon-md"')} Modifier la config</button>
         ` : `
-          <button class="btn btn-success" id="newVote">🔄 Nouveau vote</button>
-          <button class="btn btn-secondary" id="configVote">⚙ Modifier la config</button>
+          <button class="btn btn-success" id="newVote">${icons.refresh(' class="icon icon-md"')} Nouveau vote</button>
+          <button class="btn btn-secondary" id="configVote">${icons.settings(' class="icon icon-md"')} Modifier la config</button>
         `}
       </div>
     </div>
@@ -362,7 +463,7 @@ function renderCombinationsHTML(activeColors) {
   if (combinations.length === 0) {
     return `
       <div class="empty-state">
-        <div class="empty-icon">📊</div>
+        <div class="empty-icon">${icons.chart(' class="icon icon-xl"')}</div>
         <div>Aucun vote pour le moment</div>
       </div>
     `
@@ -387,6 +488,47 @@ function renderCombinationsHTML(activeColors) {
       </div>
     `
   }).join('')
+}
+
+// Rendu des votes par stagiaire
+function renderStagiairesVotesHTML(activeColors) {
+  if (state.votes.length === 0) {
+    return `
+      <div class="empty-state">
+        <div class="empty-icon">${icons.users(' class="icon icon-xl"')}</div>
+        <div>Aucun vote pour le moment</div>
+      </div>
+    `
+  }
+
+  // Trier les votes par nom de stagiaire
+  const sortedVotes = [...state.votes].sort((a, b) => {
+    const nameA = (a.stagiaireName || 'Anonyme').toLowerCase()
+    const nameB = (b.stagiaireName || 'Anonyme').toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+
+  return sortedVotes.map(vote => {
+    const displayName = vote.stagiaireName || 'Anonyme'
+    const colorsHTML = vote.couleurs.map(colorId => {
+      const color = COLORS.find(c => c.id === colorId)
+      return `<span class="stagiaire-vote-swatch" style="background: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+    }).join('')
+
+    return `
+      <div class="stagiaire-vote-item">
+        <span class="stagiaire-vote-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+        <div class="stagiaire-vote-colors">${colorsHTML}</div>
+      </div>
+    `
+  }).join('')
+}
+
+// Échapper le HTML pour éviter les XSS
+function escapeHtml(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
 }
 
 // Calculer les combinaisons de votes
@@ -426,7 +568,7 @@ function getColorCounts() {
 function renderVoteResults() {
   const voteStats = document.querySelector('.vote-stats')
   if (voteStats) {
-    voteStats.innerHTML = `📊 ${state.votes.length} / ${state.connectedCount} votes`
+    voteStats.innerHTML = `${icons.chart(' class="icon icon-sm"')} ${state.votes.length} / ${state.connectedCount} votes`
   }
 
   // Mettre à jour les barres de couleur
@@ -459,10 +601,34 @@ function renderVoteResults() {
     const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
     combinationsList.innerHTML = renderCombinationsHTML(activeColors)
   }
+
+  // Mettre à jour la liste des votes par stagiaire
+  const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
+  if (stagiairesVotesList) {
+    const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
+    stagiairesVotesList.innerHTML = renderStagiairesVotesHTML(activeColors)
+  }
 }
 
 // Attacher les écouteurs d'événements
 function attachEventListeners() {
+  // Popover des stagiaires (toggle au clic pour mobile)
+  const popoverTrigger = document.querySelector('.popover-trigger')
+  if (popoverTrigger) {
+    popoverTrigger.addEventListener('click', (e) => {
+      // Ne pas toggle si on clique sur la popover elle-même
+      if (e.target.closest('.stagiaires-popover')) return
+      popoverTrigger.classList.toggle('active')
+    })
+
+    // Fermer la popover si on clique ailleurs
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.session-info')) {
+        popoverTrigger.classList.remove('active')
+      }
+    })
+  }
+
   // Checkboxes des couleurs
   document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach(checkbox => {
     checkbox.addEventListener('change', (e) => {
