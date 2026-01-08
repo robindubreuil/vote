@@ -1,0 +1,19 @@
+{
+  "name": "frontend-formateur",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@vitest/ui": "^4.0.16",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.16"
+  }
+}
