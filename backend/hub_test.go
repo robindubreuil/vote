@@ -19,32 +19,6 @@ func createTestClient(id, sessionID, clientType string) *Client {
 	}
 }
 
-// collectMessagesFromChannel collecte les messages envoyés sur un channel
-func collectMessagesFromChannel(ch chan []byte, duration time.Duration) [][]byte {
-	ch2 := make(chan []byte, 256)
-	var messages [][]byte
-
-	go func() {
-		for {
-			select {
-			case msg := <-ch:
-				messages = append(messages, msg)
-				ch2 <- msg // Re-forward pour ne pas bloquer
-			case <-time.After(duration):
-				return
-			}
-		}
-	}()
-
-	// Drainer les messages reçus
-	go func() {
-		for range ch2 {
-		}
-	}()
-
-	return messages
-}
-
 // TestNewHub vérifie la création du hub
 func TestNewHub(t *testing.T) {
 	hub := NewHub()
@@ -146,7 +120,7 @@ func TestMultipleStagiaires(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Ajouter plusieurs stagiaires
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		id := "stagiaire" + string(rune('1'+i))
 		stagiaire := createTestClient(id, "1234", "stagiaire")
 		hub.Register <- stagiaire
@@ -474,7 +448,7 @@ func TestConcurrentAccess(t *testing.T) {
 	done := make(chan struct{})
 
 	// Simuler plusieurs opérations concurrentes
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -518,7 +492,7 @@ func TestSendJSON(t *testing.T) {
 	}()
 
 	// Envoyer un message JSON
-	err := sendJSON(client, map[string]interface{}{
+	err := sendJSON(client, map[string]any{
 		"type":    "test",
 		"message": "hello",
 	})
@@ -529,7 +503,7 @@ func TestSendJSON(t *testing.T) {
 	// Vérifier que le message a été envoyé
 	select {
 	case msg := <-client.Send:
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(msg, &result); err != nil {
 			t.Errorf("Failed to parse JSON: %v", err)
 		}
@@ -568,7 +542,7 @@ func TestNotifyTrainerSessionUpdate(t *testing.T) {
 	}
 
 	msg := <-trainer.Send
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(msg, &result); err != nil {
 		t.Errorf("Failed to parse JSON: %v", err)
 	}
@@ -581,19 +555,13 @@ func TestNotifyTrainerSessionUpdate(t *testing.T) {
 func TestSendError(t *testing.T) {
 	client := createTestClient("test1", "1234", "stagiaire")
 
-	// Drainer le channel
-	go func() {
-		for range client.Send {
-		}
-	}()
-
 	// Envoyer une erreur
 	sendError(client, "Test error message")
 
 	// Vérifier que le message a été envoyé
 	select {
 	case msg := <-client.Send:
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(msg, &result); err != nil {
 			t.Errorf("Failed to parse JSON: %v", err)
 		}
