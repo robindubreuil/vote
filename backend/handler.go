@@ -79,19 +79,11 @@ func (c *Client) readPump() {
 func (c *Client) writePump() {
 	defer c.Conn.Close()
 
-	for {
-		select {
-		case message, ok := <-c.Send:
-			if !ok {
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-
-			err := c.Conn.WriteMessage(websocket.TextMessage, message)
-			if err != nil {
-				log.Printf("Erreur écriture WebSocket: %v", err)
-				return
-			}
+	for message := range c.Send {
+		err := c.Conn.WriteMessage(websocket.TextMessage, message)
+		if err != nil {
+			log.Printf("Erreur écriture WebSocket: %v", err)
+			return
 		}
 	}
 }
@@ -139,7 +131,7 @@ func (c *Client) handleTrainerJoin(msg Message) {
 	c.Hub.Register <- c
 
 	// Répondre avec la session créée
-	sendJSON(c, map[string]interface{}{
+	sendJSON(c, map[string]any{
 		"type":        "session_created",
 		"sessionId":   msg.SessionCode,
 		"sessionCode": msg.SessionCode,
@@ -155,7 +147,7 @@ func (c *Client) handleStagiaireJoin(msg Message) {
 
 	session := c.Hub.GetSession(msg.SessionCode)
 	if session == nil || session.Trainer == nil {
-		sendJSON(c, map[string]interface{}{
+		sendJSON(c, map[string]any{
 			"type": "join_error",
 		})
 		return
@@ -171,7 +163,7 @@ func (c *Client) handleStagiaireJoin(msg Message) {
 	c.Hub.Register <- c
 
 	// Répondre avec succès
-	sendJSON(c, map[string]interface{}{
+	sendJSON(c, map[string]any{
 		"type":        "session_joined",
 		"sessionId":   msg.SessionCode,
 		"sessionCode": msg.SessionCode,
@@ -195,7 +187,7 @@ func (c *Client) handleStartVote(msg Message) {
 	c.Hub.mu.Unlock()
 
 	// Broadcast à tous les stagiaires
-	data, err := json.Marshal(map[string]interface{}{
+	data, err := json.Marshal(map[string]any{
 		"type":           "vote_started",
 		"colors":         msg.Colors,
 		"multipleChoice": msg.MultipleChoice,
@@ -229,12 +221,12 @@ func (c *Client) handleVote(msg Message) {
 	c.Hub.mu.Unlock()
 
 	// Envoyer la confirmation au stagiaire
-	sendJSON(c, map[string]interface{}{
+	sendJSON(c, map[string]any{
 		"type": "vote_accepted",
 	})
 
 	// Notifier le formateur avec le nom du stagiaire
-	trainerData, err := json.Marshal(map[string]interface{}{
+	trainerData, err := json.Marshal(map[string]any{
 		"type":        "vote_received",
 		"stagiaireId": msg.StagiaireID,
 		"stagiaireName": stagiaireName,
@@ -266,7 +258,7 @@ func (c *Client) handleCloseVote(_ Message) {
 	c.Hub.mu.Unlock()
 
 	// Broadcast à tous les stagiaires
-	data, err := json.Marshal(map[string]interface{}{
+	data, err := json.Marshal(map[string]any{
 		"type": "vote_closed",
 	})
 	if err != nil {
@@ -296,7 +288,7 @@ func (c *Client) handleResetVote(msg Message) {
 	c.Hub.mu.Unlock()
 
 	// Broadcast à tous les stagiaires
-	data, err := json.Marshal(map[string]interface{}{
+	data, err := json.Marshal(map[string]any{
 		"type": "vote_reset",
 	})
 	if err != nil {
@@ -353,7 +345,7 @@ func (c *Client) handleUpdateName(msg Message) {
 	c.Name = msg.Name
 
 	// Confirmation au stagiaire
-	sendJSON(c, map[string]interface{}{
+	sendJSON(c, map[string]any{
 		"type": "name_updated",
 		"name": msg.Name,
 	})

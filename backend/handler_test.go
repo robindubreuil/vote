@@ -16,7 +16,7 @@ func TestGenerateID(t *testing.T) {
 	ids := make(map[string]bool)
 	iterations := 1000
 
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		id := generateID()
 
 		// Vérifier la longueur
@@ -303,21 +303,21 @@ func BenchmarkGenerateID(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		generateID()
 	}
 }
 
 // BenchmarkJSONMarshal benchmark la sérialisation JSON
 func BenchmarkJSONMarshal(b *testing.B) {
-	msg := map[string]interface{}{
+	msg := map[string]any{
 		"type":           "vote_started",
 		"colors":         []string{"rouge", "vert", "bleu", "jaune"},
 		"multipleChoice": false,
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = json.Marshal(msg)
 	}
 }
@@ -327,7 +327,7 @@ func BenchmarkJSONUnmarshal(b *testing.B) {
 	data := []byte(`{"type":"vote","stagiaireId":"stagiaire1","couleurs":["rouge","vert"]}`)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var msg Message
 		_ = json.Unmarshal(data, &msg)
 	}
@@ -355,7 +355,7 @@ func TestFallbackGenerateIDUniqueness(t *testing.T) {
 	iterations := 100
 
 	// Attendre un peu entre chaque génération pour éviter les doublons
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		id := generateTimestampID()
 		if ids[id] {
 			t.Errorf("Duplicate fallback ID generated: %s", id)
@@ -496,7 +496,7 @@ func TestHandleStagiaireJoinNonExistent(t *testing.T) {
 	// Vérifier qu'un message d'erreur a été envoyé
 	select {
 	case data := <-stagiaire.Send:
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(data, &result); err != nil {
 			t.Fatalf("Failed to parse JSON: %v", err)
 		}
@@ -1024,7 +1024,7 @@ func TestSendJSONFullChannel(t *testing.T) {
 	client.Send <- []byte("full")
 
 	// Essayer d'envoyer un autre message (ne devrait pas bloquer)
-	err := sendJSON(client, map[string]interface{}{
+	err := sendJSON(client, map[string]any{
 		"type": "test",
 	})
 

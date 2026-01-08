@@ -164,7 +164,7 @@ func (h *Hub) registerClient(client *Client) {
 
 		// Envoyer la configuration actuelle au stagiaire
 		if session.VoteState == VoteStateActive {
-			sendJSON(client, map[string]interface{}{
+			sendJSON(client, map[string]any{
 				"type":           "vote_started",
 				"colors":         session.ActiveColors,
 				"multipleChoice": session.MultipleChoice,
@@ -255,20 +255,20 @@ func (h *Hub) notifyTrainerSessionUpdate(session *SessionState) {
 	}
 
 	// Construire la liste des stagiaires connectés avec leurs noms
-	stagiaires := make([]map[string]interface{}, 0, len(session.Stagiaires))
+	stagiaires := make([]map[string]any, 0, len(session.Stagiaires))
 	for id, client := range session.Stagiaires {
 		name := client.Name
 		if name == "" {
 			// Fallback sur le nom stocké si pas de nom dans le client
 			name = session.StagiaireNames[id]
 		}
-		stagiaires = append(stagiaires, map[string]interface{}{
+		stagiaires = append(stagiaires, map[string]any{
 			"id":   id,
 			"name": name,
 		})
 	}
 
-	sendJSON(session.Trainer, map[string]interface{}{
+	sendJSON(session.Trainer, map[string]any{
 		"type":        "connected_count",
 		"count":       len(session.Stagiaires),
 		"stagiaires":  stagiaires,
@@ -294,9 +294,9 @@ func (h *Hub) UpdateStagiaireName(sessionID, stagiaireID, name string) {
 	}
 
 	// Récupérer ou construire la liste des stagiaires
-	stagiaires := make([]map[string]interface{}, 0, len(session.Stagiaires))
+	stagiaires := make([]map[string]any, 0, len(session.Stagiaires))
 	for id, client := range session.Stagiaires {
-		stagiaires = append(stagiaires, map[string]interface{}{
+		stagiaires = append(stagiaires, map[string]any{
 			"id":   id,
 			"name": client.Name,
 		})
@@ -304,7 +304,7 @@ func (h *Hub) UpdateStagiaireName(sessionID, stagiaireID, name string) {
 
 	// Envoyer la liste complète au formateur pour synchronisation
 	if session.Trainer != nil {
-		sendJSON(session.Trainer, map[string]interface{}{
+		sendJSON(session.Trainer, map[string]any{
 			"type":        "stagiaire_names_updated",
 			"stagiaires":  stagiaires,
 		})
@@ -319,7 +319,7 @@ func (h *Hub) GetSession(sessionID string) *SessionState {
 }
 
 // SendJSON envoie un message JSON à un client
-func sendJSON(client *Client, v interface{}) error {
+func sendJSON(client *Client, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -334,7 +334,7 @@ func sendJSON(client *Client, v interface{}) error {
 
 // sendError envoie un message d'erreur à un client
 func sendError(client *Client, message string) {
-	sendJSON(client, map[string]interface{}{
+	sendJSON(client, map[string]any{
 		"type":    "error",
 		"message": message,
 	})
@@ -375,11 +375,3 @@ func (h *Hub) Shutdown() {
 	close(h.Done)
 }
 
-// updateActivity met à jour le timestamp d'activité d'une session
-func (h *Hub) updateActivity(sessionID string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if session, exists := h.Sessions[sessionID]; exists {
-		session.LastActivity = time.Now().Unix()
-	}
-}
