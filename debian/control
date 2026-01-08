@@ -1,0 +1,18 @@
+Source: vote
+Section: web
+Priority: optional
+Maintainer: Robin <63008968+robindubreuil@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), golang-any (>= 2:1.23~)
+Standards-Version: 4.7.0
+Homepage: https://github.com/robin/vote
+Vcs-Git: https://github.com/robin/vote.git
+Vcs-Browser: https://github.com/robin/vote
+
+Package: vote
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Real-time voting application
+ Vote Coloré is a real-time voting system with WebSocket support.
+ It allows trainers to create voting sessions and trainees to vote
+ on predefined colors. Features include multiple choice support,
+ real-time statistics, and automatic reconnection.

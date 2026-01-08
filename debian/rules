@@ -1,0 +1,40 @@
+#!/usr/bin/make -f
+
+# Work around Go's GOPATH behavior in package builds
+export GOCACHE=/tmp/go-build-cache
+export GOMODCACHE=/tmp/go-mod-cache
+
+%:
+	dh $@
+
+# Skip tests during package build (run separately)
+override_dh_auto_test:
+	@echo "Tests skipped during package build"
+
+# Skip dwz for Go binaries
+override_dh_dwz:
+	@echo "Skipping dh_dwz for Go binary"
+
+# Skip auto configure (we don't use autotools)
+override_dh_auto_configure:
+	@echo "Configure not needed for Go"
+
+# Build the Go binary
+override_dh_auto_build:
+	cd backend && go build -ldflags="-s -w" -o ../vote-server .
+
+# Install files manually
+override_dh_auto_install:
+	# Install binary
+	install -D -m 0755 vote-server debian/vote/usr/bin/vote-server
+
+	# Install systemd service
+	install -D -m 0644 debian/vote.service debian/vote/usr/lib/systemd/system/vote.service
+
+	# Create state directories
+	install -d -m 0750 debian/vote/var/lib/vote
+	install -d -m 0750 debian/vote/var/log/vote
+
+override_dh_auto_clean:
+	rm -f vote-server
+	rm -rf debian/vote

@@ -206,10 +206,13 @@ func TestTrainerDisconnect(t *testing.T) {
 	hub.Unregister <- trainer
 	time.Sleep(50 * time.Millisecond)
 
-	// La session devrait être supprimée
+	// La session devrait toujours exister mais sans formateur (nettoyage via TTL)
 	session := hub.GetSession("1234")
-	if session != nil {
-		t.Fatal("Session should be deleted when trainer disconnects")
+	if session == nil {
+		t.Fatal("Session should still exist (cleaned up via TTL)")
+	}
+	if session.Trainer != nil {
+		t.Error("Session trainer should be nil after disconnect")
 	}
 }
 

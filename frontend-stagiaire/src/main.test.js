@@ -256,15 +256,15 @@ describe('Stagiaire - Messages WebSocket', () => {
       type: 'vote',
       sessionId: 'session-123',
       stagiaireId: 'stagiaire_abc123',
-      couleurs: ['rouge']
+      colors: ['rouge']
     }
 
     const json = JSON.stringify(message)
     const parsed = JSON.parse(json)
 
     expect(parsed.type).toBe('vote')
-    expect(parsed.couleurs).toEqual(['rouge'])
-    expect(parsed.couleurs).toHaveLength(1)
+    expect(parsed.colors).toEqual(['rouge'])
+    expect(parsed.colors).toHaveLength(1)
   })
 
   it('devrait sérialiser le message de vote (choix multiple)', () => {
@@ -272,15 +272,15 @@ describe('Stagiaire - Messages WebSocket', () => {
       type: 'vote',
       sessionId: 'session-123',
       stagiaireId: 'stagiaire_abc123',
-      couleurs: ['rouge', 'vert', 'bleu']
+      colors: ['rouge', 'vert', 'bleu']
     }
 
     const json = JSON.stringify(message)
     const parsed = JSON.parse(json)
 
     expect(parsed.type).toBe('vote')
-    expect(parsed.couleurs).toEqual(['rouge', 'vert', 'bleu'])
-    expect(parsed.couleurs).toHaveLength(3)
+    expect(parsed.colors).toEqual(['rouge', 'vert', 'bleu'])
+    expect(parsed.colors).toHaveLength(3)
   })
 
   it('devrait parser le message vote_started', () => {

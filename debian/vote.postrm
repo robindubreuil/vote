@@ -1,0 +1,32 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    purge)
+        # Remove runtime directories (but preserve data if admin wants)
+        # Uncomment the following lines to remove data on purge
+        # rm -rf /var/lib/vote
+        # rm -rf /var/log/vote
+
+        # Remove user and group
+        if getent passwd vote > /dev/null 2>&1; then
+            deluser --system vote || true
+        fi
+
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

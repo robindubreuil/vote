@@ -35,7 +35,7 @@ body {
 /* SVG Icons - Bootstrap Icons (MIT) */
 .icon {
   display: inline-block;
-  vertical-align: text-bottom;
+  vertical-align: -0.125em;
   flex-shrink: 0;
 }
 
@@ -52,6 +52,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: 1rem;
+  padding-bottom: 0;
 }
 
 /* Container centré */
@@ -236,6 +237,11 @@ body {
   animation: bounce 2s infinite;
 }
 
+.waiting-icon svg {
+  width: 3.5rem;
+  height: 3.5rem;
+}
+
 @keyframes bounce {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-10px); }
@@ -379,6 +385,11 @@ body {
   animation: checkmark 0.5s ease-out;
 }
 
+.voted-icon svg {
+  width: 4.5rem;
+  height: 4.5rem;
+}
+
 @keyframes checkmark {
   0% { transform: scale(0); opacity: 0; }
   50% { transform: scale(1.2); }
@@ -404,6 +415,11 @@ body {
 .closed-icon {
   font-size: 3rem;
   margin-bottom: 1rem;
+}
+
+.closed-icon svg {
+  width: 3.5rem;
+  height: 3.5rem;
 }
 
 /* Connection status */
@@ -470,5 +486,47 @@ body {
   .vote-checkbox-label {
     aspect-ratio: auto;
     padding: 1.2rem;
+  }
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.footer-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-link:hover {
+  color: var(--accent-color);
+  text-decoration: underline;
+}
+
+.footer-separator {
+  opacity: 0.5;
+}
+
+.footer-version {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  cursor: help;
+}
+
+.footer-date {
+  opacity: 0.7;
+}
+
+@media (max-width: 600px) {
+  .footer {
+    flex-wrap: wrap;
+    font-size: 0.7rem;
   }
 }

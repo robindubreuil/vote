@@ -4,13 +4,33 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
+// États de vote possibles
+const (
+	VoteStateIdle    = "idle"
+	VoteStateActive  = "active"
+	VoteStateClosed  = "closed"
+)
+
+// Durée avant qu'une session sans formateur ne soit supprimée (24 heures)
+const SessionTimeout = 24 * 60 * 60
+
+var connIDCounter int64
+
+// nextConnID génère un identifiant unique pour la connexion
+func nextConnID() int64 {
+	return atomic.AddInt64(&connIDCounter, 1)
+}
+
 // Client représente une connexion WebSocket
 type Client struct {
 	ID        string
+	ConnID    int64  // Identifiant unique de cette connexion (change à chaque reconnexion)
 	Name      string // Prénom du stagiaire (vide pour le formateur)
 	SessionID string
 	Type      string // "trainer" ou "stagiaire"
@@ -33,6 +53,9 @@ type Hub struct {
 	// Messages broadcast à tous les clients d'une session
 	Broadcast chan *BroadcastMessage
 
+	// Arrêt propre du hub
+	Done chan struct{}
+
 	mu sync.RWMutex
 }
 
@@ -49,20 +72,24 @@ type SessionState struct {
 	Trainer       *Client
 	Stagiaires    map[string]*Client
 	StagiaireNames map[string]string // stagiaireID -> prénom (persiste après déconnexion)
-	VoteState     string             // "idle", "active", "closed"
+	VoteState     string             // VoteStateIdle, VoteStateActive, VoteStateClosed
 	ActiveColors  []string
 	MultipleChoice bool
 	Votes         map[string][]string // stagiaireID -> couleurs
+	LastActivity  int64               // Timestamp unix de la dernière activité
 }
 
 // NewHub crée un nouveau Hub
 func NewHub() *Hub {
-	return &Hub{
+	hub := &Hub{
 		Sessions:  make(map[string]*SessionState),
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		Broadcast:  make(chan *BroadcastMessage),
+		Done:       make(chan struct{}),
 	}
+	go hub.cleanupExpiredSessions()
+	return hub
 }
 
 // Run lance la boucle principale du Hub
@@ -94,8 +121,9 @@ func (h *Hub) registerClient(client *Client) {
 				Trainer:        client,
 				Stagiaires:     make(map[string]*Client),
 				StagiaireNames: make(map[string]string),
-				VoteState:      "idle",
+				VoteState:      VoteStateIdle,
 				Votes:          make(map[string][]string),
+				LastActivity:   time.Now().Unix(),
 			}
 			h.Sessions[client.SessionID] = session
 			log.Printf("Nouvelle session créée: %s", client.SessionID)
@@ -108,6 +136,7 @@ func (h *Hub) registerClient(client *Client) {
 
 	if client.Type == "trainer" {
 		session.Trainer = client
+		session.LastActivity = time.Now().Unix()
 		log.Printf("Formateur connecté à la session: %s", client.SessionID)
 	} else {
 		// Vérifier qu'il y a un formateur
@@ -134,7 +163,7 @@ func (h *Hub) registerClient(client *Client) {
 		h.notifyTrainerSessionUpdate(session)
 
 		// Envoyer la configuration actuelle au stagiaire
-		if session.VoteState == "active" {
+		if session.VoteState == VoteStateActive {
 			sendJSON(client, map[string]interface{}{
 				"type":           "vote_started",
 				"colors":         session.ActiveColors,
@@ -154,20 +183,20 @@ func (h *Hub) unregisterClient(client *Client) {
 	}
 
 	if client.Type == "trainer" {
-		// Formateur déconnecté - fermer toute la session
-		log.Printf("Formateur déconnecté, session %s fermée", client.SessionID)
-		delete(h.Sessions, client.SessionID)
-
-		// Déconnecter tous les stagiaires
-		for _, stagiaire := range session.Stagiaires {
-			if stagiaire.Conn != nil {
-				stagiaire.Conn.Close()
-			}
+		// Vérifier que c'est bien la même connexion (pas une reconnexion)
+		if session.Trainer != nil && session.Trainer.ConnID != client.ConnID {
+			// Le formateur s'est reconnecté, ne pas fermer la session
+			return
 		}
+		// Formateur déconnecté - marquer la session comme sans formateur (sera nettoyée après timeout)
+		log.Printf("Formateur déconnecté de la session: %s", client.SessionID)
+		session.Trainer = nil
+		session.LastActivity = time.Now().Unix()
+		// Ne pas supprimer la session immédiatement - elle sera nettoyée par cleanupExpiredSessions
 	} else {
 		// Stagiaire déconnecté
-		// Vérifier que c'est bien le même objet client (pas une reconnexion)
-		if currentClient, exists := session.Stagiaires[client.ID]; exists && currentClient == client {
+		// Vérifier que c'est bien la même connexion (pas une reconnexion)
+		if currentClient, exists := session.Stagiaires[client.ID]; exists && currentClient.ConnID == client.ConnID {
 			delete(session.Stagiaires, client.ID)
 			log.Printf("Stagiaire %s déconnecté de la session: %s", client.ID, client.SessionID)
 
@@ -309,4 +338,48 @@ func sendError(client *Client, message string) {
 		"type":    "error",
 		"message": message,
 	})
+}
+
+// cleanupExpiredSessions supprime périodiquement les sessions expirées
+func (h *Hub) cleanupExpiredSessions() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			h.mu.Lock()
+			now := time.Now().Unix()
+			for code, session := range h.Sessions {
+				// Nettoyer seulement les sessions sans formateur expirées
+				if session.Trainer == nil && (now-session.LastActivity) > SessionTimeout {
+					log.Printf("Suppression session expirée: %s", code)
+					// Fermer les connexions des stagiaires restants
+					for _, stagiaire := range session.Stagiaires {
+						if stagiaire.Conn != nil {
+							stagiaire.Conn.Close()
+						}
+					}
+					delete(h.Sessions, code)
+				}
+			}
+			h.mu.Unlock()
+		case <-h.Done:
+			return
+		}
+	}
+}
+
+// Shutdown arrête le hub proprement
+func (h *Hub) Shutdown() {
+	close(h.Done)
+}
+
+// updateActivity met à jour le timestamp d'activité d'une session
+func (h *Hub) updateActivity(sessionID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if session, exists := h.Sessions[sessionID]; exists {
+		session.LastActivity = time.Now().Unix()
+	}
 }

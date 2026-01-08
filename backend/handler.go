@@ -25,12 +25,10 @@ var upgrader = websocket.Upgrader{
 type Message struct {
 	Type           string   `json:"type"`
 	SessionCode    string   `json:"sessionCode,omitempty"`
-	SessionID      string   `json:"sessionId,omitempty"`
 	TrainerID      string   `json:"trainerId,omitempty"`
 	StagiaireID    string   `json:"stagiaireId,omitempty"`
 	Name           string   `json:"name,omitempty"` // Prénom du stagiaire
 	Colors         []string `json:"colors,omitempty"`
-	Couleurs       []string `json:"couleurs,omitempty"`
 	MultipleChoice bool     `json:"multipleChoice,omitempty"`
 }
 
@@ -43,10 +41,11 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 	}
 
 	client := &Client{
-		ID:   generateID(),
-		Conn: conn,
-		Send: make(chan []byte, 256),
-		Hub:  s.hub,
+		ID:     generateID(),
+		ConnID: nextConnID(),
+		Conn:   conn,
+		Send:   make(chan []byte, 256),
+		Hub:    s.hub,
 	}
 
 	// Démarrer la goroutine de lecture
@@ -187,9 +186,10 @@ func (c *Client) handleStartVote(msg Message) {
 	}
 
 	c.Hub.mu.Lock()
-	session.VoteState = "active"
+	session.VoteState = VoteStateActive
 	session.ActiveColors = msg.Colors
 	session.MultipleChoice = msg.MultipleChoice
+	session.LastActivity = time.Now().Unix()
 	// Vider les votes précédents
 	session.Votes = make(map[string][]string)
 	c.Hub.mu.Unlock()
@@ -220,7 +220,7 @@ func (c *Client) handleVote(msg Message) {
 
 	c.Hub.mu.Lock()
 	// Enregistrer ou mettre à jour le vote
-	session.Votes[msg.StagiaireID] = msg.Couleurs
+	session.Votes[msg.StagiaireID] = msg.Colors
 	// Récupérer le nom du stagiaire
 	stagiaireName := session.StagiaireNames[msg.StagiaireID]
 	if stagiaireName == "" {
@@ -238,7 +238,7 @@ func (c *Client) handleVote(msg Message) {
 		"type":        "vote_received",
 		"stagiaireId": msg.StagiaireID,
 		"stagiaireName": stagiaireName,
-		"couleurs":    msg.Couleurs,
+		"colors":      msg.Colors,
 	})
 	if err != nil {
 		log.Printf("Erreur marshaling vote_received: %v", err)
@@ -261,7 +261,8 @@ func (c *Client) handleCloseVote(_ Message) {
 	}
 
 	c.Hub.mu.Lock()
-	session.VoteState = "closed"
+	session.VoteState = VoteStateClosed
+	session.LastActivity = time.Now().Unix()
 	c.Hub.mu.Unlock()
 
 	// Broadcast à tous les stagiaires
@@ -287,9 +288,10 @@ func (c *Client) handleResetVote(msg Message) {
 	}
 
 	c.Hub.mu.Lock()
-	session.VoteState = "idle"
+	session.VoteState = VoteStateIdle
 	session.ActiveColors = msg.Colors
 	session.MultipleChoice = msg.MultipleChoice
+	session.LastActivity = time.Now().Unix()
 	session.Votes = make(map[string][]string)
 	c.Hub.mu.Unlock()
 
@@ -317,24 +319,24 @@ func generateID() string {
 	for i := range b {
 		n, err := rand.Int(rand.Reader, charsetLen)
 		if err != nil {
-			// Fallback vers un ID basé sur le temps si crypto/rand échoue
+			// crypto/rand échoue seulement si le système manque d'entropie
+			// Dans ce cas, utiliser un timestamp nano comme dernier recours
 			log.Printf("Erreur génération ID aléatoire: %v", err)
-			return fallbackGenerateID()
+			return generateTimestampID()
 		}
 		b[i] = charset[n.Int64()]
 	}
 	return string(b)
 }
 
-// fallbackGenerateID génère un ID de secours basé sur le timestamp
-func fallbackGenerateID() string {
+// generateTimestampID génère un ID basé sur le timestamp (fallback)
+func generateTimestampID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	// Utiliser nanosecondes comme source d'entropie
 	nano := time.Now().UnixNano()
 	b := make([]byte, 12)
 	for i := range b {
 		b[i] = charset[(i+int(nano))%len(charset)]
-		nano = nano >> 4 // Shift pour varier l'index
+		nano = nano >> 4
 	}
 	return string(b)
 }

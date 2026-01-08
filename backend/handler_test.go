@@ -101,22 +101,22 @@ func TestMessageParsing(t *testing.T) {
 		},
 		{
 			name:    "vote valid single choice",
-			json:    `{"type":"vote","stagiaireId":"stagiaire1","couleurs":["rouge"]}`,
+			json:    `{"type":"vote","stagiaireId":"stagiaire1","colors":["rouge"]}`,
 			wantErr: false,
 			check: func(m Message) bool {
 				return m.Type == "vote" &&
 					m.StagiaireID == "stagiaire1" &&
-					len(m.Couleurs) == 1 &&
-					m.Couleurs[0] == "rouge"
+					len(m.Colors) == 1 &&
+					m.Colors[0] == "rouge"
 			},
 		},
 		{
 			name:    "vote valid multiple choice",
-			json:    `{"type":"vote","stagiaireId":"stagiaire1","couleurs":["rouge","vert","bleu"]}`,
+			json:    `{"type":"vote","stagiaireId":"stagiaire1","colors":["rouge","vert","bleu"]}`,
 			wantErr: false,
 			check: func(m Message) bool {
 				return m.Type == "vote" &&
-					len(m.Couleurs) == 3
+					len(m.Colors) == 3
 			},
 		},
 		{
@@ -211,12 +211,12 @@ func TestMessageSerialization(t *testing.T) {
 			msg: Message{
 				Type:        "vote_received",
 				StagiaireID: "stagiaire1",
-				Couleurs:    []string{"rouge", "bleu"},
+				Colors:      []string{"rouge", "bleu"},
 			},
 			check: func(s string) bool {
 				return strings.Contains(s, "vote_received") &&
 					strings.Contains(s, "stagiaire1") &&
-					strings.Contains(s, "couleurs")
+					strings.Contains(s, "colors")
 			},
 		},
 		{
@@ -277,7 +277,7 @@ func TestColorNames(t *testing.T) {
 		t.Fatalf("Failed to parse message: %v", err)
 	}
 
-	for _, color := range m.Couleurs {
+	for _, color := range m.Colors {
 		if !validColors[color] {
 			t.Errorf("Invalid color: %s", color)
 		}
@@ -293,8 +293,8 @@ func TestEmptyVote(t *testing.T) {
 		t.Fatalf("Failed to parse message: %v", err)
 	}
 
-	if len(m.Couleurs) != 0 {
-		t.Errorf("Expected empty couleurs array, got %v", m.Couleurs)
+	if len(m.Colors) != 0 {
+		t.Errorf("Expected empty couleurs array, got %v", m.Colors)
 	}
 }
 
@@ -335,7 +335,7 @@ func BenchmarkJSONUnmarshal(b *testing.B) {
 
 // TestFallbackGenerateID vérifie la génération d'ID de secours
 func TestFallbackGenerateID(t *testing.T) {
-	id := fallbackGenerateID()
+	id := generateTimestampID()
 
 	if len(id) != 12 {
 		t.Errorf("Expected ID length 12, got %d", len(id))
@@ -356,7 +356,7 @@ func TestFallbackGenerateIDUniqueness(t *testing.T) {
 
 	// Attendre un peu entre chaque génération pour éviter les doublons
 	for i := 0; i < iterations; i++ {
-		id := fallbackGenerateID()
+		id := generateTimestampID()
 		if ids[id] {
 			t.Errorf("Duplicate fallback ID generated: %s", id)
 		}
@@ -645,7 +645,7 @@ func TestHandleVote(t *testing.T) {
 	msg := Message{
 		Type:        "vote",
 		StagiaireID: "stagiaire1",
-		Couleurs:    []string{"rouge"},
+		Colors:    []string{"rouge"},
 	}
 
 	stagiaire.handleVote(msg)
@@ -706,7 +706,7 @@ func TestHandleVoteMultipleChoice(t *testing.T) {
 	msg := Message{
 		Type:        "vote",
 		StagiaireID: "stagiaire1",
-		Couleurs:    []string{"rouge", "bleu", "jaune"},
+		Colors:    []string{"rouge", "bleu", "jaune"},
 	}
 
 	stagiaire.handleVote(msg)
@@ -768,7 +768,7 @@ func TestHandleVoteUpdate(t *testing.T) {
 	msg := Message{
 		Type:        "vote",
 		StagiaireID: "stagiaire1",
-		Couleurs:    []string{"vert"},
+		Colors:    []string{"vert"},
 	}
 
 	stagiaire.handleVote(msg)

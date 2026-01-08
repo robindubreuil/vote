@@ -1,5 +1,6 @@
 import './style.css'
 import { icons } from '../../shared/icons.js'
+import { VERSION } from '../../shared/version.js'
 
 // Configuration des couleurs disponibles
 const COLORS = [
@@ -13,8 +14,11 @@ const COLORS = [
   { id: 'gris', name: 'Gris', color: '#6b7280' }
 ]
 
-// Configuration de l'API WebSocket (à adapter selon le backend)
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws'
+// Configuration de l'API WebSocket
+const WS_URL = import.meta.env.VITE_WS_URL || (() => {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${location.host}/ws`
+})()
 
 // État de l'application
 const state = {
@@ -167,7 +171,7 @@ function handleMessage(msg) {
       // Nouveau vote d'un stagiaire avec son nom
       const existingIndex = state.votes.findIndex(v => v.stagiaireId === msg.stagiaireId)
       const voteData = {
-        couleurs: msg.couleurs,
+        couleurs: msg.colors,
         stagiaireId: msg.stagiaireId,
         stagiaireName: msg.stagiaireName || state.stagiaireNames[msg.stagiaireId] || ''
       }
@@ -261,9 +265,24 @@ function render() {
       ${renderHeaderHTML()}
       ${state.voteState === 'idle' ? renderConfigHTML() : renderVoteHTML()}
     </div>
+    ${renderFooterHTML()}
   `
 
   attachEventListeners()
+}
+
+// Rendu du footer
+function renderFooterHTML() {
+  return `
+    <footer class="footer">
+      <span class="footer-author">${VERSION.author}</span>
+      <span class="footer-separator">•</span>
+      <a href="https://opensource.org/licenses/MIT" target="_blank" class="footer-link">Licence MIT</a>
+      <span class="footer-separator">•</span>
+      <span class="footer-version" title="${VERSION.fullHash}">${VERSION.commitHash}</span>
+      <span class="footer-date">${VERSION.commitDate}</span>
+    </footer>
+  `
 }
 
 function renderHeader() {
@@ -446,10 +465,8 @@ function renderVoteHTML() {
       <div class="button-row">
         ${state.voteState === 'active' ? `
           <button class="btn btn-danger" id="closeVote">${icons.stop(' class="icon icon-md"')} Fermer le vote</button>
-          <button class="btn btn-secondary" id="configVote">${icons.settings(' class="icon icon-md"')} Modifier la config</button>
         ` : `
           <button class="btn btn-success" id="newVote">${icons.refresh(' class="icon icon-md"')} Nouveau vote</button>
-          <button class="btn btn-secondary" id="configVote">${icons.settings(' class="icon icon-md"')} Modifier la config</button>
         `}
       </div>
     </div>
@@ -678,14 +695,6 @@ function attachEventListeners() {
     newVoteBtn.addEventListener('click', resetVote)
   }
 
-  // Bouton configurer
-  const configBtn = document.getElementById('configVote')
-  if (configBtn) {
-    configBtn.addEventListener('click', () => {
-      state.voteState = 'idle'
-      render()
-    })
-  }
 }
 
 // Actions

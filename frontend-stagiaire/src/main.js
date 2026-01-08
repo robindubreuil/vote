@@ -1,5 +1,6 @@
 import './style.css'
 import { icons } from '../../shared/icons.js'
+import { VERSION } from '../../shared/version.js'
 
 // Configuration des couleurs (même que le formateur)
 const COLORS = [
@@ -13,8 +14,11 @@ const COLORS = [
   { id: 'gris', name: 'Gris', color: '#6b7280' }
 ]
 
-// Configuration de l'API WebSocket (à adapter selon le backend)
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws'
+// Configuration de l'API WebSocket
+const WS_URL = import.meta.env.VITE_WS_URL || (() => {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${location.host}/ws`
+})()
 
 // États de l'application
 const AppState = {
@@ -247,10 +251,25 @@ function render() {
       ${state.appState === AppState.VOTED && !state.prenomEdit ? renderVotedHTML() : ''}
       ${state.appState === AppState.CLOSED && !state.prenomEdit ? renderClosedHTML() : ''}
     </div>
+    ${renderFooterHTML()}
   `
 
   attachEventListeners()
   updateConnectionStatus(state.connected)
+}
+
+// Rendu du footer
+function renderFooterHTML() {
+  return `
+    <footer class="footer">
+      <span class="footer-author">${VERSION.author}</span>
+      <span class="footer-separator">•</span>
+      <a href="https://opensource.org/licenses/MIT" target="_blank" class="footer-link">Licence MIT</a>
+      <span class="footer-separator">•</span>
+      <span class="footer-version" title="${VERSION.fullHash}">${VERSION.commitHash}</span>
+      <span class="footer-date">${VERSION.commitDate}</span>
+    </footer>
+  `
 }
 
 // Rendu du formulaire de connexion
@@ -632,7 +651,7 @@ function submitVote() {
     type: 'vote',
     sessionId: state.sessionId,
     stagiaireId: state.stagiaireId,
-    couleurs: Array.from(state.selectedColors)
+    colors: Array.from(state.selectedColors)
   })
 }
 

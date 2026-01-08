@@ -8,10 +8,33 @@
  *        icons.vote() returns SVG string
  */
 
+// Gradient definitions for SVG icons
+const GRADIENTS = svg`
+  <defs>
+    <linearGradient id="gradient-primary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="gradient-hourglass" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#ef4444"/>
+    </linearGradient>
+    <linearGradient id="gradient-success" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22c55e"/>
+      <stop offset="100%" style="stop-color:#10b981"/>
+    </linearGradient>
+    <linearGradient id="gradient-danger" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ef4444"/>
+      <stop offset="100%" style="stop-color:#dc2626"/>
+    </linearGradient>
+  </defs>
+`;
+
 export const icons = {
-  // Ballot box / Vote icon (replaces 🗳️)
+  // Ballot box / Vote icon (replaces 🗳️) - colored with gradient
   vote: (attrs = '') =>
-    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-collection" viewBox="0 0 16 16"${attrs}>
+    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="url(#gradient-primary)" class="bi bi-collection icon-gradient" viewBox="0 0 16 16"${attrs}>
+      ${GRADIENTS}
       <path d="M2.5 3.5a.5.5 0 0 1 0-1h11a.5.5 0 0 1 0 1zm2-2a.5.5 0 0 1 0-1h7a.5.5 0 0 1 0 1zM0 13a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 16 13V6a1.5 1.5 0 0 0-1.5-1.5h-13A1.5 1.5 0 0 0 0 6zm1.5.5A.5.5 0 0 1 1 13V6a.5.5 0 0 1 .5-.5h13a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5z"/>
     </svg>`,
 
@@ -36,9 +59,10 @@ export const icons = {
       <path d="M7.009 12.139a7.6 7.6 0 0 1-1.804-1.352A7.6 7.6 0 0 1 3.794 8.86c-1.102.992-1.965 5.054-1.839 5.18.125.126 3.936-.896 5.054-1.902Z"/>
     </svg>`,
 
-  // Stop circle (replaces ⏹)
+  // Stop circle (replaces ⏹) - red gradient for closed vote
   stop: (attrs = '') =>
-    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-stop-circle" viewBox="0 0 16 16"${attrs}>
+    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="url(#gradient-danger)" class="bi bi-stop-circle icon-gradient-danger" viewBox="0 0 16 16"${attrs}>
+      ${GRADIENTS}
       <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
       <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h3A1.5 1.5 0 0 1 11 6.5v3A1.5 1.5 0 0 1 9.5 11h-3A1.5 1.5 0 0 1 5 9.5z"/>
     </svg>`,
@@ -69,9 +93,10 @@ export const icons = {
       <path d="M3.204 5h9.592L8 10.481zm-.753.659 4.796 5.48a1 1 0 0 0 1.506 0l4.796-5.48c.566-.647.106-1.659-.753-1.659H3.204a1 1 0 0 0-.753 1.659"/>
     </svg>`,
 
-  // Checkmark (replaces ✓)
+  // Checkmark (replaces ✓) - green gradient for voted state
   check: (attrs = '') =>
-    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-check-lg" viewBox="0 0 16 16"${attrs}>
+    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="url(#gradient-success)" class="bi bi-check-lg icon-gradient-success" viewBox="0 0 16 16"${attrs}>
+      ${GRADIENTS}
       <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/>
     </svg>`,
 
@@ -82,9 +107,10 @@ export const icons = {
       <path d="m10.97 4.97-.02.022-3.473 4.425-2.093-2.094a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05"/>
     </svg>`,
 
-  // Hourglass / Waiting (replaces ⏳)
+  // Hourglass / Waiting (replaces ⏳) - orange/red gradient
   hourglass: (attrs = '') =>
-    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-hourglass" viewBox="0 0 16 16"${attrs}>
+    svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="url(#gradient-hourglass)" class="bi bi-hourglass icon-gradient-hourglass" viewBox="0 0 16 16"${attrs}>
+      ${GRADIENTS}
       <path d="M2 1.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-1v1a4.5 4.5 0 0 1-2.557 4.06c-.29.139-.443.377-.443.59v.7c0 .213.154.451.443.59A4.5 4.5 0 0 1 12.5 13v1h1a.5.5 0 0 1 0 1h-11a.5.5 0 1 1 0-1h1v-1a4.5 4.5 0 0 1 2.557-4.06c.29-.139.443-.377.443-.59v-.7c0-.213-.154-.451-.443-.59A4.5 4.5 0 0 1 3.5 3V2h-1a.5.5 0 0 1-.5-.5m2.5.5v1a3.5 3.5 0 0 0 1.989 3.158c.533.256 1.011.791 1.011 1.491v.702c0 .7-.478 1.235-1.011 1.491A3.5 3.5 0 0 0 4.5 13v1h7v-1a3.5 3.5 0 0 0-1.989-3.158C8.978 9.586 8.5 9.052 8.5 8.351v-.702c0-.7.478-1.235 1.011-1.491A3.5 3.5 0 0 0 11.5 3V2z"/>
     </svg>`,
 
