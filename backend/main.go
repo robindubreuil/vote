@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,9 +47,39 @@ func main() {
 	log.Printf("🗳️  Serveur Vote Coloré démarré sur http://localhost:%s", port)
 	log.Printf("📡 WebSocket endpoint: ws://localhost:%s/ws", port)
 
-	if err := s.r.Run(":" + port); err != nil {
-		log.Fatalf("Erreur démarrage serveur: %v", err)
+	// Configuration du graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Serveur HTTP avec support pour le shutdown
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: s.r,
 	}
+
+	// Démarrer le serveur dans une goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Erreur démarrage serveur: %v", err)
+		}
+	}()
+
+	// Attendre le signal d'arrêt
+	<-ctx.Done()
+	log.Println("Arrêt du serveur en cours...")
+
+	// Arrêt avec timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Arrêter le hub
+	s.hub.Shutdown()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Erreur lors de l'arrêt du serveur: %v", err)
+	}
+
+	log.Println("Serveur arrêté proprement")
 }
 
 // setupCORS configure les headers CORS

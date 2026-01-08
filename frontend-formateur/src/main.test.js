@@ -318,11 +318,208 @@ describe('Formateur - Messages WebSocket', () => {
   })
 
   it('devrait parser les messages du serveur', () => {
-    const jsonMessage = '{"type":"vote_received","stagiaireId":"s1","couleurs":["rouge"]}'
+    const jsonMessage = '{"type":"vote_received","stagiaireId":"s1","colors":["rouge"]}'
     const parsed = JSON.parse(jsonMessage)
 
     expect(parsed.type).toBe('vote_received')
     expect(parsed.stagiaireId).toBe('s1')
-    expect(parsed.couleurs).toEqual(['rouge'])
+    expect(parsed.colors).toEqual(['rouge'])
+  })
+})
+
+// Tests pour les barres de couleur
+function calculateBarWidth(count, maxCount) {
+  if (maxCount === 0) return 0
+  return (count / maxCount) * 100
+}
+
+describe('Formateur - Barres de couleur (Bar Graph)', () => {
+  describe('calculateBarWidth', () => {
+    it('devrait calculer 100% pour le maximum', () => {
+      expect(calculateBarWidth(5, 5)).toBe(100)
+      expect(calculateBarWidth(10, 10)).toBe(100)
+    })
+
+    it('devrait calculer les proportions correctes', () => {
+      expect(calculateBarWidth(1, 4)).toBe(25)
+      expect(calculateBarWidth(2, 4)).toBe(50)
+      expect(calculateBarWidth(3, 4)).toBe(75)
+      expect(calculateBarWidth(1, 10)).toBe(10)
+    })
+
+    it('devrait retourner 0 si maxCount est 0', () => {
+      expect(calculateBarWidth(0, 0)).toBe(0)
+    })
+
+    it('devrait gérer les valeurs décimales', () => {
+      expect(calculateBarWidth(1, 3)).toBeCloseTo(33.33, 1)
+      expect(calculateBarWidth(2, 3)).toBeCloseTo(66.67, 1)
+    })
+  })
+
+  describe('Cas de vote à choix unique', () => {
+    const votes = [
+      { couleurs: ['rouge'], stagiaireId: 's1' },
+      { couleurs: ['rouge'], stagiaireId: 's2' },
+      { couleurs: ['rouge'], stagiaireId: 's3' },
+      { couleurs: ['vert'], stagiaireId: 's4' },
+      { couleurs: ['vert'], stagiaireId: 's5' },
+      { couleurs: ['bleu'], stagiaireId: 's6' }
+    ]
+
+    const counts = getColorCounts(votes)
+    const maxCount = Math.max(...Object.values(counts), 1)
+
+    it('devrait avoir rouge avec 100% de largeur (max)', () => {
+      const rougeCount = counts['rouge']
+      const rougePercent = calculateBarWidth(rougeCount, maxCount)
+      expect(rougeCount).toBe(3)
+      expect(rougePercent).toBe(100)
+    })
+
+    it('devrait avoir vert avec ~67% de largeur', () => {
+      const vertCount = counts['vert']
+      const vertPercent = calculateBarWidth(vertCount, maxCount)
+      expect(vertCount).toBe(2)
+      expect(vertPercent).toBeCloseTo(66.67, 1)
+    })
+
+    it('devrait avoir bleu avec ~33% de largeur', () => {
+      const bleuCount = counts['bleu']
+      const bleuPercent = calculateBarWidth(bleuCount, maxCount)
+      expect(bleuCount).toBe(1)
+      expect(bleuPercent).toBeCloseTo(33.33, 1)
+    })
+  })
+
+  describe('Cas de vote à choix multiple', () => {
+    const votes = [
+      { couleurs: ['rouge', 'vert'], stagiaireId: 's1' },
+      { couleurs: ['rouge', 'bleu'], stagiaireId: 's2' },
+      { couleurs: ['vert', 'bleu'], stagiaireId: 's3' },
+      { couleurs: ['rouge'], stagiaireId: 's4' }
+    ]
+
+    const counts = getColorCounts(votes)
+    const maxCount = Math.max(...Object.values(counts), 1)
+
+    it('devrait compter correctement les couleurs multiples', () => {
+      // rouge apparaît dans 3 votes (s1, s2, s4)
+      expect(counts['rouge']).toBe(3)
+      // vert apparaît dans 2 votes (s1, s3)
+      expect(counts['vert']).toBe(2)
+      // bleu apparaît dans 2 votes (s2, s3)
+      expect(counts['bleu']).toBe(2)
+    })
+
+    it('devrait calculer les largeurs correctement', () => {
+      expect(calculateBarWidth(counts['rouge'], maxCount)).toBe(100)
+      expect(calculateBarWidth(counts['vert'], maxCount)).toBeCloseTo(66.67, 1)
+      expect(calculateBarWidth(counts['bleu'], maxCount)).toBeCloseTo(66.67, 1)
+    })
+  })
+
+  describe('Cas avec égalité (tie)', () => {
+    const votes = [
+      { couleurs: ['rouge'], stagiaireId: 's1' },
+      { couleurs: ['vert'], stagiaireId: 's2' },
+      { couleurs: ['bleu'], stagiaireId: 's3' }
+    ]
+
+    const counts = getColorCounts(votes)
+    const maxCount = Math.max(...Object.values(counts), 1)
+
+    it('devrait avoir toutes les barres à 100% (égalité)', () => {
+      expect(counts['rouge']).toBe(1)
+      expect(counts['vert']).toBe(1)
+      expect(counts['bleu']).toBe(1)
+
+      expect(calculateBarWidth(counts['rouge'], maxCount)).toBe(100)
+      expect(calculateBarWidth(counts['vert'], maxCount)).toBe(100)
+      expect(calculateBarWidth(counts['bleu'], maxCount)).toBe(100)
+    })
+  })
+
+  describe('Cas sans votes', () => {
+    const votes = []
+    const counts = getColorCounts(votes)
+    const maxCount = Math.max(...Object.values(counts), 1)
+
+    it('devrait avoir maxCount à 1 (pas de division par zéro)', () => {
+      expect(maxCount).toBe(1)
+    })
+
+    it('devrait retourner 0 pour les couleurs sans vote', () => {
+      expect(counts['rouge']).toBeUndefined()
+      expect(getColorCount('rouge', votes)).toBe(0)
+    })
+  })
+
+  describe('Cas avec une seule couleur votée', () => {
+    const votes = [
+      { couleurs: ['rouge'], stagiaireId: 's1' },
+      { couleurs: ['rouge'], stagiaireId: 's2' }
+    ]
+
+    const counts = getColorCounts(votes)
+    const maxCount = Math.max(...Object.values(counts), 1)
+
+    it('devrait avoir rouge à 100% et les autres à 0', () => {
+      expect(counts['rouge']).toBe(2)
+      expect(maxCount).toBe(2)
+      expect(calculateBarWidth(counts['rouge'], maxCount)).toBe(100)
+    })
+  })
+
+  describe('Cas extrême: beaucoup de votes', () => {
+    // Simuler 50 votes
+    const votes = Array.from({ length: 50 }, (_, i) => ({
+      couleurs: [i < 25 ? 'rouge' : 'vert'],
+      stagiaireId: `s${i}`
+    }))
+
+    const counts = getColorCounts(votes)
+    const maxCount = Math.max(...Object.values(counts), 1)
+
+    it('devrait gérer un grand nombre de votes', () => {
+      expect(counts['rouge']).toBe(25)
+      expect(counts['vert']).toBe(25)
+      expect(calculateBarWidth(counts['rouge'], maxCount)).toBe(100)
+      expect(calculateBarWidth(counts['vert'], maxCount)).toBe(100)
+    })
+  })
+
+  describe('Combinaisons de couleurs pour barres', () => {
+    it('devrait regrouper les combinaisons identiques', () => {
+      const votes = [
+        { couleurs: ['rouge', 'vert'], stagiaireId: 's1' },
+        { couleurs: ['vert', 'rouge'], stagiaireId: 's2' }, // Même combo, ordre différent
+        { couleurs: ['rouge', 'vert'], stagiaireId: 's3' }
+      ]
+
+      const combos = getCombinations(votes)
+      expect(combos).toHaveLength(1)
+      expect(combos[0].count).toBe(3)
+      expect(combos[0].colors.sort()).toEqual(['rouge', 'vert'])
+    })
+
+    it('devrait trier par ordre décroissant de count', () => {
+      const votes = [
+        { couleurs: ['bleu'], stagiaireId: 's1' },
+        { couleurs: ['rouge'], stagiaireId: 's2' },
+        { couleurs: ['rouge'], stagiaireId: 's3' },
+        { couleurs: ['vert'], stagiaireId: 's4' },
+        { couleurs: ['vert'], stagiaireId: 's5' },
+        { couleurs: ['vert'], stagiaireId: 's6' }
+      ]
+
+      const combos = getCombinations(votes)
+      expect(combos[0].colors).toEqual(['vert'])
+      expect(combos[0].count).toBe(3)
+      expect(combos[1].colors).toEqual(['rouge'])
+      expect(combos[1].count).toBe(2)
+      expect(combos[2].colors).toEqual(['bleu'])
+      expect(combos[2].count).toBe(1)
+    })
   })
 })
