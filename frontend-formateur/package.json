@@ -14,8 +14,8 @@
     "compress": "node ../scripts/compress-assets.js dist"
   },
   "devDependencies": {
-    "@vitest/ui": "^4.0.16",
+    "@vitest/ui": "^2.1.8",
     "vite": "^7.2.4",
-    "vitest": "^4.0.16"
+    "vitest": "^2.1.8"
   }
 }
