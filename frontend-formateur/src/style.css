@@ -1,4 +1,5 @@
 :root {
+  /* Couleurs */
   --bg-color: #0f172a;
   --card-bg: #1e293b;
   --text-primary: #f1f5f9;
@@ -18,6 +19,33 @@
   --color-violet: #a855f7;
   --color-rose: #ec4899;
   --color-gris: #6b7280;
+
+  /* Border radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.4);
+
+  /* Transitions */
+  --transition-fast: 0.15s;
+  --transition-base: 0.2s;
+  --transition-slow: 0.3s;
+
+  /* Espacements */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+
+  /* Touch target */
+  --touch-target: 44px;
 }
 
 * {
@@ -39,6 +67,50 @@ body {
   display: inline-block;
   vertical-align: -0.125em;
   flex-shrink: 0;
+}
+
+/* Dot réutilisable (status indicators) */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* Scrollbar customisée utilitaire */
+.custom-scrollbar {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+/* Scrollbar native (Firefox, Chromium récents) */
+@supports (scrollbar-color: auto) {
+  .custom-scrollbar {
+    scrollbar-color: var(--border-color) transparent;
+    scrollbar-width: thin;
+  }
+
+  .custom-scrollbar:hover {
+    scrollbar-color: var(--text-secondary) transparent;
+  }
+}
+
+/* Scrollbar WebKit (Safari, Chrome) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
 }
 
 .icon-xs { width: 0.75rem; height: 0.75rem; }
@@ -75,17 +147,20 @@ body {
 }
 
 .header h1 {
-  font-size: 1.5rem;
+  font-size: clamp(1.25rem, 2vw, 1.5rem);
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-info {
   display: flex;
   align-items: center;
   gap: 1rem;
+  position: relative;
 }
 
 .session-code {
@@ -106,16 +181,13 @@ body {
 }
 
 .connected-count .dot {
-  width: 8px;
-  height: 8px;
   background: var(--success-color);
-  border-radius: 50%;
   animation: pulse 2s infinite;
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.8; }
 }
 
 /* Card */
@@ -152,10 +224,11 @@ body {
   gap: 0.75rem;
   padding: 0.75rem;
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--transition-base);
   border: 2px solid transparent;
+  min-height: var(--touch-target);
 }
 
 .color-checkbox:hover {
@@ -198,7 +271,7 @@ body {
   background: var(--border-color);
   border-radius: 13px;
   cursor: pointer;
-  transition: background 0.3s;
+  transition: background var(--transition-slow);
 }
 
 .toggle-switch.active {
@@ -214,7 +287,7 @@ body {
   height: 20px;
   background: white;
   border-radius: 50%;
-  transition: transform 0.3s;
+  transition: transform var(--transition-slow);
 }
 
 .toggle-switch.active::after {
@@ -267,6 +340,7 @@ body {
   display: flex;
   align-items: center;
   gap: 1rem;
+  min-height: var(--touch-target);
 }
 
 .color-bar-label {
@@ -299,7 +373,7 @@ body {
 .color-bar-fill {
   height: 100%;
   border-radius: 6px;
-  transition: width 0.3s ease;
+  transition: width var(--transition-slow) ease;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -307,6 +381,7 @@ body {
   font-weight: 600;
   font-size: 0.9rem;
   min-width: 0;
+  contain: layout style paint;
 }
 
 .color-bar-fill.empty {
@@ -328,8 +403,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-height: 300px;
-  overflow-y: auto;
 }
 
 .combo-item {
@@ -338,7 +411,8 @@ body {
   gap: 0.75rem;
   padding: 0.6rem 0.75rem;
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
+  min-height: var(--touch-target);
 }
 
 .combo-colors {
@@ -364,7 +438,8 @@ body {
   height: 100%;
   background: var(--accent-color);
   border-radius: 4px;
-  transition: width 0.3s ease;
+  transition: width var(--transition-slow) ease;
+  contain: layout style paint;
 }
 
 .combo-count {
@@ -382,8 +457,14 @@ body {
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-base);
   font-family: inherit;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-color) 25%, transparent);
 }
 
 .btn:disabled {
@@ -398,7 +479,8 @@ body {
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, black 10%, var(--accent-color));
+  transform: scale(1.02);
 }
 
 .btn-success {
@@ -408,7 +490,8 @@ body {
 
 .btn-success:hover:not(:disabled) {
   filter: brightness(1.1);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, black 10%, var(--success-color));
+  transform: scale(1.02);
 }
 
 .btn-danger {
@@ -418,12 +501,13 @@ body {
 
 .btn-danger:hover:not(:disabled) {
   filter: brightness(1.1);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, black 10%, var(--danger-color));
+  transform: scale(1.02);
 }
 
 /* Make icons in danger buttons white */
 .btn-danger svg {
-  fill: white !important;
+  fill: currentColor;
 }
 
 .btn-secondary {
@@ -452,6 +536,13 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media (max-width: 768px) {
@@ -505,12 +596,6 @@ body {
   border-color: var(--danger-color);
 }
 
-.connection-status .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
 .connection-status.connected .dot {
   background: var(--success-color);
 }
@@ -520,18 +605,11 @@ body {
 }
 
 /* Liste des stagiaires dans le header */
-.session-info {
-  position: relative;
-}
-
 .connected-count.popover-trigger {
   cursor: pointer;
-  padding: 0.25rem 0.5rem;
+  padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: 6px;
-  transition: background 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  transition: background var(--transition-base);
 }
 
 .connected-count.popover-trigger:hover {
@@ -540,7 +618,7 @@ body {
 
 .popover-arrow {
   font-size: 0.65rem;
-  transition: transform 0.2s;
+  transition: transform var(--transition-base);
 }
 
 .connected-count.popover-trigger:hover .popover-arrow {
@@ -560,7 +638,7 @@ body {
   opacity: 0;
   visibility: hidden;
   transform: translateY(-10px);
-  transition: all 0.2s ease;
+  transition: all var(--transition-base) ease;
   z-index: 100;
 }
 
@@ -598,36 +676,13 @@ body {
   font-weight: 600;
 }
 
-.popover-list {
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 0.5rem;
-}
-
-.popover-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.popover-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.popover-list::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 3px;
-}
-
-.popover-list::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
-}
-
 .stagiaire-popover-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0.6rem 0.75rem;
   border-radius: 6px;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .stagiaire-popover-item:hover {
@@ -639,9 +694,6 @@ body {
 }
 
 .stagiaire-popover-status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
   background: var(--border-color);
 }
 
@@ -691,8 +743,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-height: 300px;
-  overflow-y: auto;
 }
 
 .stagiaire-vote-item {
@@ -740,7 +790,7 @@ body {
 .footer-link {
   color: var(--text-secondary);
   text-decoration: none;
-  transition: color 0.2s;
+  transition: color var(--transition-base);
 }
 
 .footer-link:hover {
