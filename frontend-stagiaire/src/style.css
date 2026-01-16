@@ -1,11 +1,14 @@
 :root {
+  /* Couleurs */
   --bg-color: #0f172a;
   --card-bg: #1e293b;
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --border-color: #334155;
   --accent-color: #3b82f6;
+  --accent-hover: #2563eb;
   --success-color: #22c55e;
+  --danger-color: #ef4444;
 
   /* Couleurs de vote */
   --color-rouge: #ef4444;
@@ -16,6 +19,23 @@
   --color-violet: #a855f7;
   --color-rose: #ec4899;
   --color-gris: #6b7280;
+
+  /* Border radius */
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+
+  /* Transitions */
+  --transition-fast: 0.15s;
+  --transition-base: 0.2s;
+
+  /* Espacements */
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
 }
 
 * {
@@ -39,6 +59,13 @@ body {
   flex-shrink: 0;
 }
 
+/* Dot réutilisable (status indicators) */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
 .icon-xs { width: 0.75rem; height: 0.75rem; }
 .icon-sm { width: 1rem; height: 1rem; }
 .icon-md { width: 1.25rem; height: 1.25rem; }
@@ -53,6 +80,7 @@ body {
   flex-direction: column;
   padding: 1rem;
   padding-bottom: 0;
+  overflow-x: hidden;
 }
 
 /* Container centré */
@@ -142,12 +170,17 @@ body {
   text-align: center;
   letter-spacing: 0.1em;
   font-family: monospace;
-  transition: border-color 0.2s;
+  transition: border-color var(--transition-fast);
 }
 
 .input-group input:focus {
   outline: none;
   border-color: var(--accent-color);
+}
+
+.input-group input:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
 }
 
 .input-group input.error {
@@ -169,7 +202,7 @@ body {
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-base);
   font-family: inherit;
   width: 100%;
 }
@@ -185,8 +218,8 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, black 10%, var(--accent-color));
+  transform: scale(1.02);
 }
 
 .btn-success {
@@ -195,8 +228,8 @@ body {
 }
 
 .btn-success:hover:not(:disabled) {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, black 10%, var(--success-color));
+  transform: scale(1.02);
 }
 
 .btn-large {
@@ -211,6 +244,12 @@ body {
 
 .btn-secondary:hover:not(:disabled) {
   background: #475569;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-color) 25%, transparent);
 }
 
 .btn-small {
@@ -232,7 +271,6 @@ body {
 }
 
 .waiting-icon {
-  font-size: 3rem;
   margin-bottom: 1rem;
   animation: bounce 2s infinite;
 }
@@ -272,24 +310,31 @@ body {
 .vote-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
 }
 
-.vote-button {
+/* Styles de base pour les options de vote */
+.vote-button,
+.vote-checkbox-label {
   aspect-ratio: 1;
-  border: none;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
   position: relative;
   overflow: hidden;
   font-size: 1.2rem;
   font-weight: 600;
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
+/* Bouton de vote (choix unique) */
 .vote-button:active {
   transform: scale(0.95);
 }
@@ -299,36 +344,31 @@ body {
   box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.5);
 }
 
+.vote-button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-color) 25%, transparent);
+}
+
 /* Checkbox style pour choix multiple */
 .vote-checkbox {
   display: none;
 }
 
 .vote-checkbox-label {
-  aspect-ratio: 1;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   border: 3px solid transparent;
 }
 
-.vote-checkbox-label.selected {
+.vote-checkbox-label.selected,
+.vote-checkbox:checked + .vote-checkbox-label {
   border-color: white;
   box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
 }
 
-.vote-checkbox:checked + .vote-checkbox-label {
-  border-color: white;
-  box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+.vote-checkbox-label:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-color) 25%, transparent);
 }
 
 /* Indicateur de sélection */
@@ -344,7 +384,7 @@ body {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity var(--transition-fast);
 }
 
 .vote-checkbox:checked + .vote-checkbox-label .check-indicator,
@@ -380,7 +420,6 @@ body {
 }
 
 .voted-icon {
-  font-size: 4rem;
   margin-bottom: 1rem;
   animation: checkmark 0.5s ease-out;
 }
@@ -413,7 +452,6 @@ body {
 }
 
 .closed-icon {
-  font-size: 3rem;
   margin-bottom: 1rem;
 }
 
@@ -477,7 +515,7 @@ body {
 .bg-gris { background: var(--color-gris); }
 
 /* Responsive */
-@media (max-width: 380px) {
+@media (max-width: 480px) {
   .vote-grid {
     grid-template-columns: 1fr;
   }
@@ -486,6 +524,13 @@ body {
   .vote-checkbox-label {
     aspect-ratio: auto;
     padding: 1.2rem;
+  }
+
+  .connection-status {
+    bottom: 0.5rem;
+    right: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
   }
 }
 
@@ -503,7 +548,7 @@ body {
 .footer-link {
   color: var(--text-secondary);
   text-decoration: none;
-  transition: color 0.2s;
+  transition: color var(--transition-fast);
 }
 
 .footer-link:hover {
@@ -528,5 +573,16 @@ body {
   .footer {
     flex-wrap: wrap;
     font-size: 0.7rem;
+  }
+}
+
+/* Respect des préférences de mouvement */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

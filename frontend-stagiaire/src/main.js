@@ -22,7 +22,6 @@ const AppState = {
 const state = {
   appState: AppState.JOINING,
   sessionCode: '',
-  sessionId: null,
   connected: false,
   availableColors: [],
   multipleChoice: false,
@@ -36,6 +35,12 @@ const state = {
 // Éléments DOM
 let app = null
 let ws = null
+let reconnectTimeoutId = null
+let connectionStatusEl = null
+let reconnectAttempts = 0
+
+const MAX_RECONNECT_DELAY = 30000
+const INITIAL_RECONNECT_DELAY = 2000
 
 // Initialisation
 function init() {
@@ -44,7 +49,7 @@ function init() {
   // Récupérer ou créer l'ID du stagiaire
   let savedId = localStorage.getItem('vote_stagiaire_id')
   if (!savedId) {
-    savedId = 'stagiaire_' + Math.random().toString(36).substr(2, 9)
+    savedId = 'stagiaire_' + Math.random().toString(36).slice(2, 11)
     localStorage.setItem('vote_stagiaire_id', savedId)
   }
   state.stagiaireId = savedId
@@ -72,11 +77,23 @@ function init() {
 
 // Connexion WebSocket
 function connectWebSocket(sessionCode) {
+  // Nettoyer le timeout de reconnexion existant
+  if (reconnectTimeoutId) {
+    clearTimeout(reconnectTimeoutId)
+    reconnectTimeoutId = null
+  }
+
+  // Fermer l'ancienne connexion si elle existe
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    ws.close()
+  }
+
   updateConnectionStatus(false)
 
   ws = new WebSocket(WS_URL)
 
   ws.onopen = () => {
+    reconnectAttempts = 0
     console.log('WebSocket connecté')
     updateConnectionStatus(true)
 
@@ -101,12 +118,14 @@ function connectWebSocket(sessionCode) {
   ws.onclose = () => {
     console.log('WebSocket déconnecté')
     updateConnectionStatus(false)
-    // Tentative de reconnexion après 2 secondes
-    setTimeout(() => {
+    // Tentative de reconnexion avec backoff exponentiel
+    const delay = Math.min(INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY)
+    reconnectAttempts++
+    reconnectTimeoutId = setTimeout(() => {
       if (state.sessionCode) {
         connectWebSocket(state.sessionCode)
       }
-    }, 2000)
+    }, delay)
   }
 
   ws.onerror = (error) => {
@@ -126,20 +145,21 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'session_joined':
       // Connexion réussie à la session
-      state.sessionId = msg.sessionId
       state.sessionCode = msg.sessionCode
       state.appState = AppState.WAITING
       localStorage.setItem('vote_session_code', msg.sessionCode)
       render()
       break
 
-    case 'join_error':
-      // Erreur de connexion (mauvais code)
-      showError('Code de session invalide ou session non trouvée')
-      state.appState = AppState.JOINING
-      state.sessionCode = ''
-      localStorage.removeItem('vote_session_code')
-      render()
+    case 'error':
+      if (state.appState === AppState.JOINING) {
+        showError(msg.message || 'Erreur de connexion')
+        state.sessionCode = ''
+        localStorage.removeItem('vote_session_code')
+        render()
+      } else {
+        showError(msg.message)
+      }
       break
 
     case 'vote_started':
@@ -173,20 +193,6 @@ function handleMessage(msg) {
       render()
       break
 
-    case 'config_updated':
-      // La configuration a été mise à jour
-      if (msg.colors) {
-        state.availableColors = msg.colors
-      }
-      if (msg.multipleChoice !== undefined) {
-        state.multipleChoice = msg.multipleChoice
-      }
-      if (state.appState === AppState.VOTING) {
-        state.selectedColors.clear()
-        render()
-      }
-      break
-
     case 'name_updated':
       // Confirmation de mise à jour du nom
       state.prenomEdit = false
@@ -199,23 +205,21 @@ function handleMessage(msg) {
 function updateConnectionStatus(connected) {
   state.connected = connected
 
-  const existing = document.querySelector('.connection-status')
-  if (existing) {
-    existing.remove()
-  }
-
   // Ne pas afficher le statut si on est en phase de connexion
   if (state.appState === AppState.JOINING) {
+    connectionStatusEl?.remove()
+    connectionStatusEl = null
     return
   }
 
-  const status = document.createElement('div')
-  status.className = `connection-status ${connected ? 'connected' : 'disconnected'}`
-  status.innerHTML = `
-    <span class="dot"></span>
-    ${connected ? '' : 'Reconnexion...'}
-  `
-  document.body.appendChild(status)
+  if (!connectionStatusEl) {
+    connectionStatusEl = document.createElement('div')
+    connectionStatusEl.className = 'connection-status'
+    document.body.appendChild(connectionStatusEl)
+  }
+
+  connectionStatusEl.className = `connection-status ${connected ? 'connected' : 'disconnected'}`
+  connectionStatusEl.innerHTML = `<span class="dot"></span>${connected ? '' : ' Reconnexion...'}`
 }
 
 // Afficher une erreur
@@ -611,20 +615,11 @@ function handleCheckboxChange(e) {
 
   if (e.target.checked) {
     state.selectedColors.add(colorId)
+    label?.classList.add('selected')
   } else {
     state.selectedColors.delete(colorId)
+    label?.classList.remove('selected')
   }
-
-  // Mettre à jour l'UI
-  const allLabels = document.querySelectorAll('.vote-checkbox-label')
-  allLabels.forEach(lbl => {
-    const checkbox = document.getElementById(lbl.htmlFor)
-    if (checkbox && checkbox.checked) {
-      lbl.classList.add('selected')
-    } else {
-      lbl.classList.remove('selected')
-    }
-  })
 
   // Mettre à jour le bouton
   const submitBtn = document.getElementById('submitVote')
@@ -644,7 +639,6 @@ function handleSubmitVote() {
 function submitVote() {
   send({
     type: 'vote',
-    sessionId: state.sessionId,
     stagiaireId: state.stagiaireId,
     colors: Array.from(state.selectedColors)
   })

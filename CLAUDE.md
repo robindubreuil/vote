@@ -52,7 +52,7 @@ vote/
 trainer_join     {sessionCode, trainerId}
 stagiaire_join   {sessionCode, stagiaireId, name?}
 start_vote       {colors[], multipleChoice}
-vote             {couleurs[], stagiaireId}
+vote             {colors[], stagiaireId}
 close_vote
 reset_vote       {colors[], multipleChoice}
 update_name      {stagiaireId, name}
@@ -62,7 +62,7 @@ update_name      {stagiaireId, name}
 ```
 session_created             {sessionCode}
 connected_count             {count, stagiaires[{id,name}]}
-vote_received               {stagiaireId, couleurs[]}
+vote_received               {stagiaireId, colors[]}
 stagiaire_names_updated     {stagiaires[{id,name}]}
 error                       {message}
 ```

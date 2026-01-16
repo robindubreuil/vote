@@ -198,7 +198,6 @@ describe('Formateur - Gestion d\'état', () => {
   beforeEach(() => {
     state = {
       sessionCode: null,
-      sessionId: null,
       connected: false,
       voteState: 'idle',
       selectedColors: new Set(['rouge', 'vert', 'bleu']),
@@ -304,7 +303,7 @@ describe('Formateur - Messages WebSocket', () => {
   it('devrait sérialiser correctement les messages', () => {
     const message = {
       type: 'start_vote',
-      sessionId: '1234',
+      sessionCode: '1234',
       colors: ['rouge', 'vert', 'bleu'],
       multipleChoice: false
     }

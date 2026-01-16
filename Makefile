@@ -65,52 +65,52 @@ uninstall:
 .PHONY: test
 test:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running tests...$(COLOR_RESET)"
-	$(GOTEST) -v -race -cover ./...
+	cd $(BINARY_PATH) && $(GOTEST) -v -race -cover ./...
 
 ## test-short: Run short tests only
 .PHONY: test-short
 test-short:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running short tests...$(COLOR_RESET)"
-	$(GOTEST) -short -v ./...
+	cd $(BINARY_PATH) && $(GOTEST) -short -v ./...
 
 ## test-cover: Run tests with coverage
 .PHONY: test-cover
 test-cover:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running tests with coverage...$(COLOR_RESET)"
-	$(GOTEST) -v -race -coverprofile=coverage.out -covermode=atomic ./...
-	$(GOCMD) tool cover -html=coverage.out -o coverage.html
-	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Coverage report: coverage.html$(COLOR_RESET)"
+	cd $(BINARY_PATH) && $(GOTEST) -v -race -coverprofile=coverage.out -covermode=atomic ./...
+	cd $(BINARY_PATH) && $(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Coverage report: $(BINARY_PATH)/coverage.html$(COLOR_RESET)"
 
 ## lint: Run linter
 .PHONY: lint
 lint:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running linter...$(COLOR_RESET)"
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
+		cd $(BINARY_PATH) && golangci-lint run ./...; \
 	else \
-		echo "$(COLOR_YELLOW)golangci-lint not installed. Install with:$(COLOR_RESET)"; \
-		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin"; \
+		echo "$(COLOR_YELLOW)golangci-lint not installed. Install with:$(COLOR_RESET)"
+		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin"
 	fi
 
 ## fmt: Format code
 .PHONY: fmt
 fmt:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Formatting code...$(COLOR_RESET)"
-	$(GOCMD) fmt ./...
+	cd $(BINARY_PATH) && $(GOCMD) fmt ./...
 
 ## vet: Run go vet
 .PHONY: vet
 vet:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running go vet...$(COLOR_RESET)"
-	$(GOCMD) vet ./...
+	cd $(BINARY_PATH) && $(GOCMD) vet ./...
 
 ## clean: Clean build artifacts
 .PHONY: clean
 clean:
 	@echo "$(COLOR_BOLD)$(COLOR_YELLOW)Cleaning...$(COLOR_RESET)"
 	rm -f $(BINARY_PATH)/$(BINARY_NAME)
-	rm -f coverage.out coverage.html
-	$(GOCMD) clean
+	rm -f $(BINARY_PATH)/coverage.out $(BINARY_PATH)/coverage.html
+	cd $(BINARY_PATH) && $(GOCMD) clean
 
 ## clean-deb: Clean Debian build artifacts
 .PHONY: clean-deb
@@ -140,10 +140,10 @@ run: build
 .PHONY: dev
 dev:
 	@if command -v air >/dev/null 2>&1; then \
-		air; \
+		cd $(BINARY_PATH) && air; \
 	else \
-		echo "$(COLOR_YELLOW)air not installed. Install with:$(COLOR_RESET)"; \
-		echo "  go install github.com/cosmtrek/air@latest"; \
+		echo "$(COLOR_YELLOW)air not installed. Install with:$(COLOR_RESET)"
+		echo "  go install github.com/cosmtrek/air@latest"
 		cd $(BINARY_PATH) && $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) . && ./$(BINARY_NAME); \
 	fi
 
@@ -151,8 +151,8 @@ dev:
 .PHONY: deps
 deps:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Downloading dependencies...$(COLOR_RESET)"
-	$(GOMOD) download
-	$(GOMOD) tidy
+	cd $(BINARY_PATH) && $(GOMOD) download
+	cd $(BINARY_PATH) && $(GOMOD) tidy
 
 ## docker: Build Docker image
 .PHONY: docker
