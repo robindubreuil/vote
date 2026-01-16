@@ -34,7 +34,7 @@ all: build
 .PHONY: build
 build:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Building $(BINARY_NAME)...$(COLOR_RESET)"
-	cd $(BINARY_PATH) && $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) .
+	cd $(BINARY_PATH) && $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) ./cmd/server
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Build complete: $(BINARY_PATH)/$(BINARY_NAME)$(COLOR_RESET)"
 
 ## build-deb: Build Debian package

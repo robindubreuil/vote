@@ -1,7 +1,8 @@
 import './style.css'
 import { icons } from '../../shared/icons.js'
-import { VERSION } from '../../shared/version.js'
 import { COLORS, escapeHtml } from '../../shared/colors.js'
+import { VoteClient } from '../../shared/websocket-client.js'
+import { renderFooterHTML, renderConnectionStatus } from '../../shared/ui.js'
 
 // Configuration de l'API WebSocket
 const WS_URL = import.meta.env.VITE_WS_URL || (() => {
@@ -34,13 +35,8 @@ const state = {
 
 // Éléments DOM
 let app = null
-let ws = null
-let reconnectTimeoutId = null
+let client = null
 let connectionStatusEl = null
-let reconnectAttempts = 0
-
-const MAX_RECONNECT_DELAY = 30000
-const INITIAL_RECONNECT_DELAY = 2000
 
 // Initialisation
 function init() {
@@ -60,84 +56,61 @@ function init() {
     state.prenom = savedPrenom
   }
 
+  // Initialiser la structure de base (Header, Main, Footer)
+  renderLayout()
+
+  // Initialiser le client WebSocket
+  initClient()
+
   // Vérifier si on a déjà un code session enregistré
   const savedCode = localStorage.getItem('vote_session_code')
   if (savedCode) {
     state.sessionCode = savedCode
     // Ne connecter que si on a un prénom
     if (state.prenom) {
-      connectWebSocket(savedCode)
+      connectToSession(savedCode)
     } else {
-      render()
+      updateView()
     }
   } else {
-    render()
+    updateView()
   }
 }
 
-// Connexion WebSocket
-function connectWebSocket(sessionCode) {
-  // Nettoyer le timeout de reconnexion existant
-  if (reconnectTimeoutId) {
-    clearTimeout(reconnectTimeoutId)
-    reconnectTimeoutId = null
-  }
-
-  // Fermer l'ancienne connexion si elle existe
-  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-    ws.close()
-  }
-
-  updateConnectionStatus(false)
-
-  ws = new WebSocket(WS_URL)
-
-  ws.onopen = () => {
-    reconnectAttempts = 0
-    console.log('WebSocket connecté')
-    updateConnectionStatus(true)
-
-    // S'identifier comme stagiaire avec le nom
-    send({
-      type: 'stagiaire_join',
-      sessionCode: sessionCode,
-      stagiaireId: state.stagiaireId,
-      name: state.prenom
-    })
-  }
-
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data)
-      handleMessage(msg)
-    } catch (e) {
-      console.error('Erreur parsing message:', e)
-    }
-  }
-
-  ws.onclose = () => {
-    console.log('WebSocket déconnecté')
-    updateConnectionStatus(false)
-    // Tentative de reconnexion avec backoff exponentiel
-    const delay = Math.min(INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY)
-    reconnectAttempts++
-    reconnectTimeoutId = setTimeout(() => {
-      if (state.sessionCode) {
-        connectWebSocket(state.sessionCode)
+// Initialisation du client WebSocket
+function initClient() {
+  client = new VoteClient(WS_URL, {
+    onStatusChange: (connected) => {
+      state.connected = connected
+      updateConnectionStatus(connected)
+    },
+    onOpen: () => {
+      // Si on a un code session et un prénom, on tente de rejoindre
+      if (state.sessionCode && state.prenom) {
+        client.send({
+          type: 'stagiaire_join',
+          sessionCode: state.sessionCode,
+          stagiaireId: state.stagiaireId,
+          name: state.prenom
+        })
       }
-    }, delay)
-  }
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error)
-  }
+    },
+    onMessage: (msg) => {
+      handleMessage(msg)
+    }
+  })
 }
 
-// Envoyer un message
-function send(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(data))
+// Connexion à une session
+function connectToSession(code) {
+  state.sessionCode = code
+  // Si le client n'est pas initialisé, on le fait
+  if (!client) {
+    initClient()
   }
+  
+  // On lance la connexion (cela fermera l'ancienne si elle existe)
+  client.connect()
 }
 
 // Gérer les messages reçus
@@ -154,9 +127,8 @@ function handleMessage(msg) {
     case 'error':
       if (state.appState === AppState.JOINING) {
         showError(msg.message || 'Erreur de connexion')
-        state.sessionCode = ''
-        localStorage.removeItem('vote_session_code')
-        render()
+        // En cas d'erreur fatale (ex: session invalide), on pourrait vouloir reset
+        // Mais pour l'instant on laisse l'utilisateur réessayer ou corriger
       } else {
         showError(msg.message)
       }
@@ -203,23 +175,16 @@ function handleMessage(msg) {
 
 // Mettre à jour le statut de connexion
 function updateConnectionStatus(connected) {
-  state.connected = connected
-
-  // Ne pas afficher le statut si on est en phase de connexion
+  // Ne pas afficher le statut si on est en phase de connexion initiale (écran titre)
   if (state.appState === AppState.JOINING) {
-    connectionStatusEl?.remove()
-    connectionStatusEl = null
+    if (connectionStatusEl) {
+      connectionStatusEl.remove()
+      connectionStatusEl = null
+    }
     return
   }
 
-  if (!connectionStatusEl) {
-    connectionStatusEl = document.createElement('div')
-    connectionStatusEl.className = 'connection-status'
-    document.body.appendChild(connectionStatusEl)
-  }
-
-  connectionStatusEl.className = `connection-status ${connected ? 'connected' : 'disconnected'}`
-  connectionStatusEl.innerHTML = `<span class="dot"></span>${connected ? '' : ' Reconnexion...'}`
+  connectionStatusEl = renderConnectionStatus(connected, document.body, connectionStatusEl)
 }
 
 // Afficher une erreur
@@ -227,42 +192,80 @@ function showError(message) {
   const errorEl = document.querySelector('.error-message')
   if (errorEl) {
     errorEl.textContent = message
+    errorEl.style.display = 'block'
     setTimeout(() => {
       errorEl.textContent = ''
-    }, 3000)
+      errorEl.style.display = 'none'
+    }, 5000)
   }
 }
 
-// Rendu principal
-function render() {
+// Structure globale statique
+function renderLayout() {
   app.innerHTML = `
-    <div class="container">
-      ${state.appState === AppState.JOINING ? renderJoinHTML() : ''}
-      ${state.prenomEdit ? renderEditNameHTML() : ''}
-      ${state.appState === AppState.WAITING && !state.prenomEdit ? renderWaitingHTML() : ''}
-      ${state.appState === AppState.VOTING && !state.prenomEdit ? renderVotingHTML() : ''}
-      ${state.appState === AppState.VOTED && !state.prenomEdit ? renderVotedHTML() : ''}
-      ${state.appState === AppState.CLOSED && !state.prenomEdit ? renderClosedHTML() : ''}
-    </div>
+    <div class="container" id="main-container"></div>
     ${renderFooterHTML()}
   `
-
-  attachEventListeners()
-  updateConnectionStatus(state.connected)
 }
 
-// Rendu du footer
-function renderFooterHTML() {
-  return `
-    <footer class="footer">
-      <span class="footer-author">${VERSION.author}</span>
-      <span class="footer-separator">•</span>
-      <a href="https://opensource.org/licenses/MIT" target="_blank" class="footer-link">Licence MIT</a>
-      <span class="footer-separator">•</span>
-      <span class="footer-version" title="${VERSION.fullHash}">${VERSION.commitHash}</span>
-      <span class="footer-date">${VERSION.commitDate}</span>
-    </footer>
-  `
+// Mise à jour de la vue principale
+function updateView() {
+  const container = document.getElementById('main-container')
+  if (!container) return
+
+  // Sauvegarde du focus
+  const activeElementId = document.activeElement?.id
+  
+  // Rendu du contenu en fonction de l'état
+  let contentHTML = ''
+  
+  if (state.prenomEdit) {
+    contentHTML = renderEditNameHTML()
+  } else {
+    switch (state.appState) {
+      case AppState.JOINING:
+        contentHTML = renderJoinHTML()
+        break
+      case AppState.WAITING:
+        contentHTML = renderWaitingHTML()
+        break
+      case AppState.VOTING:
+        contentHTML = renderVotingHTML()
+        break
+      case AppState.VOTED:
+        contentHTML = renderVotedHTML()
+        break
+      case AppState.CLOSED:
+        contentHTML = renderClosedHTML()
+        break
+    }
+  }
+
+  // On remplace le contenu
+  container.innerHTML = contentHTML
+
+  // Réattacher les écouteurs
+  attachEventListeners()
+  updateConnectionStatus(state.connected)
+
+  // Restauration du focus (best effort)
+  if (activeElementId) {
+    const el = document.getElementById(activeElementId)
+    if (el) {
+      el.focus()
+      // Place cursor at end if it's an input
+      if (el.tagName === 'INPUT' && el.type === 'text') {
+        const val = el.value
+        el.value = ''
+        el.value = val
+      }
+    }
+  }
+}
+
+// Alias pour compatibilité interne si nécessaire, mais on préfère updateView
+function render() {
+  updateView()
 }
 
 // Rendu du formulaire de connexion
@@ -278,7 +281,7 @@ function renderJoinHTML() {
             id="prenom"
             class="session-input"
             placeholder="Ex: Marie"
-            value="${state.prenom}"
+            value="${escapeHtml(state.prenom)}"
             autocomplete="name"
             autocapitalize="words"
             required
@@ -294,11 +297,11 @@ function renderJoinHTML() {
             maxlength="4"
             pattern="[0-9]{4}"
             inputmode="numeric"
-            value="${state.sessionCode}"
+            value="${escapeHtml(state.sessionCode)}"
             autocomplete="off"
           />
         </div>
-        <div class="error-message"></div>
+        <div class="error-message" role="alert"></div>
         <button type="submit" class="btn btn-primary btn-large">
           Rejoindre
         </button>
@@ -321,7 +324,7 @@ function renderWaitingHTML() {
         <div class="waiting-icon">${icons.hourglass(' class="icon icon-xl"')}</div>
         <div class="waiting-text">En attente du prochain vote...</div>
         <div class="waiting-name">Bonjour, <strong>${escapeHtml(state.prenom)}</strong> !</div>
-        <button type="button" class="btn btn-secondary btn-small" id="editNameBtn">
+        <button type="button" class="btn btn-secondary btn-small" id="editNameBtn" aria-label="Modifier mon nom">
           ${icons.pencil(' class="icon icon-sm"')} Modifier mon nom
         </button>
       </div>
@@ -342,7 +345,7 @@ function renderEditNameHTML() {
             id="editPrenom"
             class="session-input"
             placeholder="Ex: Marie"
-            value="${state.prenom}"
+            value="${escapeHtml(state.prenom)}"
             autocomplete="name"
             autocapitalize="words"
             required
@@ -393,6 +396,7 @@ function renderSingleChoiceHTML(activeColors) {
           class="vote-button bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''}"
           data-color="${color.id}"
           aria-pressed="${state.selectedColors.has(color.id)}"
+          aria-label="${color.name}"
         >
           ${color.name}
         </button>
@@ -446,7 +450,7 @@ function renderVotedHTML() {
       <div class="voted-state">
         <div class="voted-icon">${icons.check(' class="icon icon-xl"')}</div>
         <div class="voted-title">Vote enregistré !</div>
-        <div class="voted-subtitle">${selectedNames}</div>
+        <div class="voted-subtitle">${escapeHtml(selectedNames)}</div>
         <button type="button" class="btn btn-secondary btn-small" id="changeVoteBtn" style="margin-top: 1rem;">
           ${icons.pencil(' class="icon icon-sm"')} Modifier mon vote
         </button>
@@ -475,6 +479,22 @@ function renderClosedHTML() {
 
 // Attacher les écouteurs d'événements
 function attachEventListeners() {
+  // Input Binding (FIX: Eviter la perte d'état)
+  const inputs = {
+    'prenom': 'prenom',
+    'editPrenom': 'prenom',
+    'sessionCode': 'sessionCode'
+  }
+  
+  Object.entries(inputs).forEach(([id, stateKey]) => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.addEventListener('input', (e) => {
+        state[stateKey] = e.target.value
+      })
+    }
+  })
+
   // Formulaire de connexion
   const joinForm = document.getElementById('joinForm')
   if (joinForm) {
@@ -508,11 +528,32 @@ function attachEventListeners() {
   // Boutons de vote (choix unique)
   document.querySelectorAll('.vote-button').forEach(btn => {
     btn.addEventListener('click', handleSingleChoiceVote)
+    // Accessibility: Activate on Enter/Space
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        handleSingleChoiceVote(e)
+      }
+    })
   })
 
   // Checkboxes (choix multiple)
   document.querySelectorAll('.vote-checkbox').forEach(checkbox => {
     checkbox.addEventListener('change', handleCheckboxChange)
+    // Accessibility for label
+    const label = document.querySelector(`label[for="${checkbox.id}"]`)
+    if (label) {
+      label.setAttribute('tabindex', '0')
+      label.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          checkbox.checked = !checkbox.checked
+          // Trigger change event manually
+          const event = new Event('change')
+          checkbox.dispatchEvent(event)
+        }
+      })
+    }
   })
 
   // Bouton valider (choix multiple)
@@ -564,7 +605,7 @@ function handleJoin(e) {
   // Sauvegarder le prénom
   localStorage.setItem('vote_stagiaire_prenom', prenom)
 
-  connectWebSocket(code)
+  connectToSession(code)
 }
 
 // Gérer l'édition du nom
@@ -586,7 +627,7 @@ function handleEditName(e) {
   localStorage.setItem('vote_stagiaire_prenom', newPrenom)
 
   // Envoyer la mise à jour au serveur
-  send({
+  client.send({
     type: 'update_name',
     name: newPrenom
   })
@@ -637,7 +678,7 @@ function handleSubmitVote() {
 
 // Soumettre le vote
 function submitVote() {
-  send({
+  client.send({
     type: 'vote',
     stagiaireId: state.stagiaireId,
     colors: Array.from(state.selectedColors)

@@ -1,7 +1,8 @@
 import './style.css'
 import { icons } from '../../shared/icons.js'
-import { VERSION } from '../../shared/version.js'
 import { COLORS, escapeHtml } from '../../shared/colors.js'
+import { VoteClient } from '../../shared/websocket-client.js'
+import { renderFooterHTML, renderConnectionStatus } from '../../shared/ui.js'
 
 // Configuration de l'API WebSocket
 const WS_URL = import.meta.env.VITE_WS_URL || (() => {
@@ -14,7 +15,7 @@ const state = {
   sessionCode: null,
   connected: false,
   voteState: 'idle', // idle, active, closed
-  selectedColors: new Set(['rouge', 'vert', 'bleu']), // Par défaut
+  selectedColors: new Set(COLORS.slice(0, 3).map(c => c.id)), // Par défaut: 3 premières couleurs
   multipleChoice: false,
   connectedCount: 0,
   votes: [], // { stagiaireId, stagiaireName, couleurs: [] }
@@ -26,7 +27,8 @@ const state = {
 
 // Éléments DOM
 let app = null
-let ws = null
+let client = null
+let connectionStatusEl = null
 
 // Initialisation
 function init() {
@@ -42,8 +44,11 @@ function init() {
   // Générer un code session
   state.sessionCode = generateSessionCode()
 
-  render()
-  connectWebSocket()
+  // Initialiser l'interface de base
+  renderFullLayout()
+  
+  // Connecter le WebSocket
+  initClient(trainerId)
 
   // Listener global pour fermer la popover des stagiaires quand on clique en dehors
   document.addEventListener('click', (e) => {
@@ -60,66 +65,26 @@ function generateSessionCode() {
   return Math.floor(1000 + Math.random() * 9000).toString()
 }
 
-// Générer la liste HTML des stagiaires pour la popover
-function renderStagiairesListHTML() {
-  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
-    const nameA = (a.name || 'Anonyme').toLowerCase()
-    const nameB = (b.name || 'Anonyme').toLowerCase()
-    return nameA.localeCompare(nameB)
-  })
-
-  return sortedStagiaires.map(s => `
-    <div class="stagiaire-popover-item">
-      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
-      <span class="stagiaire-popover-status online"></span>
-    </div>
-  `).join('')
-}
-
-// Connexion WebSocket
-function connectWebSocket() {
-  updateConnectionStatus(false)
-
-  ws = new WebSocket(WS_URL)
-
-  ws.onopen = () => {
-    console.log('WebSocket connecté')
-    updateConnectionStatus(true)
-
-    // S'identifier comme formateur et créer/rejoindre la session
-    send({
-      type: 'trainer_join',
-      sessionCode: state.sessionCode,
-      trainerId: localStorage.getItem('vote_trainer_id')
-    })
-  }
-
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data)
+// Initialisation WebSocket
+function initClient(trainerId) {
+  client = new VoteClient(WS_URL, {
+    onStatusChange: (connected) => {
+      state.connected = connected
+      updateConnectionStatus(connected)
+    },
+    onOpen: () => {
+      client.send({
+        type: 'trainer_join',
+        sessionCode: state.sessionCode,
+        trainerId: trainerId
+      })
+    },
+    onMessage: (msg) => {
       handleMessage(msg)
-    } catch (e) {
-      console.error('Erreur parsing message:', e)
     }
-  }
-
-  ws.onclose = () => {
-    console.log('WebSocket déconnecté')
-    updateConnectionStatus(false)
-    // Tentative de reconnexion après 2 secondes
-    setTimeout(connectWebSocket, 2000)
-  }
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error)
-  }
-}
-
-// Envoyer un message
-function send(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(data))
-  }
+  })
+  
+  client.connect()
 }
 
 // Gérer les messages reçus
@@ -127,7 +92,7 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'session_created':
       state.sessionCode = msg.sessionCode || state.sessionCode
-      render()
+      updateHeader()
       break
 
     case 'connected_count':
@@ -137,7 +102,7 @@ function handleMessage(msg) {
         state.stagiaires = msg.stagiaires
         updateStagiaireNames(msg.stagiaires)
       }
-      renderHeader()
+      updateHeader()
       break
 
     case 'stagiaire_names_updated':
@@ -151,7 +116,9 @@ function handleMessage(msg) {
             vote.stagiaireName = state.stagiaireNames[vote.stagiaireId]
           }
         })
-        renderVoteResults()
+        if (state.voteState !== 'idle') {
+            updateVoteResults()
+        }
       }
       break
 
@@ -160,40 +127,44 @@ function handleMessage(msg) {
       state.voteStartTime = Date.now()
       state.votes = []
       startTimer()
-      render()
+      renderMainContent() // Basculer vers l'interface de vote
       break
 
     case 'vote_received':
-      // Nouveau vote d'un stagiaire avec son nom
+      // Nouveau vote d'un stagiaire
       const existingIndex = state.votes.findIndex(v => v.stagiaireId === msg.stagiaireId)
       const voteData = {
         couleurs: msg.colors,
         stagiaireId: msg.stagiaireId,
         stagiaireName: msg.stagiaireName || state.stagiaireNames[msg.stagiaireId] || ''
       }
+      
       // Mettre à jour la map des noms
       if (msg.stagiaireName) {
         state.stagiaireNames[msg.stagiaireId] = msg.stagiaireName
       }
+      
       if (existingIndex >= 0) {
         state.votes[existingIndex] = voteData
       } else {
         state.votes.push(voteData)
       }
-      renderVoteResults()
+      
+      // Optimisation: mise à jour partielle
+      updateVoteResults()
       break
 
     case 'vote_closed':
       state.voteState = 'closed'
       stopTimer()
-      render()
+      renderMainContent() // Mettre à jour les boutons d'action
       break
 
     case 'vote_reset':
       state.voteState = 'idle'
       state.votes = []
       stopTimer()
-      render()
+      renderMainContent() // Revenir à la configuration
       break
 
     case 'config_updated':
@@ -204,7 +175,9 @@ function handleMessage(msg) {
       if (msg.multipleChoice !== undefined) {
         state.multipleChoice = msg.multipleChoice
       }
-      render()
+      if (state.voteState === 'idle') {
+          renderMainContent()
+      }
       break
 
     default:
@@ -246,84 +219,104 @@ function stopTimer() {
 
 // Mettre à jour le statut de connexion
 function updateConnectionStatus(connected) {
-  state.connected = connected
-
-  const existing = document.querySelector('.connection-status')
-  if (existing) {
-    existing.remove()
-  }
-
-  const status = document.createElement('div')
-  status.className = `connection-status ${connected ? 'connected' : 'disconnected'}`
-  status.innerHTML = `
-    <span class="dot"></span>
-    ${connected ? 'Connecté' : 'Déconnecté...'}
-  `
-  document.body.appendChild(status)
+  connectionStatusEl = renderConnectionStatus(connected, document.body, connectionStatusEl)
 }
 
-// Rendu principal
-function render() {
+// Structure globale
+function renderFullLayout() {
   app.innerHTML = `
     <div class="container">
-      ${renderHeaderHTML()}
-      ${state.voteState === 'idle' ? renderConfigHTML() : renderVoteHTML()}
+      <header class="header" id="app-header"></header>
+      <main id="app-content"></main>
     </div>
     ${renderFooterHTML()}
   `
-
-  attachEventListeners()
+  updateHeader()
+  renderMainContent()
 }
 
-// Rendu du footer
-function renderFooterHTML() {
-  return `
-    <footer class="footer">
-      <span class="footer-author">${VERSION.author}</span>
-      <span class="footer-separator">•</span>
-      <a href="https://opensource.org/licenses/MIT" target="_blank" class="footer-link">Licence MIT</a>
-      <span class="footer-separator">•</span>
-      <span class="footer-version" title="${VERSION.fullHash}">${VERSION.commitHash}</span>
-      <span class="footer-date">${VERSION.commitDate}</span>
-    </footer>
+// Rendu du Header uniquement
+function updateHeader() {
+  const header = document.getElementById('app-header')
+  if (!header) return
+
+  header.innerHTML = `
+    <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
+    <div class="session-info">
+      ${state.sessionCode ? `<span class="session-code">${state.sessionCode}</span>` : ''}
+      <div class="connected-count popover-trigger" tabindex="0" role="button" aria-haspopup="true" aria-expanded="false">
+        <span class="dot"></span>
+        <span class="count-text">${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}</span>
+        ${state.connectedCount > 0 ? `<span class="popover-arrow">${icons.chevronDown(' class="icon icon-xs"')}</span>` : ''}
+      </div>
+      ${state.connectedCount > 0 ? `
+        <div class="stagiaires-popover">
+          <div class="popover-header">
+            <span class="popover-title">Stagiaires connectés</span>
+            <span class="popover-count">${state.connectedCount}</span>
+          </div>
+          <div class="popover-list custom-scrollbar">
+            ${renderStagiairesListHTML()}
+          </div>
+        </div>
+      ` : ''}
+    </div>
   `
+  attachHeaderListeners()
 }
 
-function renderHeader() {
-  const header = document.querySelector('.header')
-  if (header) {
-    header.innerHTML = renderHeaderHTML()
+function attachHeaderListeners() {
+  const popoverTrigger = document.querySelector('.popover-trigger')
+  if (popoverTrigger) {
+    const toggle = (e) => {
+      // Ne pas toggle si on clique sur la popover elle-même
+      if (e.target.closest('.stagiaires-popover')) return
+      
+      popoverTrigger.classList.toggle('active')
+      const isExpanded = popoverTrigger.classList.contains('active')
+      popoverTrigger.setAttribute('aria-expanded', isExpanded)
+    }
+
+    popoverTrigger.addEventListener('click', toggle)
+    popoverTrigger.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        toggle(e)
+      }
+    })
   }
 }
 
-function renderHeaderHTML() {
-  return `
-    <header class="header">
-      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
-      <div class="session-info">
-        ${state.sessionCode ? `<span class="session-code">${state.sessionCode}</span>` : ''}
-        <div class="connected-count popover-trigger">
-          <span class="dot"></span>
-          <span class="count-text">${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}</span>
-          ${state.connectedCount > 0 ? `<span class="popover-arrow">${icons.chevronDown(' class="icon icon-xs"')}</span>` : ''}
-        </div>
-        ${state.connectedCount > 0 ? `
-          <div class="stagiaires-popover">
-            <div class="popover-header">
-              <span class="popover-title">Stagiaires connectés</span>
-              <span class="popover-count">${state.connectedCount}</span>
-            </div>
-            <div class="popover-list custom-scrollbar">
-              ${renderStagiairesListHTML()}
-            </div>
-          </div>
-        ` : ''}
-      </div>
-    </header>
-  `
+// Générer la liste HTML des stagiaires pour la popover
+function renderStagiairesListHTML() {
+  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
+    const nameA = (a.name || 'Anonyme').toLowerCase()
+    const nameB = (b.name || 'Anonyme').toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+
+  return sortedStagiaires.map(s => `
+    <div class="stagiaire-popover-item">
+      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
+      <span class="stagiaire-popover-status online"></span>
+    </div>
+  `).join('')
 }
 
-// Supprimé : doublon de renderHeaderHTML()
+// Rendu du contenu principal (Config ou Vote)
+function renderMainContent() {
+  const main = document.getElementById('app-content')
+  if (!main) return
+
+  if (state.voteState === 'idle') {
+    main.innerHTML = renderConfigHTML()
+    attachConfigListeners()
+  } else {
+    main.innerHTML = renderVoteHTML()
+    attachVoteListeners()
+    updateVoteResults() // Hydrate initial stats
+  }
+}
 
 // Rendu de la configuration
 function renderConfigHTML() {
@@ -342,7 +335,7 @@ function renderConfigHTML() {
                   value="${color.id}"
                   ${state.selectedColors.has(color.id) ? 'checked' : ''}
                 />
-                <span class="color-swatch" style="background: ${color.color}"></span>
+                <span class="color-swatch" style="background-color: ${color.color}"></span>
                 <span class="color-name">${color.name}</span>
               </label>
             `).join('')}
@@ -364,38 +357,80 @@ function renderConfigHTML() {
   `
 }
 
+function attachConfigListeners() {
+  // Checkboxes des couleurs
+  document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      const colorId = e.target.value
+      if (e.target.checked) {
+        state.selectedColors.add(colorId)
+      } else {
+        state.selectedColors.delete(colorId)
+      }
+
+      // Mettre à jour la classe selected
+      const parent = e.target.closest('.color-checkbox')
+      parent.classList.toggle('selected', e.target.checked)
+
+      // Mettre à jour l'état du bouton
+      const startBtn = document.getElementById('startVote')
+      if (startBtn) {
+        startBtn.disabled = state.selectedColors.size < 2
+      }
+    })
+  })
+
+  // Toggle choix multiple
+  const toggleMultiple = document.querySelector('.multiple-choice-toggle')
+  if (toggleMultiple) {
+    toggleMultiple.addEventListener('click', (e) => {
+      // Avoid double trigger if clicking the inner switch
+      if (e.target.dataset.action === 'toggle-multiple') return
+      
+      state.multipleChoice = !state.multipleChoice
+      const switchEl = toggleMultiple.querySelector('.toggle-switch')
+      switchEl.classList.toggle('active', state.multipleChoice)
+    })
+  }
+
+  // Bouton lancer le vote
+  const startBtn = document.getElementById('startVote')
+  if (startBtn) {
+    startBtn.addEventListener('click', startVote)
+  }
+}
+
 // Rendu du vote en cours
 function renderVoteHTML() {
   const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
-  const colorCounts = getColorCounts()
-  const maxCount = Math.max(...Object.values(colorCounts), 1)
-
+  // Empty containers, will be filled by updateVoteResults
+  
   return `
     <div class="card">
       <div class="vote-header">
         <div class="vote-timer">${icons.timer(' class="icon icon-sm"')} 00:00</div>
-        <div class="vote-stats">${icons.chart(' class="icon icon-sm"')} ${state.votes.length} / ${state.connectedCount} votes</div>
+        <div class="vote-stats" aria-live="polite">${icons.chart(' class="icon icon-sm"')} 0 / ${state.connectedCount} votes</div>
       </div>
 
       <div class="stats-grid stats-grid-3cols">
         <div>
           <div class="stats-header">Par couleur</div>
           <div class="color-bars">
-            ${renderColorBarsHTML(activeColors, colorCounts, maxCount)}
+            <!-- Filled by JS -->
           </div>
         </div>
 
         <div>
           <div class="stats-header">Par combinaison</div>
           <div class="combinations-list custom-scrollbar">
-            ${renderCombinationsHTML()}
+             <!-- Filled by JS -->
           </div>
         </div>
 
         <div>
           <div class="stats-header">Par stagiaire</div>
           <div class="stagiaires-votes-list custom-scrollbar">
-            ${renderStagiairesVotesHTML()}
+             <!-- Filled by JS -->
           </div>
         </div>
       </div>
@@ -409,6 +444,114 @@ function renderVoteHTML() {
       </div>
     </div>
   `
+}
+
+function attachVoteListeners() {
+   // Bouton fermer le vote
+  const closeBtn = document.getElementById('closeVote')
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeVote)
+  }
+
+  // Bouton nouveau vote
+  const newVoteBtn = document.getElementById('newVote')
+  if (newVoteBtn) {
+    newVoteBtn.addEventListener('click', resetVote)
+  }
+}
+
+// Mettre à jour uniquement les résultats du vote
+function updateVoteResults() {
+  const voteStats = document.querySelector('.vote-stats')
+  if (voteStats) {
+    voteStats.innerHTML = `${icons.chart(' class="icon icon-sm"')} ${state.votes.length} / ${state.connectedCount} votes`
+  }
+
+  const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
+  const colorCounts = getColorCounts()
+  const maxCount = Math.max(...Object.values(colorCounts), 1)
+
+  // Optimisation: Mise à jour granulaire des barres
+  updateColorBars(activeColors, colorCounts, maxCount)
+
+  // Mise à jour des combinaisons
+  // Note: Pour les combinaisons et la liste des votes, on fait un re-render partiel
+  // car la structure change souvent (ordre, nombre d'items)
+  const combinationsList = document.querySelector('.combinations-list')
+  if (combinationsList) {
+    combinationsList.innerHTML = renderCombinationsHTML()
+  }
+
+  // Mise à jour de la liste des votes par stagiaire
+  // Ici on pourrait aussi optimiser mais le tri changeant rend le diff complexe
+  const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
+  if (stagiairesVotesList) {
+    stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
+  }
+}
+
+// Mise à jour optimisée des barres de couleur
+function updateColorBars(activeColors, colorCounts, maxCount) {
+  const container = document.querySelector('.color-bars')
+  if (!container) return
+
+  // Premier rendu si vide ou si le nombre de barres a changé
+  // (ce qui arrive si on change la config, mais pas pendant le vote normalement)
+  if (container.children.length === 0 || container.children.length !== activeColors.length) {
+    container.innerHTML = renderColorBarsHTML(activeColors, colorCounts, maxCount)
+    return
+  }
+
+  // Mise à jour des barres existantes
+  activeColors.forEach(color => {
+    const count = colorCounts[color.id] || 0
+    const percent = (count / maxCount) * 100
+    
+    // On cherche la ligne correspondant à la couleur
+    const row = container.querySelector(`[data-color="${color.id}"]`)
+    if (row) {
+      const countEl = row.querySelector('.color-bar-count')
+      const fillEl = row.querySelector('.color-bar-fill')
+      
+      if (countEl && countEl.textContent !== count.toString()) {
+        countEl.textContent = count
+      }
+      
+      if (fillEl) {
+        fillEl.style.width = `${percent}%`
+        // Use background-color to respect CSS gradients
+        // fillEl.style.backgroundColor = color.color // Already set via inline style, just need to ensure initial render is correct
+        if (count === 0) {
+            fillEl.classList.add('empty')
+        } else {
+            fillEl.classList.remove('empty')
+        }
+      }
+    } else {
+      // Fallback si on ne trouve pas la ligne (ne devrait pas arriver si la structure est stable)
+      container.innerHTML = renderColorBarsHTML(activeColors, colorCounts, maxCount)
+    }
+  })
+}
+
+// Rendu des barres de couleur
+function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
+  return activeColors.map(color => {
+    const count = colorCounts[color.id] || 0
+    const percent = (count / maxCount) * 100
+    return `
+      <div class="color-bar-row" data-color="${color.id}">
+        <div class="color-bar-label">
+          <span class="color-bar-swatch" style="background-color: ${color.color}"></span>
+          <span class="color-bar-name">${color.name}</span>
+        </div>
+        <div class="color-bar-track">
+          <span class="color-bar-count">${count}</span>
+          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${color.color}"></div>
+        </div>
+      </div>
+    `
+  }).join('')
 }
 
 // Rendu des combinaisons
@@ -433,7 +576,7 @@ function renderCombinationsHTML() {
         <div class="combo-colors">
           ${combo.colors.map(colorId => {
             const color = COLORS.find(c => c.id === colorId)
-            return `<span class="combo-swatch" style="background: ${color?.color || '#666'}"></span>`
+            return `<span class="combo-swatch" style="background-color: ${color?.color || '#666'}"></span>`
           }).join('')}
         </div>
         <div class="combo-bar">
@@ -467,7 +610,7 @@ function renderStagiairesVotesHTML() {
     const displayName = vote.stagiaireName || 'Anonyme'
     const colorsHTML = vote.couleurs.map(colorId => {
       const color = COLORS.find(c => c.id === colorId)
-      return `<span class="stagiaire-vote-swatch" style="background: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+      return `<span class="stagiaire-vote-swatch" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
     }).join('')
 
     return `
@@ -496,26 +639,6 @@ function getCombinations() {
     .sort((a, b) => b.count - a.count)
 }
 
-// Rendu des barres de couleur (utilisé dans renderVoteHTML et renderVoteResults)
-function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
-  return activeColors.map(color => {
-    const count = colorCounts[color.id] || 0
-    const percent = (count / maxCount) * 100
-    return `
-      <div class="color-bar-row">
-        <div class="color-bar-label">
-          <span class="color-bar-swatch" style="background: ${color.color}"></span>
-          <span class="color-bar-name">${color.name}</span>
-        </div>
-        <div class="color-bar-track">
-          <span class="color-bar-count">${count}</span>
-          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background: ${color.color}"></div>
-        </div>
-      </div>
-    `
-  }).join('')
-}
-
 // Calculer les votes par couleur
 function getColorCounts() {
   const counts = {}
@@ -527,102 +650,9 @@ function getColorCounts() {
   return counts
 }
 
-// Mettre à jour uniquement les résultats du vote (sans re-render complet)
-function renderVoteResults() {
-  const voteStats = document.querySelector('.vote-stats')
-  if (voteStats) {
-    voteStats.innerHTML = `${icons.chart(' class="icon icon-sm"')} ${state.votes.length} / ${state.connectedCount} votes`
-  }
-
-  // Mettre à jour les barres de couleur
-  const colorBarsContainer = document.querySelector('.color-bars')
-  if (colorBarsContainer) {
-    const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
-    const colorCounts = getColorCounts()
-    const maxCount = Math.max(...Object.values(colorCounts), 1)
-
-    colorBarsContainer.innerHTML = renderColorBarsHTML(activeColors, colorCounts, maxCount)
-  }
-
-  // Mettre à jour les combinaisons
-  const combinationsList = document.querySelector('.combinations-list')
-  if (combinationsList) {
-    combinationsList.innerHTML = renderCombinationsHTML()
-  }
-
-  // Mettre à jour la liste des votes par stagiaire
-  const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
-  if (stagiairesVotesList) {
-    stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
-  }
-}
-
-// Attacher les écouteurs d'événements
-function attachEventListeners() {
-  // Popover des stagiaires (toggle au clic pour mobile)
-  const popoverTrigger = document.querySelector('.popover-trigger')
-  if (popoverTrigger) {
-    popoverTrigger.addEventListener('click', (e) => {
-      // Ne pas toggle si on clique sur la popover elle-même
-      if (e.target.closest('.stagiaires-popover')) return
-      popoverTrigger.classList.toggle('active')
-    })
-  }
-
-  // Checkboxes des couleurs
-  document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach(checkbox => {
-    checkbox.addEventListener('change', (e) => {
-      const colorId = e.target.value
-      if (e.target.checked) {
-        state.selectedColors.add(colorId)
-      } else {
-        state.selectedColors.delete(colorId)
-      }
-
-      // Mettre à jour la classe selected
-      const parent = e.target.closest('.color-checkbox')
-      parent.classList.toggle('selected', e.target.checked)
-
-      // Mettre à jour l'état du bouton
-      const startBtn = document.getElementById('startVote')
-      if (startBtn) {
-        startBtn.disabled = state.selectedColors.size < 2
-      }
-    })
-  })
-
-  // Toggle choix multiple
-  const toggleMultiple = document.querySelector('[data-action="toggle-multiple"]')
-  if (toggleMultiple) {
-    toggleMultiple.addEventListener('click', () => {
-      state.multipleChoice = !state.multipleChoice
-      toggleMultiple.classList.toggle('active', state.multipleChoice)
-    })
-  }
-
-  // Bouton lancer le vote
-  const startBtn = document.getElementById('startVote')
-  if (startBtn) {
-    startBtn.addEventListener('click', startVote)
-  }
-
-  // Bouton fermer le vote
-  const closeBtn = document.getElementById('closeVote')
-  if (closeBtn) {
-    closeBtn.addEventListener('click', closeVote)
-  }
-
-  // Bouton nouveau vote
-  const newVoteBtn = document.getElementById('newVote')
-  if (newVoteBtn) {
-    newVoteBtn.addEventListener('click', resetVote)
-  }
-
-}
-
 // Actions
 function startVote() {
-  send({
+  client.send({
     type: 'start_vote',
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
@@ -632,18 +662,18 @@ function startVote() {
 }
 
 function closeVote() {
-  send({
+  client.send({
     type: 'close_vote',
     sessionCode: state.sessionCode
   })
 
   state.voteState = 'closed'
   stopTimer()
-  render()
+  renderMainContent()
 }
 
 function resetVote() {
-  send({
+  client.send({
     type: 'reset_vote',
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
@@ -653,7 +683,7 @@ function resetVote() {
   state.voteState = 'idle'
   state.votes = []
   stopTimer()
-  render()
+  renderMainContent()
 }
 
 // Demander confirmation avant de quitter la page
