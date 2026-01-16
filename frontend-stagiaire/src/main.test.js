@@ -108,7 +108,6 @@ describe('Stagiaire - Gestion d\'état', () => {
     state = {
       appState: AppState.JOINING,
       sessionCode: '',
-      sessionId: null,
       connected: false,
       availableColors: [],
       multipleChoice: false,
@@ -125,12 +124,10 @@ describe('Stagiaire - Gestion d\'état', () => {
   it('devrait passer à WAITING après connexion réussie', () => {
     state.appState = AppState.WAITING
     state.sessionCode = '1234'
-    state.sessionId = 'session-123'
     state.connected = true
 
     expect(state.appState).toBe(AppState.WAITING)
     expect(state.sessionCode).toBe('1234')
-    expect(state.sessionId).toBe('session-123')
     expect(state.connected).toBe(true)
   })
 
@@ -254,7 +251,6 @@ describe('Stagiaire - Messages WebSocket', () => {
   it('devrait sérialiser le message de vote (choix unique)', () => {
     const message = {
       type: 'vote',
-      sessionId: 'session-123',
       stagiaireId: 'stagiaire_abc123',
       colors: ['rouge']
     }
@@ -270,7 +266,6 @@ describe('Stagiaire - Messages WebSocket', () => {
   it('devrait sérialiser le message de vote (choix multiple)', () => {
     const message = {
       type: 'vote',
-      sessionId: 'session-123',
       stagiaireId: 'stagiaire_abc123',
       colors: ['rouge', 'vert', 'bleu']
     }
@@ -313,19 +308,18 @@ describe('Stagiaire - Messages WebSocket', () => {
     expect(parsed.type).toBe('vote_reset')
   })
 
-  it('devrait parser le message join_error', () => {
-    const jsonMessage = '{"type":"join_error"}'
+  it('devrait parser le message error', () => {
+    const jsonMessage = '{"type":"error"}'
     const parsed = JSON.parse(jsonMessage)
 
-    expect(parsed.type).toBe('join_error')
+    expect(parsed.type).toBe('error')
   })
 
   it('devrait parser le message session_joined', () => {
-    const jsonMessage = '{"type":"session_joined","sessionId":"session-123","sessionCode":"1234"}'
+    const jsonMessage = '{"type":"session_joined","sessionCode":"1234"}'
     const parsed = JSON.parse(jsonMessage)
 
     expect(parsed.type).toBe('session_joined')
-    expect(parsed.sessionId).toBe('session-123')
     expect(parsed.sessionCode).toBe('1234')
   })
 })

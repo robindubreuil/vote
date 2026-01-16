@@ -1,0 +1,6 @@
+vote-backend
+vote-server
+.idea/
+.vscode/
+*.log
+tmp/

@@ -12,7 +12,6 @@ const WS_URL = import.meta.env.VITE_WS_URL || (() => {
 // État de l'application
 const state = {
   sessionCode: null,
-  sessionId: null,
   connected: false,
   voteState: 'idle', // idle, active, closed
   selectedColors: new Set(['rouge', 'vert', 'bleu']), // Par défaut
@@ -36,7 +35,7 @@ function init() {
   // Créer ou récupérer l'ID de session formateur
   let trainerId = localStorage.getItem('vote_trainer_id')
   if (!trainerId) {
-    trainerId = 'trainer_' + Math.random().toString(36).substr(2, 9)
+    trainerId = 'trainer_' + Math.random().toString(36).substring(2, 11)
     localStorage.setItem('vote_trainer_id', trainerId)
   }
 
@@ -45,11 +44,36 @@ function init() {
 
   render()
   connectWebSocket()
+
+  // Listener global pour fermer la popover des stagiaires quand on clique en dehors
+  document.addEventListener('click', (e) => {
+    const popoverContainer = document.querySelector('.session-info')
+    if (popoverContainer && !popoverContainer.contains(e.target)) {
+      const trigger = popoverContainer.querySelector('.popover-trigger')
+      if (trigger) trigger.classList.remove('active')
+    }
+  })
 }
 
 // Générer un code à 4 chiffres
 function generateSessionCode() {
   return Math.floor(1000 + Math.random() * 9000).toString()
+}
+
+// Générer la liste HTML des stagiaires pour la popover
+function renderStagiairesListHTML() {
+  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
+    const nameA = (a.name || 'Anonyme').toLowerCase()
+    const nameB = (b.name || 'Anonyme').toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+
+  return sortedStagiaires.map(s => `
+    <div class="stagiaire-popover-item">
+      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
+      <span class="stagiaire-popover-status online"></span>
+    </div>
+  `).join('')
 }
 
 // Connexion WebSocket
@@ -102,7 +126,6 @@ function send(data) {
 function handleMessage(msg) {
   switch (msg.type) {
     case 'session_created':
-      state.sessionId = msg.sessionId
       state.sessionCode = msg.sessionCode || state.sessionCode
       render()
       break
@@ -112,13 +135,7 @@ function handleMessage(msg) {
       state.connectedCount = msg.count || 0
       if (msg.stagiaires) {
         state.stagiaires = msg.stagiaires
-        // Mettre à jour la map des noms
-        state.stagiaireNames = {}
-        msg.stagiaires.forEach(s => {
-          if (s.name) {
-            state.stagiaireNames[s.id] = s.name
-          }
-        })
+        updateStagiaireNames(msg.stagiaires)
       }
       renderHeader()
       break
@@ -127,12 +144,7 @@ function handleMessage(msg) {
       // Mise à jour des noms des stagiaires
       if (msg.stagiaires) {
         state.stagiaires = msg.stagiaires
-        state.stagiaireNames = {}
-        msg.stagiaires.forEach(s => {
-          if (s.name) {
-            state.stagiaireNames[s.id] = s.name
-          }
-        })
+        updateStagiaireNames(msg.stagiaires)
         // Mettre à jour les votes existants avec les nouveaux noms
         state.votes.forEach(vote => {
           if (state.stagiaireNames[vote.stagiaireId]) {
@@ -141,11 +153,6 @@ function handleMessage(msg) {
         })
         renderVoteResults()
       }
-      break
-
-    case 'stagiaire_left':
-      state.connectedCount = msg.connectedCount || 0
-      renderHeader()
       break
 
     case 'vote_started':
@@ -200,11 +207,19 @@ function handleMessage(msg) {
       render()
       break
 
-    case 'connected_count':
-      state.connectedCount = msg.count
-      renderHeader()
-      break
+    default:
+      console.debug('Type de message inconnu:', msg.type)
   }
+}
+
+// Mettre à jour la map des noms des stagiaires
+function updateStagiaireNames(stagiaires) {
+  state.stagiaireNames = {}
+  stagiaires.forEach(s => {
+    if (s.name) {
+      state.stagiaireNames[s.id] = s.name
+    }
+  })
 }
 
 // Démarrer le timer
@@ -277,25 +292,11 @@ function renderFooterHTML() {
 function renderHeader() {
   const header = document.querySelector('.header')
   if (header) {
-    header.innerHTML = renderHeaderContent()
+    header.innerHTML = renderHeaderHTML()
   }
 }
 
 function renderHeaderHTML() {
-  // Construire la liste des stagiaires pour la popover
-  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
-    const nameA = (a.name || 'Anonyme').toLowerCase()
-    const nameB = (b.name || 'Anonyme').toLowerCase()
-    return nameA.localeCompare(nameB)
-  })
-
-  const stagiairesListHTML = sortedStagiaires.map(s => `
-    <div class="stagiaire-popover-item">
-      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
-      <span class="stagiaire-popover-status online"></span>
-    </div>
-  `).join('')
-
   return `
     <header class="header">
       <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
@@ -312,8 +313,8 @@ function renderHeaderHTML() {
               <span class="popover-title">Stagiaires connectés</span>
               <span class="popover-count">${state.connectedCount}</span>
             </div>
-            <div class="popover-list">
-              ${stagiairesListHTML}
+            <div class="popover-list custom-scrollbar">
+              ${renderStagiairesListHTML()}
             </div>
           </div>
         ` : ''}
@@ -322,44 +323,7 @@ function renderHeaderHTML() {
   `
 }
 
-function renderHeaderContent() {
-  // Construire la liste des stagiaires pour la popover
-  const sortedStagiaires = [...state.stagiaires].sort((a, b) => {
-    const nameA = (a.name || 'Anonyme').toLowerCase()
-    const nameB = (b.name || 'Anonyme').toLowerCase()
-    return nameA.localeCompare(nameB)
-  })
-
-  const stagiairesListHTML = sortedStagiaires.map(s => `
-    <div class="stagiaire-popover-item">
-      <span class="stagiaire-popover-name">${escapeHtml(s.name || 'Anonyme')}</span>
-      <span class="stagiaire-popover-status online"></span>
-    </div>
-  `).join('')
-
-  return `
-    <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
-    <div class="session-info">
-      ${state.sessionCode ? `<span class="session-code">${state.sessionCode}</span>` : ''}
-      <div class="connected-count popover-trigger">
-        <span class="dot"></span>
-        <span class="count-text">${state.connectedCount} connecté${state.connectedCount > 1 ? 's' : ''}</span>
-        ${state.connectedCount > 0 ? `<span class="popover-arrow">${icons.chevronDown(' class="icon icon-xs"')}</span>` : ''}
-      </div>
-      ${state.connectedCount > 0 ? `
-        <div class="stagiaires-popover">
-          <div class="popover-header">
-            <span class="popover-title">Stagiaires connectés</span>
-            <span class="popover-count">${state.connectedCount}</span>
-          </div>
-          <div class="popover-list">
-            ${stagiairesListHTML}
-          </div>
-        </div>
-      ` : ''}
-    </div>
-  `
-}
+// Supprimé : doublon de renderHeaderHTML()
 
 // Rendu de la configuration
 function renderConfigHTML() {
@@ -403,6 +367,8 @@ function renderConfigHTML() {
 // Rendu du vote en cours
 function renderVoteHTML() {
   const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
+  const colorCounts = getColorCounts()
+  const maxCount = Math.max(...Object.values(colorCounts), 1)
 
   return `
     <div class="card">
@@ -415,38 +381,21 @@ function renderVoteHTML() {
         <div>
           <div class="stats-header">Par couleur</div>
           <div class="color-bars">
-            ${activeColors.map(color => {
-              const count = getColorCount(color.id)
-              const colorCounts = getColorCounts()
-              const maxCount = Math.max(...Object.values(colorCounts), 1)
-              const percent = (count / maxCount) * 100
-              return `
-                <div class="color-bar-row">
-                  <div class="color-bar-label">
-                    <span class="color-bar-swatch" style="background: ${color.color}"></span>
-                    <span class="color-bar-name">${color.name}</span>
-                  </div>
-                  <div class="color-bar-track">
-                    <span class="color-bar-count">${count}</span>
-                    <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background: ${color.color}"></div>
-                  </div>
-                </div>
-              `
-            }).join('')}
+            ${renderColorBarsHTML(activeColors, colorCounts, maxCount)}
           </div>
         </div>
 
         <div>
           <div class="stats-header">Par combinaison</div>
-          <div class="combinations-list">
-            ${renderCombinationsHTML(activeColors)}
+          <div class="combinations-list custom-scrollbar">
+            ${renderCombinationsHTML()}
           </div>
         </div>
 
         <div>
           <div class="stats-header">Par stagiaire</div>
-          <div class="stagiaires-votes-list">
-            ${renderStagiairesVotesHTML(activeColors)}
+          <div class="stagiaires-votes-list custom-scrollbar">
+            ${renderStagiairesVotesHTML()}
           </div>
         </div>
       </div>
@@ -463,7 +412,7 @@ function renderVoteHTML() {
 }
 
 // Rendu des combinaisons
-function renderCombinationsHTML(activeColors) {
+function renderCombinationsHTML() {
   const combinations = getCombinations()
 
   if (combinations.length === 0) {
@@ -497,7 +446,7 @@ function renderCombinationsHTML(activeColors) {
 }
 
 // Rendu des votes par stagiaire
-function renderStagiairesVotesHTML(activeColors) {
+function renderStagiairesVotesHTML() {
   if (state.votes.length === 0) {
     return `
       <div class="empty-state">
@@ -547,9 +496,24 @@ function getCombinations() {
     .sort((a, b) => b.count - a.count)
 }
 
-// Calculer le nombre de votes pour une couleur
-function getColorCount(colorId) {
-  return getColorCounts()[colorId] || 0
+// Rendu des barres de couleur (utilisé dans renderVoteHTML et renderVoteResults)
+function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
+  return activeColors.map(color => {
+    const count = colorCounts[color.id] || 0
+    const percent = (count / maxCount) * 100
+    return `
+      <div class="color-bar-row">
+        <div class="color-bar-label">
+          <span class="color-bar-swatch" style="background: ${color.color}"></span>
+          <span class="color-bar-name">${color.name}</span>
+        </div>
+        <div class="color-bar-track">
+          <span class="color-bar-count">${count}</span>
+          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background: ${color.color}"></div>
+        </div>
+      </div>
+    `
+  }).join('')
 }
 
 // Calculer les votes par couleur
@@ -574,38 +538,22 @@ function renderVoteResults() {
   const colorBarsContainer = document.querySelector('.color-bars')
   if (colorBarsContainer) {
     const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
-    const maxCount = Math.max(...Object.values(getColorCounts()), 1)
+    const colorCounts = getColorCounts()
+    const maxCount = Math.max(...Object.values(colorCounts), 1)
 
-    colorBarsContainer.innerHTML = activeColors.map(color => {
-      const count = getColorCount(color.id)
-      const percent = (count / maxCount) * 100
-      return `
-        <div class="color-bar-row">
-          <div class="color-bar-label">
-            <span class="color-bar-swatch" style="background: ${color.color}"></span>
-            <span class="color-bar-name">${color.name}</span>
-          </div>
-          <div class="color-bar-track">
-            <span class="color-bar-count">${count}</span>
-            <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background: ${color.color}"></div>
-          </div>
-        </div>
-      `
-    }).join('')
+    colorBarsContainer.innerHTML = renderColorBarsHTML(activeColors, colorCounts, maxCount)
   }
 
   // Mettre à jour les combinaisons
   const combinationsList = document.querySelector('.combinations-list')
   if (combinationsList) {
-    const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
-    combinationsList.innerHTML = renderCombinationsHTML(activeColors)
+    combinationsList.innerHTML = renderCombinationsHTML()
   }
 
   // Mettre à jour la liste des votes par stagiaire
   const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
   if (stagiairesVotesList) {
-    const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
-    stagiairesVotesList.innerHTML = renderStagiairesVotesHTML(activeColors)
+    stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
   }
 }
 
@@ -618,13 +566,6 @@ function attachEventListeners() {
       // Ne pas toggle si on clique sur la popover elle-même
       if (e.target.closest('.stagiaires-popover')) return
       popoverTrigger.classList.toggle('active')
-    })
-
-    // Fermer la popover si on clique ailleurs
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('.session-info')) {
-        popoverTrigger.classList.remove('active')
-      }
     })
   }
 
@@ -681,27 +622,19 @@ function attachEventListeners() {
 
 // Actions
 function startVote() {
-  const activeColors = Array.from(state.selectedColors)
-
   send({
     type: 'start_vote',
-    sessionId: state.sessionId,
-    colors: activeColors,
+    sessionCode: state.sessionCode,
+    colors: Array.from(state.selectedColors),
     multipleChoice: state.multipleChoice
   })
-
-  // Optimistic update
-  state.voteState = 'active'
-  state.voteStartTime = Date.now()
-  state.votes = []
-  startTimer()
-  render()
+  // L'état sera mis à jour à la réception du message 'vote_started' par le serveur
 }
 
 function closeVote() {
   send({
     type: 'close_vote',
-    sessionId: state.sessionId
+    sessionCode: state.sessionCode
   })
 
   state.voteState = 'closed'
@@ -712,7 +645,7 @@ function closeVote() {
 function resetVote() {
   send({
     type: 'reset_vote',
-    sessionId: state.sessionId,
+    sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
     multipleChoice: state.multipleChoice
   })
@@ -725,10 +658,7 @@ function resetVote() {
 
 // Demander confirmation avant de quitter la page
 window.addEventListener('beforeunload', (e) => {
-  // Annuler l'événement et retourner une chaîne pour afficher la confirmation
   e.preventDefault()
-  e.returnValue = ''
-  return ''
 })
 
 // Démarrage
