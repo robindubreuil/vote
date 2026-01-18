@@ -1,6 +1,6 @@
 import { validateName, validateSessionCode } from '../../shared/validation.js'
 import { showError } from '../../shared/ui.js'
-import { icons } from '../../shared/icons.js'
+import { loader } from '../../shared/icons.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 
@@ -152,7 +152,7 @@ export function submitVote(triggerButton = null) {
     // If it's a small color button, maybe just a spinner or opacity?
     // For single choice buttons, let's just keep the text but add a spinner if it fits, or just disable style
     if (btn.id === 'submitVote') {
-       btn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Envoi...`
+       btn.innerHTML = `${loader(' class="icon icon-md spin"')} Envoi...`
     } else {
        // Single choice button
        btn.style.opacity = '0.7'
@@ -190,5 +190,21 @@ export function leaveSession() {
       client = null
     }
     render()
+  }
+}
+
+/**
+ * Handle keyboard shortcuts
+ * - Escape: Cancel current action (e.g., exit edit mode)
+ * - Enter: Submit forms (works natively for forms)
+ */
+export function handleKeyPress(event) {
+  // Escape key - cancel edit mode
+  if (event.key === 'Escape') {
+    if (state.prenomEdit) {
+      state.prenomEdit = false
+      render()
+      event.preventDefault()
+    }
   }
 }

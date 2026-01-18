@@ -4,6 +4,7 @@ import { initClient, connectToSession } from './websocket.js'
 import * as handlers from './handlers.js'
 import { state } from './state.js'
 import { validateSessionCode } from '../../shared/validation.js'
+import { getSessionCodeFromURL } from '../../shared/utils/url.js'
 
 // Élément DOM principal
 const app = document.getElementById('app')
@@ -22,7 +23,8 @@ function init() {
     handleSingleChoiceVote: handlers.handleSingleChoiceVote,
     handleCheckboxChange: handlers.handleCheckboxChange,
     handleSubmitVote: handlers.handleSubmitVote,
-    leaveSession: handlers.leaveSession
+    leaveSession: handlers.leaveSession,
+    handleKeyPress: handlers.handleKeyPress
   })
 
   // Récupérer l'ID du stagiaire (généré par le serveur)
@@ -41,8 +43,7 @@ function init() {
   let savedCode = sessionStorage.getItem('vote_session_code')
 
   // Check URL params for session code (override saved code if present)
-  const urlParams = new URLSearchParams(window.location.search)
-  const urlSession = urlParams.get('session')
+  const urlSession = getSessionCodeFromURL()
   if (urlSession && validateSessionCode(urlSession) === null) {
       savedCode = urlSession
   }

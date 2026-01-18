@@ -5,6 +5,8 @@ export const t = {
     sessionCode: 'Code de session',
     connected: 'Connecté',
     disconnected: 'Déconnecté',
+    cancel: 'Annuler',
+    save: 'Enregistrer',
   },
   stagiaire: {
     // From frontend-stagiaire main.js
@@ -19,6 +21,7 @@ export const t = {
     hello: 'Bonjour',
     modifyName: 'Modifier mon nom',
     yourName: 'Votre prénom',
+    yourNameInformal: 'Ton prénom',
     exMarie: 'Ex: Marie',
     join: 'Rejoindre',
     sessionNotFound: 'Session introuvable',
@@ -32,6 +35,7 @@ export const t = {
   },
   formateur: {
     // From frontend-formateur main.js
+    subtitle: 'Interface Formateur',
     createSession: 'Créer une nouvelle session',
     joinSession: 'Rejoindre',
     configTitle: 'Configuration du prochain vote',
@@ -54,5 +58,10 @@ export const t = {
     waiting: 'En attente',
     multipleChoiceToggle: 'Choix multiple (autoriser plusieurs couleurs)',
     leaveSession: 'Voulez-vous quitter cette session ?',
+    availableColors: 'Couleurs disponibles',
+    votes: 'votes',
+    anonymous: 'Anonyme',
+    online: 'En ligne',
+    offline: 'Hors ligne',
   }
 }
