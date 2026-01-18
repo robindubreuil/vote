@@ -2,7 +2,12 @@
  * Shared configuration constants and helpers
  */
 
-// WebSocket URL generation
+/**
+ * Generates the WebSocket URL for the current environment.
+ * Uses VITE_WS_URL environment variable if defined, otherwise constructs
+ * the URL from the current location (ws:// or wss:// based on protocol).
+ * @returns {string} The WebSocket URL (e.g., 'ws://localhost:8080/ws')
+ */
 export const getWebSocketURL = () => {
   // If defined in environment variables (Vite), use it
   if (import.meta.env.VITE_WS_URL) {
