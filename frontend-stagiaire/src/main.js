@@ -2,13 +2,12 @@ import './style.css'
 import { icons } from '../../shared/icons.js'
 import { COLORS, escapeHtml } from '../../shared/colors.js'
 import { VoteClient } from '../../shared/websocket-client.js'
-import { renderFooterHTML, renderConnectionStatus } from '../../shared/ui.js'
+import { renderFooterHTML, renderSessionCodeButton, showError } from '../../shared/ui.js'
+import { getWebSocketURL } from '../../shared/config.js'
+import { validateName, validateSessionCode } from '../../shared/validation.js'
 
 // Configuration de l'API WebSocket
-const WS_URL = import.meta.env.VITE_WS_URL || (() => {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${location.host}/ws`
-})()
+const WS_URL = getWebSocketURL()
 
 // États de l'application
 const AppState = {
@@ -20,11 +19,26 @@ const AppState = {
 }
 
 // État de l'application
+/**
+ * @type {Object}
+ * @property {string} appState
+ * @property {string} sessionCode
+ * @property {boolean} connected
+ * @property {Array<string>} availableColors
+ * @property {Object.<string, string>} colorLabels
+ * @property {boolean} multipleChoice
+ * @property {Set<string>} selectedColors
+ * @property {boolean} hasVoted
+ * @property {string|null} stagiaireId
+ * @property {string} prenom
+ * @property {boolean} prenomEdit
+ */
 const state = {
   appState: AppState.JOINING,
   sessionCode: '',
   connected: false,
   availableColors: [],
+  colorLabels: {}, // Custom labels for colors
   multipleChoice: false,
   selectedColors: new Set(),
   hasVoted: false,
@@ -36,24 +50,35 @@ const state = {
 // Éléments DOM
 let app = null
 let client = null
-let connectionStatusEl = null
 
 // Initialisation
 function init() {
   app = document.getElementById('app')
 
-  // Récupérer ou créer l'ID du stagiaire
-  let savedId = localStorage.getItem('vote_stagiaire_id')
-  if (!savedId) {
-    savedId = 'stagiaire_' + Math.random().toString(36).slice(2, 11)
-    localStorage.setItem('vote_stagiaire_id', savedId)
+  // Récupérer l'ID du stagiaire (généré par le serveur)
+  const savedId = sessionStorage.getItem('vote_stagiaire_id')
+  if (savedId) {
+    state.stagiaireId = savedId
   }
-  state.stagiaireId = savedId
 
   // Récupérer le prénom s'il existe
   const savedPrenom = localStorage.getItem('vote_stagiaire_prenom')
   if (savedPrenom) {
     state.prenom = savedPrenom
+  }
+
+  // Vérifier si on a déjà un code session enregistré
+  let savedCode = sessionStorage.getItem('vote_session_code')
+  
+  // Check URL params for session code (override saved code if present)
+  const urlParams = new URLSearchParams(window.location.search)
+  const urlSession = urlParams.get('session')
+  if (urlSession && validateSessionCode(urlSession) === null) {
+      savedCode = urlSession
+  }
+  
+  if (savedCode) {
+    state.sessionCode = savedCode
   }
 
   // Initialiser la structure de base (Header, Main, Footer)
@@ -62,18 +87,11 @@ function init() {
   // Initialiser le client WebSocket
   initClient()
 
-  // Vérifier si on a déjà un code session enregistré
-  const savedCode = localStorage.getItem('vote_session_code')
-  if (savedCode) {
-    state.sessionCode = savedCode
-    // Ne connecter que si on a un prénom
-    if (state.prenom) {
-      connectToSession(savedCode)
-    } else {
-      updateView()
-    }
-  } else {
-    updateView()
+  updateView()
+
+  // Auto-connect if we have both code and name
+  if (state.sessionCode && state.prenom && !state.connected) {
+    connectToSession(state.sessionCode)
   }
 }
 
@@ -82,7 +100,10 @@ function initClient() {
   client = new VoteClient(WS_URL, {
     onStatusChange: (connected) => {
       state.connected = connected
-      updateConnectionStatus(connected)
+      // Re-render to update session code connection status
+      if (state.appState !== AppState.JOINING) {
+        render()
+      }
     },
     onOpen: () => {
       // Si on a un code session et un prénom, on tente de rejoindre
@@ -90,7 +111,6 @@ function initClient() {
         client.send({
           type: 'stagiaire_join',
           sessionCode: state.sessionCode,
-          stagiaireId: state.stagiaireId,
           name: state.prenom
         })
       }
@@ -108,7 +128,7 @@ function connectToSession(code) {
   if (!client) {
     initClient()
   }
-  
+
   // On lance la connexion (cela fermera l'ancienne si elle existe)
   client.connect()
 }
@@ -119,28 +139,36 @@ function handleMessage(msg) {
     case 'session_joined':
       // Connexion réussie à la session
       state.sessionCode = msg.sessionCode
+      // Store the server-generated stagiaireId
+      if (msg.stagiaireId) {
+        state.stagiaireId = msg.stagiaireId
+        sessionStorage.setItem('vote_stagiaire_id', msg.stagiaireId)
+      }
       state.appState = AppState.WAITING
-      localStorage.setItem('vote_session_code', msg.sessionCode)
+      sessionStorage.setItem('vote_session_code', msg.sessionCode)
       render()
       break
 
     case 'error':
-      if (state.appState === AppState.JOINING) {
-        showError(msg.message || 'Erreur de connexion')
-        // En cas d'erreur fatale (ex: session invalide), on pourrait vouloir reset
-        // Mais pour l'instant on laisse l'utilisateur réessayer ou corriger
-      } else {
-        showError(msg.message)
-      }
+      showError(msg.message || 'Erreur de connexion')
       break
 
     case 'vote_started':
       // Nouveau vote lancé
       state.availableColors = msg.colors || []
       state.multipleChoice = msg.multipleChoice || false
+      state.colorLabels = msg.labels || {}
       state.selectedColors.clear()
-      state.hasVoted = false
-      state.appState = AppState.VOTING
+
+      // Restore existing vote if rejoining
+      if (msg.existingVote && Array.isArray(msg.existingVote)) {
+        msg.existingVote.forEach(colorId => state.selectedColors.add(colorId))
+        state.hasVoted = true
+        state.appState = AppState.VOTED
+      } else {
+        state.hasVoted = false
+        state.appState = AppState.VOTING
+      }
       render()
       break
 
@@ -170,33 +198,6 @@ function handleMessage(msg) {
       state.prenomEdit = false
       render()
       break
-  }
-}
-
-// Mettre à jour le statut de connexion
-function updateConnectionStatus(connected) {
-  // Ne pas afficher le statut si on est en phase de connexion initiale (écran titre)
-  if (state.appState === AppState.JOINING) {
-    if (connectionStatusEl) {
-      connectionStatusEl.remove()
-      connectionStatusEl = null
-    }
-    return
-  }
-
-  connectionStatusEl = renderConnectionStatus(connected, document.body, connectionStatusEl)
-}
-
-// Afficher une erreur
-function showError(message) {
-  const errorEl = document.querySelector('.error-message')
-  if (errorEl) {
-    errorEl.textContent = message
-    errorEl.style.display = 'block'
-    setTimeout(() => {
-      errorEl.textContent = ''
-      errorEl.style.display = 'none'
-    }, 5000)
   }
 }
 
@@ -246,7 +247,6 @@ function updateView() {
 
   // Réattacher les écouteurs
   attachEventListeners()
-  updateConnectionStatus(state.connected)
 
   // Restauration du focus (best effort)
   if (activeElementId) {
@@ -284,6 +284,7 @@ function renderJoinHTML() {
             value="${escapeHtml(state.prenom)}"
             autocomplete="name"
             autocapitalize="words"
+            maxlength="16"
             required
           />
         </div>
@@ -315,8 +316,8 @@ function renderWaitingHTML() {
   return `
     <header class="header">
       <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
-      <div class="session-code-display valid">
-        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
+      <div class="header-right">
+        ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
@@ -348,6 +349,7 @@ function renderEditNameHTML() {
             value="${escapeHtml(state.prenom)}"
             autocomplete="name"
             autocapitalize="words"
+            maxlength="16"
             required
             autofocus
           />
@@ -368,8 +370,8 @@ function renderVotingHTML() {
   return `
     <header class="header">
       <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
-      <div class="session-code-display valid">
-        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
+      <div class="header-right">
+        ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
@@ -390,17 +392,20 @@ function renderVotingHTML() {
 function renderSingleChoiceHTML(activeColors) {
   return `
     <div class="vote-grid">
-      ${activeColors.map(color => `
+      ${activeColors.map(color => {
+        const label = state.colorLabels[color.id] || color.name
+        return `
         <button
           type="button"
           class="vote-button bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''}"
           data-color="${color.id}"
           aria-pressed="${state.selectedColors.has(color.id)}"
-          aria-label="${color.name}"
+          aria-label="${label}"
         >
-          ${color.name}
+          ${escapeHtml(label)}
         </button>
-      `).join('')}
+        `
+      }).join('')}
     </div>
   `
 }
@@ -409,7 +414,9 @@ function renderSingleChoiceHTML(activeColors) {
 function renderMultipleChoiceHTML(activeColors) {
   return `
     <div class="vote-grid">
-      ${activeColors.map(color => `
+      ${activeColors.map(color => {
+        const label = state.colorLabels[color.id] || color.name
+        return `
         <input
           type="checkbox"
           id="color-${color.id}"
@@ -421,10 +428,11 @@ function renderMultipleChoiceHTML(activeColors) {
           for="color-${color.id}"
           class="vote-checkbox-label bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''}"
         >
-          ${color.name}
+          ${escapeHtml(label)}
           <span class="check-indicator"></span>
         </label>
-      `).join('')}
+        `
+      }).join('')}
     </div>
     <button type="button" class="btn btn-success btn-large" id="submitVote" ${state.selectedColors.size === 0 ? 'disabled' : ''}>
       Valider mon vote
@@ -435,15 +443,14 @@ function renderMultipleChoiceHTML(activeColors) {
 // Rendu après vote
 function renderVotedHTML() {
   const selectedNames = Array.from(state.selectedColors).map(id => {
-    const color = COLORS.find(c => c.id === id)
-    return color?.name || id
+    return state.colorLabels[id] || COLORS.find(c => c.id === id)?.name || id
   }).join(' + ')
 
   return `
     <header class="header">
       <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
-      <div class="session-code-display valid">
-        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
+      <div class="header-right">
+        ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
@@ -464,8 +471,8 @@ function renderClosedHTML() {
   return `
     <header class="header">
       <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
-      <div class="session-code-display valid">
-        ${icons.check(' class="icon icon-sm text-success"')} ${state.sessionCode}
+      <div class="header-right">
+        ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
@@ -479,21 +486,27 @@ function renderClosedHTML() {
 
 // Attacher les écouteurs d'événements
 function attachEventListeners() {
-  // Input Binding (FIX: Eviter la perte d'état)
-  const inputs = {
-    'prenom': 'prenom',
-    'editPrenom': 'prenom',
-    'sessionCode': 'sessionCode'
+  // Input Binding (plus explicite pour éviter les pertes d'état)
+  const prenomInput = document.getElementById('prenom')
+  if (prenomInput) {
+    prenomInput.addEventListener('input', (e) => {
+      state.prenom = e.target.value
+    })
   }
-  
-  Object.entries(inputs).forEach(([id, stateKey]) => {
-    const el = document.getElementById(id)
-    if (el) {
-      el.addEventListener('input', (e) => {
-        state[stateKey] = e.target.value
-      })
-    }
-  })
+
+  const editPrenomInput = document.getElementById('editPrenom')
+  if (editPrenomInput) {
+    editPrenomInput.addEventListener('input', (e) => {
+      state.prenom = e.target.value
+    })
+  }
+
+  const sessionCodeInput = document.getElementById('sessionCode')
+  if (sessionCodeInput) {
+    sessionCodeInput.addEventListener('input', (e) => {
+      state.sessionCode = e.target.value
+    })
+  }
 
   // Formulaire de connexion
   const joinForm = document.getElementById('joinForm')
@@ -571,6 +584,12 @@ function attachEventListeners() {
       render()
     })
   }
+
+  // Bouton quitter la session
+  const leaveSessionBtn = document.getElementById('leaveSessionBtn')
+  if (leaveSessionBtn) {
+    leaveSessionBtn.addEventListener('click', leaveSession)
+  }
 }
 
 // Gérer la connexion
@@ -582,17 +601,18 @@ function handleJoin(e) {
   const prenom = prenomInput.value.trim()
   const code = codeInput.value.trim()
 
-  // Validation du prénom
-  if (prenom.length < 2) {
+  // Validation
+  const nameError = validateName(prenom)
+  if (nameError) {
     prenomInput.classList.add('error')
-    showError('Le prénom doit contenir au moins 2 caractères')
+    showError(nameError)
     return
   }
 
-  // Validation du code (4 chiffres)
-  if (!/^\d{4}$/.test(code)) {
+  const codeError = validateSessionCode(code)
+  if (codeError) {
     codeInput.classList.add('error')
-    showError('Le code doit contenir 4 chiffres')
+    showError(codeError)
     return
   }
 
@@ -615,9 +635,11 @@ function handleEditName(e) {
   const input = document.getElementById('editPrenom')
   const newPrenom = input.value.trim()
 
-  if (newPrenom.length < 2) {
+  // Validation du prénom
+  const nameError = validateName(newPrenom)
+  if (nameError) {
     input.classList.add('error')
-    showError('Le prénom doit contenir au moins 2 caractères')
+    showError(nameError)
     return
   }
 
@@ -680,9 +702,22 @@ function handleSubmitVote() {
 function submitVote() {
   client.send({
     type: 'vote',
-    stagiaireId: state.stagiaireId,
     colors: Array.from(state.selectedColors)
   })
+}
+
+function leaveSession() {
+  if (confirm('Voulez-vous vraiment quitter cette session ?')) {
+    sessionStorage.removeItem('vote_session_code')
+    state.sessionCode = ''
+    state.appState = AppState.JOINING
+    state.connected = false
+    if (client) {
+      client.close() // Close WebSocket connection
+      client = null
+    }
+    render()
+  }
 }
 
 // Démarrage

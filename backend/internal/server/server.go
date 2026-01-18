@@ -12,22 +12,23 @@ import (
 	"github.com/gorilla/websocket"
 	"vote-backend/internal/config"
 	"vote-backend/internal/hub"
-    "vote-backend/internal/security"
 )
 
 type Server struct {
-	router *gin.Engine
-	hub    *hub.Hub
-	config *config.Config
-    srv    *http.Server
+	router    *gin.Engine
+	hub       *hub.Hub
+	config    *config.Config
+	srv       *http.Server
+	startTime time.Time
 }
 
 func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 	r := gin.Default()
 	s := &Server{
-		router: r,
-		hub:    h,
-		config: cfg,
+		router:    r,
+		hub:       h,
+		config:    cfg,
+		startTime: time.Now(),
 	}
 	s.setupRoutes()
 	return s
@@ -37,7 +38,12 @@ func (s *Server) setupRoutes() {
 	s.setupCORS()
 
 	s.router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		metrics := s.hub.GetMetrics()
+		c.JSON(200, gin.H{
+			"status": "ok",
+			"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
+			"metrics": metrics,
+		})
 	})
 
 	s.router.GET("/ws", s.handleWebSocket)
@@ -78,11 +84,10 @@ func (s *Server) setupCORS() {
 func (s *Server) handleWebSocket(c *gin.Context) {
 	clientIP := getClientIP(c)
 
-	allowed, backoffMs := s.hub.Security.CheckJoinRateLimit(clientIP)
+	allowed := s.hub.Security.CheckJoinRateLimit(clientIP)
 	if !allowed {
 		c.JSON(http.StatusTooManyRequests, gin.H{
-			"error":     "Too many attempts",
-			"backoffMs": backoffMs,
+			"error": "Too many attempts, please try again later",
 		})
 		return
 	}
@@ -107,7 +112,7 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	}
 
 	client := hub.NewClient(s.hub, conn, clientIP)
-	client.ID = security.GenerateID() // Default random ID, updated on join
+	client.ID = s.hub.GenerateUniqueClientID() // Server-generated with collision detection
 
 	client.Start()
 }

@@ -2,10 +2,10 @@ export class VoteClient {
   constructor(url, options = {}) {
     this.url = url
     this.options = {
-      onOpen: () => {}, 
-      onMessage: () => {}, 
-      onClose: () => {}, 
-      onError: () => {}, 
+      onOpen: () => {},
+      onMessage: () => {},
+      onClose: () => {},
+      onError: () => {},
       onStatusChange: () => {}, // (connected: boolean) => void
       initialReconnectDelay: 2000,
       maxReconnectDelay: 30000,
@@ -16,10 +16,19 @@ export class VoteClient {
     this.reconnectTimeoutId = null
     this.reconnectAttempts = 0
     this.isExplicitlyClosed = false
+    this.isConnecting = false
+    this.connectionId = 0 // Track connection attempts to prevent race conditions
   }
 
   connect() {
+    // Prevent multiple simultaneous connection attempts
+    if (this.isConnecting) {
+      return
+    }
+
     this.isExplicitlyClosed = false
+    this.isConnecting = true
+    this.connectionId++
 
     // Cleanup existing connection
     if (this.ws) {
@@ -39,10 +48,14 @@ export class VoteClient {
 
       this.ws.onopen = () => {
         console.log('WebSocket connecté')
+        this.isConnecting = false
         this.reconnectAttempts = 0
         this.options.onStatusChange(true)
         this.options.onOpen()
       }
+
+      // Store current connectionId to prevent race conditions in onclose
+      const currentConnectionId = this.connectionId
 
       this.ws.onmessage = (event) => {
         try {
@@ -54,17 +67,20 @@ export class VoteClient {
       }
 
       this.ws.onclose = (event) => {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          // If it was open, it's a disconnect
-          this.options.onStatusChange(false)
+        // Always update status to disconnected
+        this.isConnecting = false
+
+        // Only handle close event if this is still the current connection
+        if (currentConnectionId !== this.connectionId) {
+          return
         }
-        
+
+        this.options.onStatusChange(false)
+
         if (!this.isExplicitlyClosed) {
           // Check for fatal error codes (4000-4999) which indicate we shouldn't retry
-          // e.g., Session Invalid, Duplicate Connection, etc.
           if (event.code >= 4000 && event.code < 5000) {
              console.error(`Connexion fermée définitivement (Code: ${event.code})`)
-             this.options.onStatusChange(false)
              // Do NOT schedule reconnect
           } else {
              console.log('WebSocket déconnecté, tentative de reconnexion...')
@@ -81,6 +97,7 @@ export class VoteClient {
 
     } catch (e) {
       console.error('Erreur connexion WebSocket:', e)
+      this.isConnecting = false
       this.scheduleReconnect()
     }
   }
@@ -90,10 +107,11 @@ export class VoteClient {
       this.options.initialReconnectDelay * Math.pow(2, this.reconnectAttempts),
       this.options.maxReconnectDelay
     )
-    
+
     this.reconnectAttempts++
-    
+
     this.reconnectTimeoutId = setTimeout(() => {
+      this.isConnecting = false // Reset before attempting new connection
       this.connect()
     }, delay)
   }
@@ -109,8 +127,10 @@ export class VoteClient {
 
   close() {
     this.isExplicitlyClosed = true
+    this.isConnecting = false
     if (this.reconnectTimeoutId) {
       clearTimeout(this.reconnectTimeoutId)
+      this.reconnectTimeoutId = null
     }
     if (this.ws) {
       this.ws.close()

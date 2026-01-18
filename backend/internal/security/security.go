@@ -11,8 +11,9 @@ import (
 
 const (
 	MaxFailedAttempts        = 3
-	BaseBackoffMs            = 100
-	MaxBackoffMs             = 30000
+	BaseBackoffMs            = 1000  // 1 second base backoff
+	MaxBackoffMs             = 300000 // 5 minutes max backoff
+	BackoffJitter            = 0.25   // ±25% jitter to prevent timing attacks
 	MaxMessagesPerSecond     = 10
 	MaxBurstMessages         = 20
 	RateLimitCleanupInterval = 5 * time.Minute
@@ -55,7 +56,7 @@ func (s *Security) Shutdown() {
 	s.cancel()
 }
 
-func (s *Security) CheckJoinRateLimit(ip string) (bool, int) {
+func (s *Security) CheckJoinRateLimit(ip string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -67,22 +68,21 @@ func (s *Security) CheckJoinRateLimit(ip string) (bool, int) {
 			Count:       0,
 			LastAttempt: now,
 		}
-		return true, 0
+		return true
 	}
 
 	if now.Before(attempt.LastBackoffUntil) {
-		backoffMs := int(attempt.LastBackoffUntil.Sub(now).Milliseconds())
-		return false, backoffMs
+		return false
 	}
 
 	if now.Sub(attempt.LastAttempt) > FailedAttemptWindow {
 		attempt.Count = 0
 	}
 
-	return true, 0
+	return true
 }
 
-func (s *Security) RecordFailedJoin(ip string) int {
+func (s *Security) RecordFailedJoin(ip string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -106,11 +106,19 @@ func (s *Security) RecordFailedJoin(ip string) int {
 		if backoffMs > MaxBackoffMs {
 			backoffMs = MaxBackoffMs
 		}
+		// Add jitter to prevent timing attacks: ±25% randomization
+		jitterRange := int(float64(backoffMs) * BackoffJitter)
+		jitterOffset, err := rand.Int(rand.Reader, big.NewInt(int64(jitterRange*2+1)))
+		if err == nil {
+			jitter := int(jitterOffset.Int64()) - jitterRange
+			backoffMs += jitter
+		}
+		// Ensure backoff is at least 100ms and not negative
+		if backoffMs < 100 {
+			backoffMs = 100
+		}
 		attempt.LastBackoffUntil = now.Add(time.Duration(backoffMs) * time.Millisecond)
-		return backoffMs
 	}
-
-	return 0
 }
 
 func (s *Security) ClearFailedJoin(ip string) {

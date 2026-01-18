@@ -47,3 +47,8 @@ lerna-debug.log*
 dist/
 dist-ssr/
 *.local
+
+# Tool and Test Artifacts
+.serena/
+test-results/
+playwright-report/
