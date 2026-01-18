@@ -34,6 +34,7 @@ const WS_URL = getWebSocketURL()
 const state = {
   sessionCode: null,
   connected: false,
+  connecting: false,
   voteState: 'idle', // idle, active, closed
   selectedColors: new Set(COLORS.slice(0, 3).map(c => c.id)), // Par défaut: 3 premières couleurs
   colorLabels: {}, // Custom labels for colors { colorId: "Custom Label" }
@@ -87,6 +88,8 @@ function initClient() {
     onStatusChange: (connected) => {
       state.connected = connected
       updateHeader() // Update session code connection status
+      // Re-render main content to update button states (disabled/enabled)
+      renderMainContent()
     },
     onOpen: () => {
       client.send({
@@ -107,10 +110,16 @@ function initClient() {
 function handleMessage(msg) {
   switch (msg.type) {
     case 'session_created':
+      state.connecting = false
       // Use the server-generated session code
       if (msg.sessionCode) {
         state.sessionCode = msg.sessionCode
         sessionStorage.setItem('vote_session_code', msg.sessionCode)
+        
+        // Transition to full layout if we were on landing page
+        if (!document.getElementById('app-content')) {
+            renderFullLayout()
+        }
       }
       // Store the server-generated trainerId
       if (msg.trainerId) {
@@ -127,7 +136,18 @@ function handleMessage(msg) {
         state.stagiaires = msg.stagiaires
       }
       updateHeader()
-      if (state.voteState !== 'idle') {
+      
+      if (state.voteState === 'idle') {
+        // Mise à jour directe du compteur dans la vue config
+        const configInfo = document.querySelector('.config-info')
+        if (configInfo) {
+           const s = state.connectedCount > 1 ? 's' : ''
+           configInfo.innerHTML = `${icons.users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${s} connecté${s}`
+        } else if (document.getElementById('app-content')) {
+            // Si pas d'élément trouvé mais qu'on est dans l'app, re-render
+            renderMainContent()
+        }
+      } else {
         updateVoteResults()
       }
       break
@@ -178,7 +198,24 @@ function handleMessage(msg) {
     case 'error':
         // Si erreur lors de la connexion
         console.error("Erreur backend:", msg.message)
-        showError(msg.message)
+        state.connecting = false
+        
+        if (msg.message === "Session introuvable") {
+            sessionStorage.removeItem('vote_session_code')
+            state.sessionCode = null
+            renderLandingPage()
+            // Petit délai pour que le DOM soit prêt avant d'afficher l'erreur
+            setTimeout(() => {
+                showError(msg.message)
+                document.getElementById('joinSessionInput')?.focus()
+            }, 50)
+        } else {
+            showError(msg.message)
+            // Reset landing page buttons if still there
+            updateLandingPageLoadingState(false)
+            // Restore focus to input if it exists
+            document.getElementById('joinSessionInput')?.focus()
+        }
         break
 
     default:
@@ -268,16 +305,43 @@ function renderLandingPage() {
      joinInput.classList.remove('error')
      hideError()
   })
+
+  if (state.connecting) {
+      updateLandingPageLoadingState(true)
+  }
+}
+
+function updateLandingPageLoadingState(isLoading) {
+    const createBtn = document.getElementById('createSessionBtn')
+    const joinBtn = document.getElementById('joinSessionBtn')
+    const joinInput = document.getElementById('joinSessionInput')
+    
+    if (!createBtn || !joinBtn) return
+
+    if (isLoading) {
+        createBtn.disabled = true
+        joinBtn.disabled = true
+        joinInput.disabled = true
+        createBtn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Connexion...`
+    } else {
+        createBtn.disabled = false
+        joinBtn.disabled = false
+        joinInput.disabled = false
+        createBtn.innerHTML = `${icons.plus(' class="icon icon-md"')} Créer une nouvelle session`
+    }
 }
 
 function joinSession(code) {
   // If creating new session (code is null), let server generate
   // If joining existing session, use the provided code
   state.sessionCode = code || ""  // Empty string signals server to generate
+  state.connecting = true
+
   if (code) {
     sessionStorage.setItem('vote_session_code', code)
   }
-  renderFullLayout()
+  
+  updateLandingPageLoadingState(true)
   initClient()
 }
 
@@ -299,10 +363,12 @@ function updateHeader() {
   const header = document.getElementById('app-header')
   if (!header) return
 
+  const isConnected = client ? client.isConnected() : state.connected
+
   header.innerHTML = `
     <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
     <div class="header-right">
-      ${renderSessionCodeButton(state.sessionCode, state.connected)}
+      ${renderSessionCodeButton(state.sessionCode, isConnected)}
     </div>
   `
   attachHeaderListeners()
@@ -345,6 +411,7 @@ function renderMainContent() {
 
 // Rendu de la configuration
 function renderConfigHTML() {
+  const isConnected = state.connected
   return `
     <div class="card">
       <h2 class="card-title">Configuration du prochain vote</h2>
@@ -386,10 +453,10 @@ function renderConfigHTML() {
       </div>
 
       <div class="button-row">
-        <button class="btn btn-secondary" id="resetConfig">
+        <button class="btn btn-secondary" id="resetConfig" ${!isConnected ? 'disabled' : ''}>
           ${icons.refresh(' class="icon icon-md"')} Réinitialiser
         </button>
-        <button class="btn btn-primary btn-large" id="startVote" ${state.selectedColors.size < 2 ? 'disabled' : ''}>
+        <button class="btn btn-primary btn-large" id="startVote" ${state.selectedColors.size < 2 || !isConnected ? 'disabled' : ''}>
           ${icons.rocket(' class="icon icon-md"')} Lancer le vote
         </button>
       </div>
@@ -467,6 +534,7 @@ function renderVoteHTML() {
   const voteCount = state.stagiaires.filter(s => s.vote && s.vote.length > 0).length
   const colorCounts = getColorCounts()
   const maxCount = Math.max(...Object.values(colorCounts), 1)
+  const isConnected = state.connected
 
   return `
     <div class="card">
@@ -502,9 +570,9 @@ function renderVoteHTML() {
 
       <div class="button-row">
         ${state.voteState === 'active' ? `
-          <button class="btn btn-danger" id="closeVote">${icons.stop(' class="icon icon-md"')} Fermer le vote</button>
+          <button class="btn btn-danger" id="closeVote" ${!isConnected ? 'disabled' : ''}>${icons.stop(' class="icon icon-md"')} Fermer le vote</button>
         ` : `
-          <button class="btn btn-success" id="newVote">${icons.refresh(' class="icon icon-md"')} Nouveau vote</button>
+          <button class="btn btn-success" id="newVote" ${!isConnected ? 'disabled' : ''}>${icons.refresh(' class="icon icon-md"')} Nouveau vote</button>
         `}
       </div>
     </div>
@@ -806,38 +874,65 @@ function resetConfig() {
 }
 
 function startVote() {
-  client.send({
+  const btn = document.getElementById('startVote')
+  if (btn) {
+    btn.disabled = true
+    btn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Lancement...`
+  }
+
+  const success = client.send({
     type: 'start_vote',
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
     multipleChoice: state.multipleChoice,
     labels: state.colorLabels
   })
-  // L'état sera mis à jour à la réception du message 'vote_started' par le serveur
+
+  if (!success && btn) {
+     btn.disabled = false
+     btn.innerHTML = `${icons.rocket(' class="icon icon-md"')} Lancer le vote`
+     showError("Erreur de connexion")
+  }
 }
 
 function closeVote() {
-  client.send({
+  const btn = document.getElementById('closeVote')
+  if (btn) {
+    btn.disabled = true
+    btn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Fermeture...`
+  }
+
+  const success = client.send({
     type: 'close_vote',
     sessionCode: state.sessionCode
   })
 
-  state.voteState = 'closed'
-  stopTimer()
-  renderMainContent()
+  if (!success && btn) {
+     btn.disabled = false
+     btn.innerHTML = `${icons.stop(' class="icon icon-md"')} Fermer le vote`
+     showError("Erreur de connexion")
+  }
 }
 
 function resetVote() {
-  client.send({
+  const btn = document.getElementById('newVote')
+  if (btn) {
+    btn.disabled = true
+    btn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Réinitialisation...`
+  }
+
+  const success = client.send({
     type: 'reset_vote',
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
     multipleChoice: state.multipleChoice
   })
 
-  state.voteState = 'idle'
-  stopTimer()
-  renderMainContent()
+  if (!success && btn) {
+     btn.disabled = false
+     btn.innerHTML = `${icons.refresh(' class="icon icon-md"')} Nouveau vote`
+     showError("Erreur de connexion")
+  }
 }
 
 // Démarrage

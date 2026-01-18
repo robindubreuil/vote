@@ -3,7 +3,8 @@ import { escapeHtml } from './colors.js'
 import { icons } from './icons.js'
 
 /**
- * Generates the common footer HTML
+ * Generates the common footer HTML containing author info, license, and version.
+ * @returns {string} HTML string for the footer element
  */
 export function renderFooterHTML() {
   return `
@@ -67,6 +68,8 @@ export function renderConnectionStatus(connected, parentElement = document.body,
   return statusEl
 }
 
+let errorTimeoutId = null
+
 /**
  * Displays an error message in the error-message element.
  * The error will auto-hide after 5 seconds.
@@ -75,9 +78,15 @@ export function renderConnectionStatus(connected, parentElement = document.body,
 export function showError(message) {
   const errorEl = document.querySelector('.error-message')
   if (errorEl) {
+    if (errorTimeoutId) {
+      clearTimeout(errorTimeoutId)
+      errorTimeoutId = null
+    }
+    
     errorEl.textContent = message
     errorEl.style.display = 'block'
-    setTimeout(() => {
+    
+    errorTimeoutId = setTimeout(() => {
       hideError()
     }, 5000)
   }
@@ -89,6 +98,10 @@ export function showError(message) {
 export function hideError() {
   const errorEl = document.querySelector('.error-message')
   if (errorEl) {
+    if (errorTimeoutId) {
+      clearTimeout(errorTimeoutId)
+      errorTimeoutId = null
+    }
     errorEl.textContent = ''
     errorEl.style.display = 'none'
   }
