@@ -3,11 +3,14 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 
 	"vote-backend/internal/config"
+	"vote-backend/internal/models"
 	"vote-backend/internal/security"
 	"vote-backend/internal/vote"
 )
@@ -74,6 +77,84 @@ func (h *Hub) SessionExists(sessionID string) bool {
 	return ok
 }
 
+// GenerateSessionCode generates a unique 4-digit session code (guaranteed not in use)
+func (h *Hub) GenerateSessionCode() string {
+	// Check both active sessions and vote manager sessions
+	for i := 0; i < 100; i++ {
+		code := fmt.Sprintf("%04d", rand.IntN(10000))
+
+		// Check if code is already used in active sessions or vote manager
+		if !h.SessionExists(code) && !h.VoteManager.SessionExists(code) {
+			return code
+		}
+	}
+
+	// Fallback: build a set of all used codes to avoid N*M locking
+	used := make(map[string]bool)
+
+	h.mu.RLock()
+	for id := range h.Connections {
+		used[id] = true
+	}
+	h.mu.RUnlock()
+
+	// Get persistent sessions
+	vmIDs := h.VoteManager.GetSessionIDs()
+	for _, id := range vmIDs {
+		used[id] = true
+	}
+
+	// Find any unused code by scanning all 10000
+	for i := 0; i < 10000; i++ {
+		code := fmt.Sprintf("%04d", i)
+		if !used[code] {
+			return code
+		}
+	}
+
+	return "" // Exhausted - should handle this case
+}
+
+// GenerateUniqueClientID generates a unique client ID with collision detection
+func (h *Hub) GenerateUniqueClientID() string {
+	for i := 0; i < 10; i++ {
+		id := security.GenerateID()
+		if !h.ClientIDExists(id) {
+			return id
+		}
+	}
+	// Fallback: exponential retry (extremely unlikely to need this)
+	for i := 0; i < 1000; i++ {
+		id := security.GenerateID()
+		if !h.ClientIDExists(id) {
+			return id
+		}
+	}
+	// Should never happen with 36^12 possibilities
+	return ""
+}
+
+// ClientIDExists checks if a client ID is already in use
+func (h *Hub) ClientIDExists(id string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	// Check all active connections
+	for _, conn := range h.Connections {
+		// Check trainer
+		if conn.Trainer != nil && conn.Trainer.ID == id {
+			return true
+		}
+		// Check stagiaires
+		if _, ok := conn.Stagiaires[id]; ok {
+			return true
+		}
+	}
+
+	// Also check vote manager for persistent stagiaire data
+	return h.VoteManager.StagiaireExists(id)
+}
+
 func (h *Hub) registerClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -107,6 +188,47 @@ func (h *Hub) registerClient(client *Client) {
 		} else {
 			h.VoteManager.UpdateTrainer(client.SessionID, client.ID)
 		}
+
+		// Sync state to the (re)connected trainer
+		h.notifyTrainerStagiaireList(conns, client.SessionID, "connected_count")
+
+		if session, ok := h.VoteManager.GetSession(client.SessionID); ok {
+			state, colors, multipleChoice, voteStartTime := session.GetState()
+
+			if state == models.VoteStateActive || state == models.VoteStateClosed {
+				// Restore active/closed vote session
+				client.SendJSON(map[string]any{
+					"type":            "vote_started",
+					"colors":          colors,
+					"multipleChoice":  multipleChoice,
+					"voteStartTime":   voteStartTime,
+				})
+
+				// Send existing votes
+				votes := session.GetVotes()
+				stagiaires := session.GetStagiaires()
+				for sID, vColors := range votes {
+					sName := stagiaires[sID]
+					client.SendJSON(map[string]any{
+						"type":          "vote_received",
+						"stagiaireId":   sID,
+						"stagiaireName": sName,
+						"colors":        vColors,
+					})
+				}
+
+				if state == models.VoteStateClosed {
+					client.SendJSON(map[string]any{"type": "vote_closed"})
+				}
+			} else {
+				// Restore configuration
+				client.SendJSON(map[string]any{
+					"type":           "config_updated",
+					"selectedColors": colors,
+					"multipleChoice": multipleChoice,
+				})
+			}
+		}
 	} else {
 		if conns.Trainer == nil {
 			client.SendError("Session not available (no trainer)")
@@ -129,13 +251,18 @@ func (h *Hub) registerClient(client *Client) {
 
 		session, ok := h.VoteManager.GetSession(client.SessionID)
 		if ok {
-			state, colors, multipleChoice := session.GetState()
+			state, colors, multipleChoice, _ := session.GetState()
 			if state == "active" {
-				client.SendJSON(map[string]any{
+				msg := map[string]any{
 					"type":           "vote_started",
 					"colors":         colors,
 					"multipleChoice": multipleChoice,
-				})
+				}
+				// Include existing vote if any
+				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
+					msg["existingVote"] = existingVote
+				}
+				client.SendJSON(msg)
 			}
 		}
 	}
@@ -227,21 +354,28 @@ func (h *Hub) notifyTrainerStagiaireList(conns *SessionConnections, sessionID st
 	}
 
 	stagiaires := session.GetStagiaires()
+	votes := session.GetVotes()
 
 	type StagiaireInfo struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		Connected bool   `json:"connected"`
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		Connected bool     `json:"connected"`
+		Vote      []string `json:"vote,omitempty"`
 	}
 
 	list := make([]StagiaireInfo, 0)
 	for id, name := range stagiaires {
 		_, connected := conns.Stagiaires[id]
-		list = append(list, StagiaireInfo{
+		vote, hasVoted := votes[id]
+		info := StagiaireInfo{
 			ID:        id,
 			Name:      name,
 			Connected: connected,
-		})
+		}
+		if hasVoted {
+			info.Vote = vote
+		}
+		list = append(list, info)
 	}
 
 	conns.Trainer.SendJSON(map[string]any{
@@ -270,4 +404,42 @@ func (h *Hub) cleanupLoop() {
 			return
 		}
 	}
+}
+
+type Metrics struct {
+	ActiveSessions    int                    `json:"active_sessions"`
+	ConnectedTrainers int                    `json:"connected_trainers"`
+	ConnectedStagiaires int                   `json:"connected_stagiaires"`
+	VoteStates        map[string]int         `json:"vote_states"`
+}
+
+func (h *Hub) GetMetrics() Metrics {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	metrics := Metrics{
+		ActiveSessions:    len(h.Connections),
+		ConnectedTrainers: 0,
+		ConnectedStagiaires: 0,
+		VoteStates:        map[string]int{
+			"idle":   0,
+			"active": 0,
+			"closed": 0,
+		},
+	}
+
+	for _, conn := range h.Connections {
+		if conn.Trainer != nil {
+			metrics.ConnectedTrainers++
+		}
+		metrics.ConnectedStagiaires += len(conn.Stagiaires)
+	}
+
+	sessions := h.VoteManager.GetAllSessions()
+	for _, session := range sessions {
+		state, _, _, _ := session.GetState()
+		metrics.VoteStates[state]++
+	}
+
+	return metrics
 }

@@ -73,6 +73,29 @@ test-short:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running short tests...$(COLOR_RESET)"
 	cd $(BINARY_PATH) && $(GOTEST) -short -v ./...
 
+## test-integration: Run WebSocket integration tests
+.PHONY: test-integration
+test-integration:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running WebSocket integration tests...$(COLOR_RESET)"
+	cd $(BINARY_PATH) && $(GOTEST) -v -race -timeout 60s ./integration/...
+
+## test-e2e: Run E2E tests with Playwright (requires backend running)
+.PHONY: test-e2e
+test-e2e:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running E2E tests...$(COLOR_RESET)"
+	cd tests/e2e && npm test
+
+## test-e2e-standalone: Run E2E tests with backend auto-started
+.PHONY: test-e2e-standalone
+test-e2e-standalone:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running E2E tests (with backend)...$(COLOR_RESET)"
+	cd tests/e2e && npm test
+
+## test-all: Run all tests (unit, integration, E2E)
+.PHONY: test-all
+test-all: test test-integration test-e2e-standalone
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)All tests complete!$(COLOR_RESET)"
+
 ## test-cover: Run tests with coverage
 .PHONY: test-cover
 test-cover:
@@ -88,8 +111,8 @@ lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		cd $(BINARY_PATH) && golangci-lint run ./...; \
 	else \
-		echo "$(COLOR_YELLOW)golangci-lint not installed. Install with:$(COLOR_RESET)"
-		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin"
+		echo "$(COLOR_YELLOW)golangci-lint not installed. Install with:$(COLOR_RESET)"; \
+		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin"; \
 	fi
 
 ## fmt: Format code

@@ -9,24 +9,41 @@ import (
 	"vote-backend/internal/models"
 )
 
+func initTestHandlers(c *Client) {
+	c.handlers = map[string]func(models.Message){
+		"trainer_join":   c.handleTrainerJoin,
+		"stagiaire_join": c.handleStagiaireJoin,
+		"start_vote":     c.handleStartVote,
+		"vote":           c.handleVote,
+		"close_vote":     c.handleCloseVote,
+		"reset_vote":     c.handleResetVote,
+		"update_name":    c.handleUpdateName,
+	}
+}
+
 func TestClientHandleMessage(t *testing.T) {
 	// Setup Hub
 	cfg := &config.Config{
-        SessionTimeout: time.Hour,
-        CleanupInterval: time.Hour,
-        PingInterval: time.Second, // Need positive ping interval for NewClient
-    }
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second, // Need positive ping interval for NewClient
+		ValidColors: []string{
+			"rouge", "vert", "bleu", "jaune",
+			"orange", "violet", "rose", "gris",
+		},
+	}
 	h := NewHub(cfg)
 	go h.Run()
 	defer h.Shutdown()
 
-	// 1. Test Trainer Join
+	// 1. Test Trainer Join - use 12-char lowercase alphanumeric ID matching GenerateID format
 	trainer := &Client{
-		ID:   "trainer1",
+		ID:   "trainer1abcde",
 		Hub:  h,
 		Send: make(chan []byte, 10),
 		IP:   "127.0.0.1",
 	}
+	initTestHandlers(trainer)
 
 	joinMsg := models.Message{
 		Type:        "trainer_join",
@@ -35,16 +52,35 @@ func TestClientHandleMessage(t *testing.T) {
 	joinBytes, _ := json.Marshal(joinMsg)
 	trainer.handleMessage(joinBytes)
 
-	// Verify trainer received session_created
-	select {
-	case msg := <-trainer.Send:
-		var resp map[string]interface{}
-		json.Unmarshal(msg, &resp)
-		if resp["type"] != "session_created" {
-			t.Errorf("Expected session_created, got %v", resp["type"])
+	// Trainer receives 3 messages upon join:
+	// 1. connected_count (from registerClient)
+	// 2. config_updated (from registerClient)
+	// 3. session_created (from handleTrainerJoin)
+	// We need to consume all of them to clear the channel for subsequent tests.
+
+	expectedTypes := map[string]bool{
+		"connected_count": true,
+		"config_updated":  true,
+		"session_created": true,
+	}
+
+	for i := 0; i < 3; i++ {
+		select {
+		case msg := <-trainer.Send:
+			var resp map[string]interface{}
+			json.Unmarshal(msg, &resp)
+			msgType := resp["type"].(string)
+			if !expectedTypes[msgType] {
+				t.Errorf("Unexpected message type during join: %v", msgType)
+			}
+			delete(expectedTypes, msgType)
+		case <-time.After(time.Second):
+			t.Error("Timeout waiting for trainer join messages")
 		}
-	case <-time.After(time.Second):
-		t.Error("Timeout waiting for trainer response")
+	}
+
+	if len(expectedTypes) > 0 {
+		t.Errorf("Did not receive all expected messages. Missing: %v", expectedTypes)
 	}
 
 	// Wait for hub to process registration
@@ -54,16 +90,19 @@ func TestClientHandleMessage(t *testing.T) {
 		t.Error("Session 1234 should exist")
 	}
 
-	// 2. Test Stagiaire Join
+	// 2. Test Stagiaire Join - use 12-char lowercase alphanumeric ID matching GenerateID format
 	stagiaire := &Client{
+		ID:   "s1abc1234567", // Server-generated ID (set in handleWebSocket in real flow)
 		Hub:  h,
 		Send: make(chan []byte, 10),
 		IP:   "127.0.0.1",
 	}
+	initTestHandlers(stagiaire)
+
 	stJoinMsg := models.Message{
 		Type:        "stagiaire_join",
 		SessionCode: "1234",
-		StagiaireID: "s1",
+		// StagiaireID is no longer used - ID comes from client.ID (server-generated)
 		Name:        "Bob",
 	}
 	stJoinBytes, _ := json.Marshal(stJoinMsg)
@@ -76,6 +115,10 @@ func TestClientHandleMessage(t *testing.T) {
 		json.Unmarshal(msg, &resp)
 		if resp["type"] != "session_joined" {
 			t.Errorf("Expected session_joined, got %v", resp["type"])
+		}
+		// Verify the server-generated ID is returned
+		if resp["stagiaireId"] != "s1abc1234567" {
+			t.Errorf("Expected stagiaireId s1abc1234567, got %v", resp["stagiaireId"])
 		}
 	case <-time.After(time.Second):
 		t.Error("Timeout waiting for stagiaire response")
@@ -98,7 +141,7 @@ func TestClientHandleMessage(t *testing.T) {
 	// 3. Test Start Vote (Trainer)
 	startVoteMsg := models.Message{
 		Type:           "start_vote",
-		Colors:         []string{"red", "blue"},
+		Colors:         []string{"rouge", "bleu"},
 		MultipleChoice: false,
 	}
 	startVoteBytes, _ := json.Marshal(startVoteMsg)
@@ -132,7 +175,7 @@ func TestClientHandleMessage(t *testing.T) {
 	// 4. Test Submit Vote (Stagiaire)
 	voteMsg := models.Message{
 		Type:   "vote",
-		Colors: []string{"red"},
+		Colors: []string{"rouge"},
 	}
 	voteBytes, _ := json.Marshal(voteMsg)
 	stagiaire.handleMessage(voteBytes)
@@ -149,7 +192,19 @@ func TestClientHandleMessage(t *testing.T) {
 		t.Error("Timeout waiting for vote ack")
 	}
 
-	// Trainer gets notification
+	// Trainer gets connected_count first (from notifyTrainerStagiaireList)
+	select {
+	case msg := <-trainer.Send:
+		var resp map[string]interface{}
+		json.Unmarshal(msg, &resp)
+		if resp["type"] != "connected_count" {
+			t.Errorf("Expected connected_count, got %v", resp["type"])
+		}
+	case <-time.After(time.Second):
+		t.Error("Timeout waiting for trainer connected_count")
+	}
+
+	// Then trainer gets vote_received notification
 	select {
 	case msg := <-trainer.Send:
 		var resp map[string]interface{}
@@ -180,7 +235,7 @@ func TestClientHandleMessage(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("Timeout waiting for name update ack")
 	}
-    
+
     if stagiaire.Name != "Robert" {
         t.Errorf("Stagiaire name not updated in struct, got %s", stagiaire.Name)
     }
@@ -207,8 +262,8 @@ func TestClientHandleMessage(t *testing.T) {
 	closeMsg := models.Message{
 		Type: "close_vote",
 	}
-	closeBytes, _ := json.Marshal(closeMsg)
-	trainer.handleMessage(closeBytes)
+	closeMsgBytes, _ := json.Marshal(closeMsg)
+	trainer.handleMessage(closeMsgBytes)
 
 	select {
 	case msg := <-stagiaire.Send:
@@ -224,10 +279,14 @@ func TestClientHandleMessage(t *testing.T) {
 
 func TestClientHandleErrors(t *testing.T) {
 	cfg := &config.Config{
-        SessionTimeout: time.Hour,
-        CleanupInterval: time.Hour,
-        PingInterval: time.Second,
-    }
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors: []string{
+			"rouge", "vert", "bleu", "jaune",
+			"orange", "violet", "rose", "gris",
+		},
+	}
 	h := NewHub(cfg)
 	go h.Run()
 	defer h.Shutdown()
@@ -237,6 +296,7 @@ func TestClientHandleErrors(t *testing.T) {
 		Send: make(chan []byte, 10),
 		IP:   "127.0.0.1",
 	}
+	initTestHandlers(client)
 
 	// Test malformed JSON
 	client.handleMessage([]byte("{invalid-json"))
@@ -249,9 +309,10 @@ func TestClientHandleErrors(t *testing.T) {
 	// Should warn but not crash
 
 	// Test Invalid Session Code (Trainer Join)
+	// Empty session code now triggers server generation, so we test an invalid format
 	invalidJoinMsg := models.Message{
 		Type:        "trainer_join",
-		SessionCode: "", // Empty is invalid
+		SessionCode: "abcd", // Not 4 digits - invalid format
 	}
 	invalidJoinBytes, _ := json.Marshal(invalidJoinMsg)
 	client.handleMessage(invalidJoinBytes)
@@ -270,7 +331,7 @@ func TestClientHandleErrors(t *testing.T) {
 	// Test Invalid Session Code (Stagiaire Join) - covers SendErrorWithBackoff
 	invalidStagiaireMsg := models.Message{
 		Type:        "stagiaire_join",
-		SessionCode: "invalid",
+		SessionCode: "abc", // Not 4 digits - invalid format
 	}
 	invalidStagiaireBytes, _ := json.Marshal(invalidStagiaireMsg)
 	client.handleMessage(invalidStagiaireBytes)
@@ -282,8 +343,9 @@ func TestClientHandleErrors(t *testing.T) {
 		if resp["type"] != "error" {
 			t.Errorf("Expected error for invalid stagiaire session, got %v", resp["type"])
 		}
-		if _, ok := resp["backoffMs"]; !ok {
-			t.Error("Expected backoffMs in error response")
+		// No backoffMs should be present (security fix - no timing disclosure)
+		if _, ok := resp["backoffMs"]; ok {
+			t.Error("backoffMs should not be present in error response (security fix)")
 		}
 	case <-time.After(time.Second):
 		t.Error("Timeout waiting for stagiaire error response")

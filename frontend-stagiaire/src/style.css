@@ -118,23 +118,41 @@ body {
   letter-spacing: -0.01em;
 }
 
-.session-code-display {
+.header-right {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
-  font-size: 1rem;
-  padding: 0.35rem 0.6rem;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  font-weight: 600;
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.session-code-display.valid {
+.session-code {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  padding: 0.25rem 0.75rem;
+  border-radius: 8px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.session-code:hover {
+  filter: brightness(1.1);
+  transform: scale(1.02);
+}
+
+.session-code.connected {
   background: rgba(34, 197, 94, 0.15);
-  color: var(--success-color);
-  border-color: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.6);
+}
+
+.session-code.disconnected {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.6);
 }
 
 /* Card */
@@ -258,6 +276,31 @@ body {
   transform: translateY(-2px);
   box-shadow: 0 6px 16px rgba(34, 197, 94, 0.4);
 }
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+  background: color-mix(in srgb, black 10%, var(--danger-color));
+  transform: scale(1.02);
+}
+
+.btn-outline-danger {
+  background: transparent;
+  color: var(--danger-color);
+  border: 1px solid var(--danger-color);
+}
+
+.btn-outline-danger:hover:not(:disabled) {
+  background: var(--danger-color);
+  color: white;
+}
+
+.btn-sm {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  width: auto;
+}
+
+/* Make icons in danger buttons white */
 
 .btn-large {
   padding: 1.1rem 2rem;
@@ -657,3 +700,14 @@ body {
 .bg-violet { background-color: var(--color-violet); }
 .bg-rose { background-color: var(--color-rose); }
 .bg-gris { background-color: var(--color-gris); }
+
+/* Animation Shake pour les erreurs */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+.shake {
+  animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+}

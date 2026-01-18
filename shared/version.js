@@ -2,7 +2,7 @@
 export const VERSION = {
   author: 'Robin DUBREUIL',
   license: 'MIT',
-  commitHash: '2593026',
+  commitHash: '938920e',
   commitDate: '2026-01-16',
-  fullHash: '259302612e662a459154dedd40682e9ad959efa3'
+  fullHash: '938920e53918c6f89dcd3e04914ea28b1bc96190'
 }

@@ -11,7 +11,7 @@ func TestCheckJoinRateLimit(t *testing.T) {
 	testIP := "192.168.1.1"
 
 	// First attempt allowed
-	allowed, _ := sec.CheckJoinRateLimit(testIP)
+	allowed := sec.CheckJoinRateLimit(testIP)
 	if !allowed {
 		t.Error("First attempt should be allowed")
 	}
@@ -22,17 +22,14 @@ func TestCheckJoinRateLimit(t *testing.T) {
 	}
 
 	// Should be blocked
-	allowed, backoff := sec.CheckJoinRateLimit(testIP)
+	allowed = sec.CheckJoinRateLimit(testIP)
 	if allowed {
 		t.Error("Should be blocked after failures")
-	}
-	if backoff <= 0 {
-		t.Error("Should return backoff duration")
 	}
 
 	// Clear
 	sec.ClearFailedJoin(testIP)
-	allowed, _ = sec.CheckJoinRateLimit(testIP)
+	allowed = sec.CheckJoinRateLimit(testIP)
 	if !allowed {
 		t.Error("Should be allowed after clear")
 	}

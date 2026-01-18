@@ -40,9 +40,18 @@ func (m *Manager) CreateSession(sessionID, trainerID string) (*Session, error) {
 func (m *Manager) GetSession(sessionID string) (*Session, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	s, ok := m.sessions[sessionID]
 	return s, ok
+}
+
+// SessionExists checks if a session with the given ID exists
+func (m *Manager) SessionExists(sessionID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	_, ok := m.sessions[sessionID]
+	return ok
 }
 
 func (m *Manager) UpdateTrainer(sessionID, trainerID string) error {
@@ -106,6 +115,7 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 	session.ActiveColors = colors
 	session.MultipleChoice = multipleChoice
 	session.Votes = make(map[string][]string)
+	session.VoteStartTime = time.Now().Unix()
 	session.LastActivity = time.Now().Unix()
 
 	return nil
@@ -191,6 +201,7 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 	}
 	session.MultipleChoice = multipleChoice
 	session.Votes = make(map[string][]string)
+	session.VoteStartTime = 0
 	session.LastActivity = time.Now().Unix()
 	return nil
 }
@@ -246,4 +257,41 @@ func (m *Manager) RemoveSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
     delete(m.sessions, sessionID)
+}
+
+func (m *Manager) GetAllSessions() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	return sessions
+}
+
+func (m *Manager) GetSessionIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// StagiaireExists checks if a stagiaire ID exists in any session
+func (m *Manager) StagiaireExists(stagiaireID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, session := range m.sessions {
+		session.mu.RLock()
+		_, exists := session.Stagiaires[stagiaireID]
+		session.mu.RUnlock()
+		if exists {
+			return true
+		}
+	}
+	return false
 }
