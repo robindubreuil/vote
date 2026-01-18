@@ -27,6 +27,10 @@ function init() {
     handleKeyPress: handlers.handleKeyPress
   })
 
+  // Initialize the WebSocket client BEFORE rendering
+  // so handlers can access it via getClient()
+  initClient()
+
   // Récupérer l'ID du stagiaire (généré par le serveur)
   const savedId = sessionStorage.getItem('vote_stagiaire_id')
   if (savedId) {
@@ -54,9 +58,6 @@ function init() {
 
   // Initialiser la structure de base (Header, Main, Footer)
   renderLayout(app)
-
-  // Initialiser le client WebSocket
-  initClient()
 
   render()
 

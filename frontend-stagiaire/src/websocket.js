@@ -3,7 +3,6 @@ import { getWebSocketURL } from '../../shared/config.js'
 import { showError } from '../../shared/ui.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
-import { setClient } from './handlers.js'
 
 // Configuration de l'API WebSocket
 const WS_URL = getWebSocketURL()
@@ -39,9 +38,6 @@ export function initClient() {
       handleMessage(msg)
     }
   })
-
-  // Make client available to handlers
-  setClient(client)
 
   return client
 }
