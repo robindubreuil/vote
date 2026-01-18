@@ -47,6 +47,7 @@ Variables d'environnement optionnelles (voir `.env.example`) :
 
 - `PORT` : Port du serveur (défaut: 8080)
 - `ALLOWED_ORIGINS` : Origines CORS autorisées (défaut: *)
+- `VALID_COLORS` : Liste des couleurs valides séparées par virgules (défaut: rouge, vert, bleu, jaune, orange, violet, rose, gris)
 
 ## Tests
 

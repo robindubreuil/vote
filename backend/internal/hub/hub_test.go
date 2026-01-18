@@ -29,56 +29,56 @@ func TestHubSessionLifecycle(t *testing.T) {
     go h.Run()
     defer h.Shutdown()
 
-    // Fake trainer client
+    // Fake trainer client - use 12-char lowercase alphanumeric ID matching GenerateID format
     trainer := &Client{
-        ID: "trainer1",
+        ID: "trainer1abcde",
         SessionID: "1234",
         Type: "trainer",
         Send: make(chan []byte, 10),
         Hub: h,
     }
-    
+
     // Register trainer
     h.Register <- trainer
-    
+
     // Wait for registration
     time.Sleep(10 * time.Millisecond)
-    
+
     if !h.SessionExists("1234") {
         t.Error("Session should exist")
     }
-    
-    // Fake stagiaire
+
+    // Fake stagiaire - use 12-char lowercase alphanumeric ID matching GenerateID format
     stagiaire := &Client{
-        ID: "s1",
+        ID: "s1abc1234567",
         SessionID: "1234",
         Type: "stagiaire",
         Name: "Bob",
         Send: make(chan []byte, 10),
         Hub: h,
     }
-    
+
     h.Register <- stagiaire
     time.Sleep(10 * time.Millisecond)
-    
+
     // Check connections
     h.mu.RLock()
     conns := h.Connections["1234"]
     h.mu.RUnlock()
-    
-    if _, ok := conns.Stagiaires["s1"]; !ok {
+
+    if _, ok := conns.Stagiaires["s1abc1234567"]; !ok {
         t.Error("Stagiaire should be connected")
     }
-    
+
     // Unregister
     h.Unregister <- stagiaire
     time.Sleep(10 * time.Millisecond)
-    
+
     h.mu.RLock()
     conns = h.Connections["1234"]
     h.mu.RUnlock()
-    
-    if _, ok := conns.Stagiaires["s1"]; ok {
+
+    if _, ok := conns.Stagiaires["s1abc1234567"]; ok {
         t.Error("Stagiaire should be disconnected")
     }
 }

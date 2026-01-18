@@ -32,7 +32,7 @@ func LoadConfig() *Config {
 		}
 	}
 
-	return &Config{
+	config := &Config{
 		Port:            getEnv("PORT", "8080"),
 		AllowedOrigins:  origins,
 		PingInterval:    30 * time.Second,
@@ -47,6 +47,18 @@ func LoadConfig() *Config {
 			"orange", "violet", "rose", "gris",
 		},
 	}
+
+	if envColors := os.Getenv("VALID_COLORS"); envColors != "" {
+		colors := strings.Split(envColors, ",")
+		for i := range colors {
+			colors[i] = strings.TrimSpace(colors[i])
+		}
+		if len(colors) > 0 {
+			config.ValidColors = colors
+		}
+	}
+
+	return config
 }
 
 func (c *Config) IsOriginAllowed(origin string) bool {
