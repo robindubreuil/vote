@@ -13,22 +13,23 @@ export const COLORS = [
   { id: 'gris', name: 'Gris', color: '#6b7280' }
 ]
 
-// Helper pour récupérer une couleur par ID
+/**
+ * Retrieves a color configuration by its ID.
+ * @param {string} id - The color ID (e.g., 'rouge', 'vert', 'bleu')
+ * @returns {{id: string, name: string, color: string}} The color object, or the first color (rouge) if not found
+ */
 export function getColorById(id) {
   return COLORS.find(c => c.id === id) || COLORS[0]
 }
 
-// Helper pour récupérer la couleur hex par ID
+/**
+ * Retrieves the hexadecimal color code by its ID.
+ * @param {string} id - The color ID (e.g., 'rouge', 'vert', 'bleu')
+ * @returns {string} The hexadecimal color code, or gray (#6b7280) if not found
+ */
 export function getColorHex(id) {
   return getColorById(id)?.color || '#6b7280'
 }
 
-/**
- * Escape HTML to prevent XSS attacks
- * Use this before inserting user-provided text into innerHTML
- */
-export function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
-}
+// Re-export escapeHtml from sanitize module for backward compatibility
+export { escapeHtml } from './utils/sanitize.js'

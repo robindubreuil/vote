@@ -44,7 +44,8 @@ const state = {
   hasVoted: false,
   stagiaireId: null,
   prenom: '',
-  prenomEdit: false // Mode édition du nom
+  prenomEdit: false, // Mode édition du nom
+  errorMessage: ''  // Store error messages to display in UI
 }
 
 // Éléments DOM
@@ -111,7 +112,8 @@ function initClient() {
         client.send({
           type: 'stagiaire_join',
           sessionCode: state.sessionCode,
-          name: state.prenom
+          name: state.prenom,
+          stagiaireId: state.stagiaireId || undefined
         })
       }
     },
@@ -150,7 +152,16 @@ function handleMessage(msg) {
       break
 
     case 'error':
-      showError(msg.message || 'Erreur de connexion')
+      state.errorMessage = msg.message || 'Erreur de connexion'
+      if (state.errorMessage === 'Session not found') {
+        state.errorMessage = 'Session introuvable'
+      }
+
+      // For duplicate name error, stay in JOINING state and show error
+      if (state.errorMessage === 'Ce nom est déjà utilisé' && !state.prenomEdit) {
+        // Keep in JOINING state, just show error
+        render()
+      }
       break
 
     case 'vote_started':
@@ -302,7 +313,7 @@ function renderJoinHTML() {
             autocomplete="off"
           />
         </div>
-        <div class="error-message" role="alert"></div>
+        ${state.errorMessage ? `<div class="error-message" role="alert">${state.errorMessage}</div>` : ''}
         <button type="submit" class="btn btn-primary btn-large">
           Rejoindre
         </button>
@@ -390,6 +401,7 @@ function renderVotingHTML() {
 
 // Rendu pour choix unique
 function renderSingleChoiceHTML(activeColors) {
+  const isConnected = state.connected
   return `
     <div class="vote-grid">
       ${activeColors.map(color => {
@@ -401,6 +413,7 @@ function renderSingleChoiceHTML(activeColors) {
           data-color="${color.id}"
           aria-pressed="${state.selectedColors.has(color.id)}"
           aria-label="${label}"
+          ${!isConnected ? 'disabled' : ''}
         >
           ${escapeHtml(label)}
         </button>
@@ -412,6 +425,7 @@ function renderSingleChoiceHTML(activeColors) {
 
 // Rendu pour choix multiple
 function renderMultipleChoiceHTML(activeColors) {
+  const isConnected = state.connected
   return `
     <div class="vote-grid">
       ${activeColors.map(color => {
@@ -423,10 +437,11 @@ function renderMultipleChoiceHTML(activeColors) {
           class="vote-checkbox"
           value="${color.id}"
           ${state.selectedColors.has(color.id) ? 'checked' : ''}
+          ${!isConnected ? 'disabled' : ''}
         />
         <label
           for="color-${color.id}"
-          class="vote-checkbox-label bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''}"
+          class="vote-checkbox-label bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''} ${!isConnected ? 'disabled' : ''}"
         >
           ${escapeHtml(label)}
           <span class="check-indicator"></span>
@@ -434,7 +449,7 @@ function renderMultipleChoiceHTML(activeColors) {
         `
       }).join('')}
     </div>
-    <button type="button" class="btn btn-success btn-large" id="submitVote" ${state.selectedColors.size === 0 ? 'disabled' : ''}>
+    <button type="button" class="btn btn-success btn-large" id="submitVote" ${state.selectedColors.size === 0 || !isConnected ? 'disabled' : ''}>
       Valider mon vote
     </button>
   `
@@ -491,6 +506,11 @@ function attachEventListeners() {
   if (prenomInput) {
     prenomInput.addEventListener('input', (e) => {
       state.prenom = e.target.value
+      // Clear error when user starts typing
+      if (state.errorMessage && !state.prenomEdit) {
+        state.errorMessage = ''
+        render()
+      }
     })
   }
 
@@ -498,14 +518,24 @@ function attachEventListeners() {
   if (editPrenomInput) {
     editPrenomInput.addEventListener('input', (e) => {
       state.prenom = e.target.value
+      // Clear error when user starts typing
+      if (state.errorMessage && state.prenomEdit) {
+        state.errorMessage = ''
+        render()
+      }
     })
   }
 
   const sessionCodeInput = document.getElementById('sessionCode')
   if (sessionCodeInput) {
     sessionCodeInput.addEventListener('input', (e) => {
-      state.sessionCode = e.target.value
-    })
+    state.sessionCode = e.target.value
+    // Clear error when user starts typing
+    if (state.errorMessage && !state.prenomEdit) {
+      state.errorMessage = ''
+      render()
+    }
+  })
   }
 
   // Formulaire de connexion
@@ -668,7 +698,7 @@ function handleSingleChoiceVote(e) {
   state.selectedColors.add(colorId)
 
   // Envoyer le vote immédiatement
-  submitVote()
+  submitVote(e.target)
 }
 
 // Gérer le changement de checkbox
@@ -699,11 +729,37 @@ function handleSubmitVote() {
 }
 
 // Soumettre le vote
-function submitVote() {
-  client.send({
+function submitVote(triggerButton = null) {
+  const btn = triggerButton || document.getElementById('submitVote')
+  const originalContent = btn ? btn.innerHTML : ''
+  
+  if (btn) {
+    btn.disabled = true
+    // If it's a small color button, maybe just a spinner or opacity?
+    // For single choice buttons, let's just keep the text but add a spinner if it fits, or just disable style
+    if (btn.id === 'submitVote') {
+       btn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Envoi...`
+    } else {
+       // Single choice button
+       btn.style.opacity = '0.7'
+       btn.style.cursor = 'wait'
+    }
+  }
+
+  const success = client.send({
     type: 'vote',
     colors: Array.from(state.selectedColors)
   })
+
+  if (!success) {
+    if (btn) {
+      btn.disabled = false
+      btn.innerHTML = originalContent
+      btn.style.opacity = ''
+      btn.style.cursor = ''
+    }
+    showError("Erreur de connexion")
+  }
 }
 
 function leaveSession() {
