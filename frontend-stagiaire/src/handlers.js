@@ -3,19 +3,10 @@ import { showError } from '../../shared/ui.js'
 import { loader } from '../../shared/icons.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
-
-// WebSocket client - will be set by websocket.js
-let client = null
+import { getClient } from './websocket.js'
 
 // connectToSession function - will be set by main.js
 let connectToSessionFn = null
-
-/**
- * Set the WebSocket client (called from websocket.js)
- */
-export function setClient(wsClient) {
-  client = wsClient
-}
 
 /**
  * Set the connectToSession function (called from main.js)
@@ -85,7 +76,7 @@ export function handleEditName(e) {
   localStorage.setItem('vote_stagiaire_prenom', newPrenom)
 
   // Envoyer la mise à jour au serveur
-  client.send({
+  getClient().send({
     type: 'update_name',
     name: newPrenom
   })
@@ -160,7 +151,7 @@ export function submitVote(triggerButton = null) {
     }
   }
 
-  const success = client.send({
+  const success = getClient().send({
     type: 'vote',
     colors: Array.from(state.selectedColors)
   })
@@ -185,9 +176,9 @@ export function leaveSession() {
     state.sessionCode = ''
     state.appState = AppState.JOINING
     state.connected = false
+    const client = getClient()
     if (client) {
       client.close() // Close WebSocket connection
-      client = null
     }
     render()
   }
