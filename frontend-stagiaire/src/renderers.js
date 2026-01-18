@@ -1,7 +1,14 @@
-import { icons } from '../../shared/icons.js'
+import { vote, hourglass, pencil, check, stop } from '../../shared/icons.js'
 import { COLORS, escapeHtml } from '../../shared/colors.js'
 import { renderFooterHTML, renderSessionCodeButton } from '../../shared/ui.js'
+import { t } from '../../shared/i18n.js'
 import { state, AppState } from './state.js'
+
+// Keyboard shortcuts handler reference
+let handleKeyPress = null
+
+// Track all event listeners for cleanup
+const currentListeners = new Set()
 
 /**
  * Render the initial layout structure (Header, Main, Footer)
@@ -53,6 +60,9 @@ export function updateView() {
   container.innerHTML = contentHTML
 
   // Réattacher les écouteurs
+  // Clean up old listeners before attaching new ones
+  cleanupEventListeners()
+
   attachEventListeners()
 
   // Restauration du focus (best effort)
@@ -83,15 +93,15 @@ export function render() {
 function renderJoinHTML() {
   return `
     <div class="card">
-      <h2 class="card-title">${icons.vote(' class="icon icon-md"')} Vote Coloré</h2>
+      <h2 class="card-title">${vote(' class="icon icon-md"')} ${t.common.voteColore}</h2>
       <form class="join-form" id="joinForm">
         <div class="input-group">
-          <label for="prenom">Votre prénom</label>
+          <label for="prenom">${t.stagiaire.yourName}</label>
           <input
             type="text"
             id="prenom"
             class="session-input"
-            placeholder="Ex: Marie"
+            placeholder="${t.stagiaire.exMarie}"
             value="${escapeHtml(state.prenom)}"
             autocomplete="name"
             autocapitalize="words"
@@ -100,7 +110,7 @@ function renderJoinHTML() {
           />
         </div>
         <div class="input-group">
-          <label for="sessionCode">Code de session</label>
+          <label for="sessionCode">${t.common.sessionCode}</label>
           <input
             type="text"
             id="sessionCode"
@@ -115,7 +125,7 @@ function renderJoinHTML() {
         </div>
         <div class="error-message" role="alert"></div>
         <button type="submit" class="btn btn-primary btn-large">
-          Rejoindre
+          ${t.stagiaire.join}
         </button>
       </form>
     </div>
@@ -128,18 +138,18 @@ function renderJoinHTML() {
 function renderWaitingHTML() {
   return `
     <header class="header">
-      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
+      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
       <div class="header-right">
         ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
       <div class="waiting-state">
-        <div class="waiting-icon">${icons.hourglass(' class="icon icon-xl"')}</div>
-        <div class="waiting-text">En attente du prochain vote...</div>
-        <div class="waiting-name">Bonjour, <strong>${escapeHtml(state.prenom)}</strong> !</div>
-        <button type="button" class="btn btn-secondary btn-small" id="editNameBtn" aria-label="Modifier mon nom">
-          ${icons.pencil(' class="icon icon-sm"')} Modifier mon nom
+        <div class="waiting-icon">${hourglass(' class="icon icon-xl"')}</div>
+        <div class="waiting-text" aria-live="polite">${t.stagiaire.waiting}</div>
+        <div class="waiting-name">${t.stagiaire.hello}, <strong>${escapeHtml(state.prenom)}</strong> !</div>
+        <button type="button" class="btn btn-secondary btn-small" id="editNameBtn" aria-label="${t.stagiaire.modifyName}">
+          ${pencil(' class="icon icon-sm"')} ${t.stagiaire.modifyName}
         </button>
       </div>
     </div>
@@ -152,15 +162,15 @@ function renderWaitingHTML() {
 function renderEditNameHTML() {
   return `
     <div class="card edit-name-modal">
-      <h2 class="card-title">Modifier mon nom</h2>
+      <h2 class="card-title">${t.stagiaire.modifyName}</h2>
       <form class="join-form" id="editNameForm">
         <div class="input-group">
-          <label for="editPrenom">Ton prénom</label>
+          <label for="editPrenom">${t.stagiaire.yourNameInformal}</label>
           <input
             type="text"
             id="editPrenom"
             class="session-input"
-            placeholder="Ex: Marie"
+            placeholder="${t.stagiaire.exMarie}"
             value="${escapeHtml(state.prenom)}"
             autocomplete="name"
             autocapitalize="words"
@@ -170,8 +180,8 @@ function renderEditNameHTML() {
           />
         </div>
         <div class="button-row">
-          <button type="button" class="btn btn-secondary" id="cancelEditName">Annuler</button>
-          <button type="submit" class="btn btn-primary">Enregistrer</button>
+          <button type="button" class="btn btn-secondary" id="cancelEditName">${t.common.cancel}</button>
+          <button type="submit" class="btn btn-primary">${t.common.save}</button>
         </div>
       </form>
     </div>
@@ -186,17 +196,17 @@ function renderVotingHTML() {
 
   return `
     <header class="header">
-      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
+      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
       <div class="header-right">
         ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
-      <h2 class="card-title">Votez maintenant !</h2>
-      <p class="vote-instruction ${state.multipleChoice ? 'multiple-choice' : 'single-choice'}">
+      <h2 class="card-title">${t.stagiaire.voteNow}</h2>
+      <p class="vote-instruction ${state.multipleChoice ? 'multiple-choice' : 'single-choice'}" aria-live="polite">
         ${state.multipleChoice
-          ? 'Vous pouvez choisir plusieurs couleurs'
-          : 'Choisissez une seule couleur'
+          ? t.stagiaire.multipleChoice
+          : t.stagiaire.singleChoice
         }
       </p>
 
@@ -260,7 +270,7 @@ function renderMultipleChoiceHTML(activeColors) {
       }).join('')}
     </div>
     <button type="button" class="btn btn-success btn-large" id="submitVote" ${state.selectedColors.size === 0 || !isConnected ? 'disabled' : ''}>
-      Valider mon vote
+      ${t.stagiaire.validateVote}
     </button>
   `
 }
@@ -275,18 +285,18 @@ function renderVotedHTML() {
 
   return `
     <header class="header">
-      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
+      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
       <div class="header-right">
         ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
       <div class="voted-state">
-        <div class="voted-icon">${icons.check(' class="icon icon-xl"')}</div>
-        <div class="voted-title">Vote enregistré !</div>
+        <div class="voted-icon">${check(' class="icon icon-xl"')}</div>
+        <div class="voted-title" aria-live="polite" aria-atomic="true">${t.stagiaire.voteRecorded}</div>
         <div class="voted-subtitle">${escapeHtml(selectedNames)}</div>
         <button type="button" class="btn btn-secondary btn-small" id="changeVoteBtn" style="margin-top: 1rem;">
-          ${icons.pencil(' class="icon icon-sm"')} Modifier mon vote
+          ${pencil(' class="icon icon-sm"')} ${t.stagiaire.modifyVote}
         </button>
       </div>
     </div>
@@ -299,18 +309,46 @@ function renderVotedHTML() {
 function renderClosedHTML() {
   return `
     <header class="header">
-      <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré</h1>
+      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
       <div class="header-right">
         ${renderSessionCodeButton(state.sessionCode, state.connected)}
       </div>
     </header>
     <div class="card">
       <div class="vote-closed-state">
-        <div class="closed-icon">${icons.stop(' class="icon icon-xl"')}</div>
-        <div class="waiting-text">Le vote est terminé</div>
+        <div class="closed-icon">${stop(' class="icon icon-xl"')}</div>
+        <div class="waiting-text">${t.stagiaire.voteClosed}</div>
       </div>
     </div>
   `
+}
+
+/**
+ * Helper function to add and track event listeners
+ * @param {Element|string} target - Element or selector
+ * @param {string} event - Event name
+ * @param {Function} handler - Event handler
+ * @param {boolean} useSelector - If true, target is a selector string
+ */
+function trackListener(target, event, handler, useSelector = false) {
+  const element = useSelector ? document.querySelector(target) : target
+  if (!element) return
+
+  element.addEventListener(event, handler)
+  currentListeners.add({ element, event, handler })
+}
+
+/**
+ * Helper function to add and track event listeners to multiple elements
+ * @param {string} selector - CSS selector
+ * @param {string} event - Event name
+ * @param {Function} handler - Event handler
+ */
+function trackListenersForAll(selector, event, handler) {
+  document.querySelectorAll(selector).forEach(element => {
+    element.addEventListener(event, handler)
+    currentListeners.add({ element, event, handler })
+  })
 }
 
 /**
@@ -320,21 +358,21 @@ export function attachEventListeners() {
   // Input Binding (plus explicite pour éviter les pertes d'état)
   const prenomInput = document.getElementById('prenom')
   if (prenomInput) {
-    prenomInput.addEventListener('input', (e) => {
+    trackListener(prenomInput, 'input', (e) => {
       state.prenom = e.target.value
     })
   }
 
   const editPrenomInput = document.getElementById('editPrenom')
   if (editPrenomInput) {
-    editPrenomInput.addEventListener('input', (e) => {
+    trackListener(editPrenomInput, 'input', (e) => {
       state.prenom = e.target.value
     })
   }
 
   const sessionCodeInput = document.getElementById('sessionCode')
   if (sessionCodeInput) {
-    sessionCodeInput.addEventListener('input', (e) => {
+    trackListener(sessionCodeInput, 'input', (e) => {
       state.sessionCode = e.target.value
     })
   }
@@ -342,19 +380,19 @@ export function attachEventListeners() {
   // Formulaire de connexion
   const joinForm = document.getElementById('joinForm')
   if (joinForm) {
-    joinForm.addEventListener('submit', handleJoin)
+    trackListener(joinForm, 'submit', handleJoin)
   }
 
   // Formulaire d'édition du nom
   const editNameForm = document.getElementById('editNameForm')
   if (editNameForm) {
-    editNameForm.addEventListener('submit', handleEditName)
+    trackListener(editNameForm, 'submit', handleEditName)
   }
 
   // Bouton d'édition du nom
   const editNameBtn = document.getElementById('editNameBtn')
   if (editNameBtn) {
-    editNameBtn.addEventListener('click', () => {
+    trackListener(editNameBtn, 'click', () => {
       state.prenomEdit = true
       render()
     })
@@ -363,7 +401,7 @@ export function attachEventListeners() {
   // Bouton annuler l'édition
   const cancelEditBtn = document.getElementById('cancelEditName')
   if (cancelEditBtn) {
-    cancelEditBtn.addEventListener('click', () => {
+    trackListener(cancelEditBtn, 'click', () => {
       state.prenomEdit = false
       render()
     })
@@ -371,9 +409,9 @@ export function attachEventListeners() {
 
   // Boutons de vote (choix unique)
   document.querySelectorAll('.vote-button').forEach(btn => {
-    btn.addEventListener('click', handleSingleChoiceVote)
+    trackListener(btn, 'click', handleSingleChoiceVote)
     // Accessibility: Activate on Enter/Space
-    btn.addEventListener('keydown', (e) => {
+    trackListener(btn, 'keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         handleSingleChoiceVote(e)
@@ -383,12 +421,12 @@ export function attachEventListeners() {
 
   // Checkboxes (choix multiple)
   document.querySelectorAll('.vote-checkbox').forEach(checkbox => {
-    checkbox.addEventListener('change', handleCheckboxChange)
+    trackListener(checkbox, 'change', handleCheckboxChange)
     // Accessibility for label
     const label = document.querySelector(`label[for="${checkbox.id}"]`)
     if (label) {
       label.setAttribute('tabindex', '0')
-      label.addEventListener('keydown', (e) => {
+      trackListener(label, 'keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           checkbox.checked = !checkbox.checked
@@ -403,13 +441,13 @@ export function attachEventListeners() {
   // Bouton valider (choix multiple)
   const submitBtn = document.getElementById('submitVote')
   if (submitBtn) {
-    submitBtn.addEventListener('click', handleSubmitVote)
+    trackListener(submitBtn, 'click', handleSubmitVote)
   }
 
   // Bouton modifier le vote
   const changeVoteBtn = document.getElementById('changeVoteBtn')
   if (changeVoteBtn) {
-    changeVoteBtn.addEventListener('click', () => {
+    trackListener(changeVoteBtn, 'click', () => {
       state.appState = AppState.VOTING
       state.hasVoted = false
       render()
@@ -419,8 +457,23 @@ export function attachEventListeners() {
   // Bouton quitter la session
   const leaveSessionBtn = document.getElementById('leaveSessionBtn')
   if (leaveSessionBtn) {
-    leaveSessionBtn.addEventListener('click', leaveSession)
+    trackListener(leaveSessionBtn, 'click', leaveSession)
   }
+
+  // Keyboard shortcuts
+  if (handleKeyPress) {
+    trackListener(document, 'keydown', handleKeyPress)
+  }
+}
+
+/**
+ * Remove all tracked event listeners
+ */
+export function cleanupEventListeners() {
+  for (const { element, event, handler } of currentListeners) {
+    element.removeEventListener(event, handler)
+  }
+  currentListeners.clear()
 }
 
 // Import handlers to avoid circular dependency
@@ -431,5 +484,5 @@ let handleJoin, handleEditName, handleSingleChoiceVote, handleCheckboxChange, ha
  * Set the handler functions (called from handlers.js)
  */
 export function setHandlers(handlers) {
-  ({ handleJoin, handleEditName, handleSingleChoiceVote, handleCheckboxChange, handleSubmitVote, leaveSession } = handlers)
+  ({ handleJoin, handleEditName, handleSingleChoiceVote, handleCheckboxChange, handleSubmitVote, leaveSession, handleKeyPress } = handlers)
 }
