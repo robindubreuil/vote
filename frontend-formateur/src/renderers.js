@@ -1,8 +1,47 @@
 import { COLORS, escapeHtml } from '../../shared/colors.js'
-import { icons } from '../../shared/icons.js'
+import { vote, timer, users, chart, rocket, stop, refresh, plus, loader } from '../../shared/icons.js'
 import { renderFooterHTML, renderSessionCodeButton } from '../../shared/ui.js'
+import { t } from '../../shared/i18n.js'
 import { state } from './state.js'
 import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
+
+// Track all event listeners for cleanup
+const currentListeners = new Set()
+
+/**
+ * Helper function to add and track event listeners
+ * @param {Element} target - DOM element
+ * @param {string} event - Event name
+ * @param {Function} handler - Event handler
+ */
+function trackListener(target, event, handler) {
+  if (!target) return
+  target.addEventListener(event, handler)
+  currentListeners.add({ element: target, event, handler })
+}
+
+/**
+ * Helper function to add and track event listeners for all matching elements
+ * @param {string} selector - CSS selector
+ * @param {string} event - Event name
+ * @param {Function} handler - Event handler
+ */
+function trackListenersForAll(selector, event, handler) {
+  document.querySelectorAll(selector).forEach(element => {
+    element.addEventListener(event, handler)
+    currentListeners.add({ element, event, handler })
+  })
+}
+
+/**
+ * Remove all tracked event listeners
+ */
+export function cleanupAllListeners() {
+  for (const { element, event, handler } of currentListeners) {
+    element.removeEventListener(event, handler)
+  }
+  currentListeners.clear()
+}
 
 /**
  * Render the landing page
@@ -12,21 +51,21 @@ export function renderLandingPage(app) {
   app.innerHTML = `
     <div class="container">
       <div class="landing-card card">
-        <div class="landing-icon">${icons.vote(' class="icon"')}</div>
-        <h1 class="landing-title">Vote Coloré</h1>
-        <p class="landing-subtitle">Interface Formateur</p>
+        <div class="landing-icon">${vote(' class="icon"')}</div>
+        <h1 class="landing-title">${t.common.voteColore}</h1>
+        <p class="landing-subtitle">${t.formateur.subtitle}</p>
 
         <div class="landing-actions">
           <button id="createSessionBtn" class="btn btn-primary btn-large">
-            ${icons.plus(' class="icon icon-md"')} Créer une nouvelle session
+            ${plus(' class="icon icon-md"')} ${t.formateur.createSession}
           </button>
 
-          <div class="landing-divider">OU</div>
+          <div class="landing-divider">${t.formateur.or}</div>
 
           <div class="input-group">
-            <input type="text" id="joinSessionInput" class="input-text" placeholder="Code session (ex: 1234)" maxlength="4" pattern="[0-9]{4}" inputmode="numeric">
+            <input type="text" id="joinSessionInput" class="input-text" placeholder="${t.formateur.sessionPlaceholder}" maxlength="4" pattern="[0-9]{4}" inputmode="numeric">
             <button id="joinSessionBtn" class="btn btn-secondary">
-              Rejoindre
+              ${t.formateur.joinSession}
             </button>
           </div>
           <div class="error-message" role="alert"></div>
@@ -52,12 +91,12 @@ export function updateLandingPageLoadingState(isLoading) {
     createBtn.disabled = true
     joinBtn.disabled = true
     joinInput.disabled = true
-    createBtn.innerHTML = `${icons.loader(' class="icon icon-md spin"')} Connexion...`
+    createBtn.innerHTML = `${loader(' class="icon icon-md spin"')} ${t.formateur.connecting}`
   } else {
     createBtn.disabled = false
     joinBtn.disabled = false
     joinInput.disabled = false
-    createBtn.innerHTML = `${icons.plus(' class="icon icon-md"')} Créer une nouvelle session`
+    createBtn.innerHTML = `${plus(' class="icon icon-md"')} ${t.formateur.createSession}`
   }
 }
 
@@ -86,7 +125,7 @@ export function updateHeader(client) {
   const isConnected = client ? client.isConnected() : state.connected
 
   header.innerHTML = `
-    <h1>${icons.vote(' class="icon icon-md"')} Vote Coloré - Formateur</h1>
+    <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore} - ${t.common.formateur}</h1>
     <div class="header-right">
       ${renderSessionCodeButton(state.sessionCode, isConnected)}
     </div>
@@ -101,8 +140,8 @@ export function updateHeader(client) {
 export function attachHeaderListeners(client, renderLandingPageFn) {
   const leaveSessionBtn = document.getElementById('leaveSessionBtn')
   if (leaveSessionBtn) {
-    leaveSessionBtn.addEventListener('click', () => {
-      if (confirm('Voulez-vous quitter cette session ?')) {
+    trackListener(leaveSessionBtn, 'click', () => {
+      if (confirm(t.formateur.leaveSession)) {
         sessionStorage.removeItem('vote_session_code')
         if (client) {
           client.close()
@@ -138,7 +177,7 @@ export function renderMainContent() {
 export function attachConfigListeners(client) {
   // Color checkboxes
   document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach(checkbox => {
-    checkbox.addEventListener('change', (e) => {
+    trackListener(checkbox, 'change', (e) => {
       const colorId = e.target.value
       if (e.target.checked) {
         state.selectedColors.add(colorId)
@@ -160,7 +199,7 @@ export function attachConfigListeners(client) {
 
   // Label inputs for custom color names
   document.querySelectorAll('.color-label-input').forEach(input => {
-    input.addEventListener('input', (e) => {
+    trackListener(input, 'input', (e) => {
       const colorId = e.target.dataset.colorId
       const value = e.target.value.trim()
       if (value) {
@@ -174,7 +213,7 @@ export function attachConfigListeners(client) {
   // Multiple choice toggle
   const toggleMultiple = document.querySelector('.multiple-choice-toggle')
   if (toggleMultiple) {
-    toggleMultiple.addEventListener('click', (e) => {
+    trackListener(toggleMultiple, 'click', (e) => {
       // Avoid double trigger if clicking the inner switch
       if (e.target.dataset.action === 'toggle-multiple') return
 
@@ -189,7 +228,7 @@ export function attachConfigListeners(client) {
   if (startBtn) {
     // Import handler dynamically to avoid circular dependency
     import('./handlers.js').then(({ startVote }) => {
-      startBtn.addEventListener('click', () => startVote(client))
+      trackListener(startBtn, 'click', () => startVote(client))
     })
   }
 
@@ -197,7 +236,7 @@ export function attachConfigListeners(client) {
   const resetBtn = document.getElementById('resetConfig')
   if (resetBtn) {
     import('./handlers.js').then(({ resetConfig }) => {
-      resetBtn.addEventListener('click', resetConfig)
+      trackListener(resetBtn, 'click', resetConfig)
     })
   }
 }
@@ -211,7 +250,7 @@ export function attachVoteListeners(client) {
   const closeBtn = document.getElementById('closeVote')
   if (closeBtn) {
     import('./handlers.js').then(({ closeVote }) => {
-      closeBtn.addEventListener('click', () => closeVote(client))
+      trackListener(closeBtn, 'click', () => closeVote(client))
     })
   }
 
@@ -219,7 +258,7 @@ export function attachVoteListeners(client) {
   const newVoteBtn = document.getElementById('newVote')
   if (newVoteBtn) {
     import('./handlers.js').then(({ resetVote }) => {
-      newVoteBtn.addEventListener('click', () => resetVote(client))
+      trackListener(newVoteBtn, 'click', () => resetVote(client))
     })
   }
 }
@@ -232,12 +271,12 @@ export function renderConfigHTML() {
   const isConnected = state.connected
   return `
     <div class="card">
-      <h2 class="card-title">Configuration du prochain vote</h2>
-      <div class="config-info">${icons.users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${state.connectedCount > 1 ? 's' : ''} connecté${state.connectedCount > 1 ? 's' : ''}</div>
+      <h2 class="card-title">${t.formateur.configTitle}</h2>
+      <div class="config-info" aria-live="polite">${users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${state.connectedCount > 1 ? 's' : ''} connecté${state.connectedCount > 1 ? 's' : ''}</div>
 
       <div class="config-section">
         <div>
-          <div class="stats-header">Couleurs disponibles</div>
+          <div class="stats-header">${t.formateur.availableColors}</div>
           <div class="colors-grid">
             ${COLORS.map(color => {
               const customLabel = state.colorLabels[color.id] || ''
@@ -266,16 +305,16 @@ export function renderConfigHTML() {
 
         <label class="multiple-choice-toggle">
           <span class="toggle-switch ${state.multipleChoice ? 'active' : ''}" data-action="toggle-multiple"></span>
-          <span>Choix multiple (autoriser plusieurs couleurs)</span>
+          <span>${t.formateur.multipleChoiceToggle}</span>
         </label>
       </div>
 
       <div class="button-row">
         <button class="btn btn-secondary" id="resetConfig" ${!isConnected ? 'disabled' : ''}>
-          ${icons.refresh(' class="icon icon-md"')} Réinitialiser
+          ${refresh(' class="icon icon-md"')} ${t.formateur.reset}
         </button>
         <button class="btn btn-primary btn-large" id="startVote" ${state.selectedColors.size < 2 || !isConnected ? 'disabled' : ''}>
-          ${icons.rocket(' class="icon icon-md"')} Lancer le vote
+          ${rocket(' class="icon icon-md"')} ${t.formateur.startVote}
         </button>
       </div>
     </div>
@@ -298,29 +337,29 @@ export function renderVoteHTML() {
   return `
     <div class="card">
       <div class="vote-header">
-        <div class="vote-timer">${icons.timer(' class="icon icon-sm"')} 00:00</div>
+        <div class="vote-timer">${timer(' class="icon icon-sm"')} 00:00</div>
         <div class="vote-stats">
-          <span class="vote-count" aria-live="polite">${icons.chart(' class="icon icon-sm"')} ${voteCount} / ${state.connectedCount} votes</span>
+          <span class="vote-count" aria-live="polite">${chart(' class="icon icon-sm"')} ${voteCount} / ${state.connectedCount} ${t.formateur.votes}</span>
         </div>
       </div>
 
       <div class="stats-grid stats-grid-3cols">
         <div>
-          <div class="stats-header">Par couleur</div>
+          <div class="stats-header">${t.formateur.byColor}</div>
           <div class="color-bars">
             ${renderColorBarsHTML(activeColors, colorCounts, maxCount)}
           </div>
         </div>
 
         <div>
-          <div class="stats-header">Par combinaison</div>
+          <div class="stats-header">${t.formateur.byCombination}</div>
           <div class="combinations-list custom-scrollbar">
              ${renderCombinationsHTML()}
           </div>
         </div>
 
         <div>
-          <div class="stats-header">Par stagiaire</div>
+          <div class="stats-header">${t.formateur.byStagiaire}</div>
           <div class="stagiaires-votes-list custom-scrollbar">
              ${renderStagiairesVotesHTML()}
           </div>
@@ -329,9 +368,9 @@ export function renderVoteHTML() {
 
       <div class="button-row">
         ${state.voteState === 'active' ? `
-          <button class="btn btn-danger" id="closeVote" ${!isConnected ? 'disabled' : ''}>${icons.stop(' class="icon icon-md"')} Fermer le vote</button>
+          <button class="btn btn-danger" id="closeVote" ${!isConnected ? 'disabled' : ''}>${stop(' class="icon icon-md"')} ${t.formateur.closeVote}</button>
         ` : `
-          <button class="btn btn-success" id="newVote" ${!isConnected ? 'disabled' : ''}>${icons.refresh(' class="icon icon-md"')} Nouveau vote</button>
+          <button class="btn btn-success" id="newVote" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
         `}
       </div>
     </div>
@@ -378,8 +417,8 @@ export function renderCombinationsHTML() {
   if (combinations.length === 0) {
     return `
       <div class="empty-state">
-        <div class="empty-icon">${icons.chart(' class="icon icon-xl"')}</div>
-        <div>Aucun vote pour le moment</div>
+        <div class="empty-icon">${chart(' class="icon icon-xl"')}</div>
+        <div>${t.formateur.noVotes}</div>
       </div>
     `
   }
@@ -407,8 +446,8 @@ export function renderStagiairesVotesHTML() {
   if (state.stagiaires.length === 0) {
     return `
       <div class="empty-state">
-        <div class="empty-icon">${icons.users(' class="icon icon-xl"')}</div>
-        <div>Aucun stagiaire connecté</div>
+        <div class="empty-icon">${users(' class="icon icon-xl"')}</div>
+        <div>${t.formateur.noStagiaires}</div>
       </div>
     `
   }
@@ -416,19 +455,19 @@ export function renderStagiairesVotesHTML() {
   const sorted = sortStagiaires(state.stagiaires)
 
   return sorted.map(s => {
-    const displayName = s.name || 'Anonyme'
+    const displayName = s.name || t.formateur.anonymous
     const hasVoted = s.vote && s.vote.length > 0
     const isConnected = s.connected
 
     // Online indicator dot
-    const onlineDot = `<span class="online-dot ${isConnected ? 'connected' : 'disconnected'}" title="${isConnected ? 'En ligne' : 'Hors ligne'}"></span>`
+    const onlineDot = `<span class="online-dot ${isConnected ? 'connected' : 'disconnected'}" title="${isConnected ? t.formateur.online : t.formateur.offline}"></span>`
 
     if (!hasVoted) {
       // Non-voter: "waiting" label
       return `
         <div class="stagiaire-vote-item waiting">
           <span class="stagiaire-vote-name">${onlineDot}<span class="name-text" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span></span>
-          <span class="stagiaire-vote-waiting">En attente</span>
+          <span class="stagiaire-vote-waiting">${t.formateur.waiting}</span>
         </div>
       `
     }
@@ -446,4 +485,59 @@ export function renderStagiairesVotesHTML() {
       </div>
     `
   }).join('')
+}
+
+/**
+ * Attach landing page event listeners including keyboard shortcuts
+ * @param {Function} joinSessionFn
+ * @param {Function} createSessionFn
+ */
+export function attachLandingListeners(joinSessionFn, createSessionFn) {
+  const createBtn = document.getElementById('createSessionBtn')
+  const joinBtn = document.getElementById('joinSessionBtn')
+  const joinInput = document.getElementById('joinSessionInput')
+
+  if (createBtn) {
+    trackListener(createBtn, 'click', createSessionFn)
+  }
+
+  if (joinBtn) {
+    const joinHandler = () => {
+      const code = joinInput?.value.trim()
+      joinSessionFn(code)
+    }
+    trackListener(joinBtn, 'click', joinHandler)
+  }
+
+  // Keyboard shortcuts on landing page
+  const keyHandler = (e) => {
+    // Enter key - create session or join with code
+    if (e.key === 'Enter') {
+      if (document.activeElement === joinInput && joinInput.value.trim()) {
+        joinSessionFn(joinInput.value.trim())
+      } else if (!joinInput.value.trim()) {
+        createSessionFn()
+      }
+    }
+  }
+
+  trackListener(document, 'keydown', keyHandler)
+}
+
+/**
+ * Attach keyboard shortcuts for the full app
+ * @param {Function} leaveSessionFn
+ */
+export function attachAppKeyboardShortcuts(leaveSessionFn) {
+  const keyHandler = (e) => {
+    // Escape key - leave session with confirmation
+    if (e.key === 'Escape' && state.sessionCode) {
+      if (confirm(t.formateur.leaveSession)) {
+        leaveSessionFn()
+      }
+      e.preventDefault()
+    }
+  }
+
+  trackListener(document, 'keydown', keyHandler)
 }
