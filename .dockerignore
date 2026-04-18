@@ -1,0 +1,44 @@
+# Build artifacts
+backend/vote-server
+backend/coverage.out
+backend/coverage.html
+backend/tmp/
+*.deb
+*.build
+*.changes
+
+# Node
+node_modules/
+frontend/dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI tools
+.claude/
+.serena/
+CLAUDE.md
+GEMINI.md
+
+# Tests
+tests/
+
+# Debian build artifacts
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/vote/
+debian/*.debhelper
+debian/*.substvars

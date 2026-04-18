@@ -1,22 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
-/**
- * Playwright E2E test configuration for Vote Coloré
- */
 export default defineConfig({
-  // Explicitly set test directory and match pattern
   testDir: '.',
-  testMatch: 'basic.spec.ts',
-
-  // Explicitly ignore all other test files
-  testIgnore: '**/*.test.{ts,js}',
-
-  // Fail the build on CI if you accidentally left test.only in the source code
+  testMatch: '*.spec.ts',
   forbidOnly: !!process.env.CI,
-  // Retry on CI only
   retries: process.env.CI ? 2 : 0,
-  // Opt out of parallel tests on CI
   workers: process.env.CI ? 1 : undefined,
+  timeout: 30000,
 
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
@@ -24,11 +14,8 @@ export default defineConfig({
   ],
 
   use: {
-    // Base URL for tests
-    baseURL: process.env.BASE_URL || 'http://localhost:8080',
-    // Collect trace when retrying the failed test
+    baseURL: process.env.BASE_URL || 'http://localhost:5173',
     trace: 'on-first-retry',
-    // Record video on failure
     video: 'retain-on-failure',
   },
 
@@ -39,13 +26,27 @@ export default defineConfig({
     },
   ],
 
-  // Run your local dev server before starting the tests
-  webServer: process.env.SKIP_WS
-    ? undefined
-    : {
-        command: 'cd ../../backend && ./vote-server',
-        url: 'http://localhost:8080',
-        reuseExistingServer: !process.env.CI,
-        timeout: 120 * 1000,
-      },
+  webServer: process.env.SKIP_VITE
+    ? [
+        {
+          command: 'cd ../../backend && go run ./cmd/server',
+          url: 'http://localhost:8080/health',
+          reuseExistingServer: !process.env.CI,
+          timeout: 30 * 1000,
+        },
+      ]
+    : [
+        {
+          command: 'cd ../../backend && go run ./cmd/server',
+          url: 'http://localhost:8080/health',
+          reuseExistingServer: !process.env.CI,
+          timeout: 30 * 1000,
+        },
+        {
+          command: 'cd ../../frontend && npx vite --port 5173',
+          url: 'http://localhost:5173',
+          reuseExistingServer: !process.env.CI,
+          timeout: 30 * 1000,
+        },
+      ],
 });

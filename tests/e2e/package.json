@@ -12,6 +12,8 @@
     "install:bw": "npx playwright install --with-deps chromium"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1"
+    "@playwright/test": "^1.49.1",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.20.0"
   }
 }

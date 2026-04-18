@@ -1,4 +1,4 @@
-vote (1.1.0-1) unstable; urgency=medium
+vote (1.0.0-1) unstable; urgency=medium
 
   * Initial Debian packaging
   * WebSocket-based real-time voting system

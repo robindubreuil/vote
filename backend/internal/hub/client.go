@@ -3,11 +3,12 @@ package hub
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"vote-backend/internal/models"
-    "vote-backend/internal/vote"
+	"vote-backend/internal/vote"
 )
 
 const (
@@ -164,192 +165,248 @@ func (c *Client) SendError(message string) {
 // Handlers that interface with VoteManager and Hub
 
 func (c *Client) handleTrainerJoin(msg models.Message) {
-    var code string
+	var code string
 
-    // If no code provided or "new" is specified, generate a unique code
-    if msg.SessionCode == "" || msg.SessionCode == "new" {
-        code = c.Hub.GenerateSessionCode()
-        if code == "" {
-            c.SendError("No session codes available")
-            return
-        }
-    } else {
-        // Validate provided code
-        if !vote.IsValidSessionCode(msg.SessionCode) {
-            c.Hub.Security.RecordFailedJoin(c.IP)
-            c.SendJSON(map[string]any{"type": "error", "message": "Invalid session code"})
-            return
-        }
-        code = msg.SessionCode
-    }
+	// If no code provided or "new" is specified, generate a unique code
+	if msg.SessionCode == "" || msg.SessionCode == "new" {
+		code = c.Hub.GenerateSessionCode()
+		if code == "" {
+			c.SendError("No session codes available")
+			return
+		}
+	} else {
+		// Validate provided code
+		if !vote.IsValidSessionCode(msg.SessionCode) {
+			c.Hub.Security.RecordFailedJoin(c.IP)
+			c.SendJSON(map[string]any{"type": "error", "message": "Code session invalide"})
+			return
+		}
 
-    c.Type = "trainer"
-    // ID is already set by security.GenerateID() in handleWebSocket
-    c.SessionID = code
-    c.Hub.Security.ClearFailedJoin(c.IP)
+		// Trainer can only join existing sessions with specific codes
+		// To create a new session, use "new" or empty code
+		if !c.Hub.SessionExists(msg.SessionCode) && !c.Hub.VoteManager.SessionExists(msg.SessionCode) {
+			c.SendJSON(map[string]any{"type": "error", "message": "Session introuvable"})
+			return
+		}
+		code = msg.SessionCode
+	}
 
-    select {
-    case c.Hub.Register <- c:
-        c.SendJSON(map[string]any{
-            "type":        "session_created",
-            "sessionCode": code,
-            "trainerId":   c.ID,
-        })
-    case <-c.Hub.Context().Done():
-        c.SendError("Server is shutting down")
-    }
+	c.Type = "trainer"
+	// ID is already set by security.GenerateID() in handleWebSocket
+	c.SessionID = code
+	c.Hub.Security.ClearFailedJoin(c.IP)
+
+	select {
+	case c.Hub.Register <- c:
+		c.SendJSON(map[string]any{
+			"type":        "session_created",
+			"sessionCode": code,
+			"trainerId":   c.ID,
+		})
+	case <-c.Hub.Context().Done():
+		c.SendError("Server is shutting down")
+	}
 }
 
 func (c *Client) handleStagiaireJoin(msg models.Message) {
-    if !vote.IsValidSessionCode(msg.SessionCode) {
-        c.SendErrorWithBackoff("Invalid session code")
-        return
-    }
-    if msg.Name != "" && !vote.IsValidName(msg.Name) {
-        c.SendErrorWithBackoff("Invalid name")
-        return
-    }
+	if !vote.IsValidSessionCode(msg.SessionCode) {
+		c.SendErrorWithBackoff("Invalid session code")
+		return
+	}
+	if msg.Name != "" && !vote.IsValidName(msg.Name) {
+		c.SendErrorWithBackoff("Invalid name")
+		return
+	}
 
-    c.Type = "stagiaire"
-    // ID is already set by security.GenerateID() in handleWebSocket
-    c.Name = msg.Name
-    c.SessionID = msg.SessionCode
+	c.Type = "stagiaire"
+	// ID is already set by security.GenerateID() in handleWebSocket
+	c.Name = msg.Name
+	c.SessionID = msg.SessionCode
 
-    // Check if session exists via Hub (which checks Manager/Connections)
-    if !c.Hub.SessionExists(c.SessionID) {
-        c.SendErrorWithBackoff("Session not found")
-        return
-    }
+	// Check if session exists via Hub (which checks Manager/Connections)
+	if !c.Hub.SessionExists(c.SessionID) {
+		c.SendErrorWithBackoff("Session introuvable")
+		return
+	}
 
-    c.Hub.Security.ClearFailedJoin(c.IP)
+	// Identity Management Logic
+	finalID := c.ID // Start with the random ID
+	foundExisting := false
+	isCredentialed := false
 
-    select {
-    case c.Hub.Register <- c:
-        c.SendJSON(map[string]any{
-            "type": "session_joined",
-            "sessionCode": msg.SessionCode,
-            "stagiaireId": c.ID,
-        })
-    case <-c.Hub.Context().Done():
-        c.SendError("Server is shutting down")
-    }
+	// 1. Try reclaim by ID (highest priority - exact match - PROOF OF OWNERSHIP)
+	var existingName string
+	if msg.StagiaireID != "" {
+		if session, ok := c.Hub.VoteManager.GetSession(c.SessionID); ok {
+			if name, exists := session.GetStagiaires()[msg.StagiaireID]; exists {
+				finalID = msg.StagiaireID
+				foundExisting = true
+				isCredentialed = true
+				existingName = name
+			}
+		}
+	}
+
+	// 1.5. When reconnecting with credentials, validate the name
+	// If the provided name differs from the stored name (case-insensitive), check for collision
+	if isCredentialed && msg.Name != "" && strings.ToLower(msg.Name) != strings.ToLower(existingName) {
+		if c.Hub.VoteManager.IsNameInUse(c.SessionID, msg.Name, finalID) {
+			c.SendErrorWithBackoff("Ce nom est déjà utilisé")
+			return
+		}
+	}
+
+	// 2. If not found by ID, try match by Name (Claiming identity)
+	if !foundExisting {
+		if existingID, found := c.Hub.VoteManager.GetStagiaireIDByName(c.SessionID, msg.Name); found {
+			finalID = existingID
+			foundExisting = true
+			isCredentialed = false
+		}
+	}
+
+	// 3. Collision Check
+	// If we matched by NAME only (no credential), and the user is online, we BLOCK.
+	// If we matched by ID (credential), we ALLOW (this is a reconnect/takeover).
+	if foundExisting && !isCredentialed && c.Hub.IsStagiaireConnected(c.SessionID, finalID) {
+		c.SendErrorWithBackoff("Ce nom est déjà utilisé par une personne connectée")
+		return
+	}
+
+	// 4. Apply Identity
+	c.ID = finalID
+	c.Hub.Security.ClearFailedJoin(c.IP)
+
+	select {
+	case c.Hub.Register <- c:
+		c.SendJSON(map[string]any{
+			"type":        "session_joined",
+			"sessionCode": msg.SessionCode,
+			"stagiaireId": c.ID,
+		})
+	case <-c.Hub.Context().Done():
+		c.SendError("Server is shutting down")
+	}
 }
 
 func (c *Client) SendErrorWithBackoff(msg string) {
-    c.Hub.Security.RecordFailedJoin(c.IP)
-    c.SendJSON(map[string]any{
-        "type": "error",
-        "message": msg,
-    })
+	c.Hub.Security.RecordFailedJoin(c.IP)
+	c.SendJSON(map[string]any{
+		"type":    "error",
+		"message": msg,
+	})
 }
 
 func (c *Client) handleStartVote(msg models.Message) {
-    // Validate colors
-    if len(msg.Colors) == 0 {
-        c.SendError("At least one color is required")
-        return
-    }
+	// Validate colors
+	if len(msg.Colors) == 0 {
+		c.SendError("At least one color is required")
+		return
+	}
 	if !vote.ValidateColors(msg.Colors, c.Hub.Config.ValidColors) {
 		c.SendError("Invalid color(s)")
 		return
 	}
-    	// Check for duplicates
-    	colorSet := make(map[string]bool)
-    	for _, color := range msg.Colors {
-    		if colorSet[color] {
-    			c.SendError("Duplicate color: " + color)
-    			return
-    		}
-    		colorSet[color] = true
-    	}
-    
-    	// Validate labels if provided
-    	if len(msg.Labels) > 0 {
-    		if !vote.ValidateLabels(msg.Labels, c.Hub.Config.ValidColors) {
-    			c.SendError("Invalid labels")
-    			return
-    		}
-    	}
-    err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice)
+	// Check for duplicates
+	if vote.HasDuplicates(msg.Colors) {
+		c.SendError("Duplicate colors are not allowed")
+		return
+	}
 
-    if err != nil {
-        c.SendError(err.Error())
-        return
-    }
+	// Validate labels if provided
+	if len(msg.Labels) > 0 {
+		if !vote.ValidateLabels(msg.Labels, c.Hub.Config.ValidColors) {
+			c.SendError("Invalid labels")
+			return
+		}
+	}
+	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice)
 
-    broadcastMsg := map[string]any{
-        "type":           "vote_started",
-        "colors":         msg.Colors,
-        "multipleChoice": msg.MultipleChoice,
-    }
-    if len(msg.Labels) > 0 {
-        broadcastMsg["labels"] = msg.Labels
-    }
+	if err != nil {
+		c.SendError(err.Error())
+		return
+	}
 
-    c.Hub.BroadcastSession(c.SessionID, broadcastMsg, "")
+	broadcastMsg := map[string]any{
+		"type":           "vote_started",
+		"colors":         msg.Colors,
+		"multipleChoice": msg.MultipleChoice,
+	}
+	if len(msg.Labels) > 0 {
+		broadcastMsg["labels"] = msg.Labels
+	}
 
-    // Send updated stagiaire list (votes are now cleared)
-    c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
+	c.Hub.BroadcastSession(c.SessionID, broadcastMsg, "")
+
+	// Send updated stagiaire list (votes are now cleared)
+	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
 }
 
 func (c *Client) handleVote(msg models.Message) {
-    stagiaireName, err := c.Hub.VoteManager.SubmitVote(c.SessionID, c.ID, msg.Colors)
-    if err != nil {
-        c.SendError(err.Error())
-        return
-    }
-    
-    if stagiaireName == "" {
-        stagiaireName = c.Name
-    }
+	stagiaireName, err := c.Hub.VoteManager.SubmitVote(c.SessionID, c.ID, msg.Colors)
+	if err != nil {
+		c.SendError(err.Error())
+		return
+	}
 
-    c.SendJSON(map[string]any{"type": "vote_accepted"})
+	if stagiaireName == "" {
+		stagiaireName = c.Name
+	}
 
-    // Notify trainer
-    c.Hub.SendToTrainer(c.SessionID, map[string]any{
-        "type": "vote_received",
-        "stagiaireId": c.ID,
-        "stagiaireName": stagiaireName,
-        "colors": msg.Colors,
-    })
+	c.SendJSON(map[string]any{"type": "vote_accepted"})
 
-    // Also send updated stagiaire list with vote status
-    c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
+	// Notify trainer
+	c.Hub.SendToTrainer(c.SessionID, map[string]any{
+		"type":          "vote_received",
+		"stagiaireId":   c.ID,
+		"stagiaireName": stagiaireName,
+		"colors":        msg.Colors,
+	})
+
+	// Also send updated stagiaire list with vote status
+	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
 }
 
 func (c *Client) handleCloseVote(_ models.Message) {
-    err := c.Hub.VoteManager.CloseVote(c.SessionID, c.ID)
-    if err != nil {
-        return 
-    }
-    c.Hub.BroadcastSession(c.SessionID, map[string]any{"type": "vote_closed"}, "")
+	err := c.Hub.VoteManager.CloseVote(c.SessionID, c.ID)
+	if err != nil {
+		c.SendError(err.Error())
+		return
+	}
+	c.Hub.BroadcastSession(c.SessionID, map[string]any{"type": "vote_closed"}, "")
 }
 
 func (c *Client) handleResetVote(msg models.Message) {
 	// Validate colors if provided
-	if len(msg.Colors) > 0 && !vote.ValidateColors(msg.Colors, c.Hub.Config.ValidColors) {
-		c.SendError("Invalid color(s)")
-		return
+	if len(msg.Colors) > 0 {
+		if !vote.ValidateColors(msg.Colors, c.Hub.Config.ValidColors) {
+			c.SendError("Invalid color(s)")
+			return
+		}
+		if vote.HasDuplicates(msg.Colors) {
+			c.SendError("Duplicate colors are not allowed")
+			return
+		}
 	}
 	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice)
 	if err != nil {
-        c.SendError(err.Error())
-        return
-    }
-    c.Hub.BroadcastSession(c.SessionID, map[string]any{"type": "vote_reset"}, "")
+		c.SendError(err.Error())
+		return
+	}
+	c.Hub.BroadcastSession(c.SessionID, map[string]any{"type": "vote_reset"}, "")
 
-    // Send updated stagiaire list (votes are now cleared)
-    c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
+	// Send updated stagiaire list (votes are now cleared)
+	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
 }
 
 func (c *Client) handleUpdateName(msg models.Message) {
-    err := c.Hub.VoteManager.UpdateStagiaireName(c.SessionID, c.ID, msg.Name)
-    if err != nil {
-        c.SendError(err.Error())
-        return
-    }
-    c.Name = msg.Name
-    c.SendJSON(map[string]any{"type": "name_updated", "name": msg.Name})
-    
-    c.Hub.NotifyTrainerStagiaireList(c.SessionID, "stagiaire_names_updated")
+	err := c.Hub.VoteManager.UpdateStagiaireName(c.SessionID, c.ID, msg.Name)
+	if err != nil {
+		c.SendError(err.Error())
+		return
+	}
+	c.Name = msg.Name
+	c.SendJSON(map[string]any{"type": "name_updated", "name": msg.Name})
+
+	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "stagiaire_names_updated")
 }

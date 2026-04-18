@@ -32,7 +32,7 @@ export function renderSessionCodeButton(sessionCode, connected = false, title = 
   const connectionClass = connected ? 'connected' : 'disconnected'
   const defaultTitle = title || 'Quitter cette session'
 
-  return `<button class="session-code ${connectionClass}" id="leaveSessionBtn" title="${defaultTitle}">${escapeHtml(sessionCode)}</button>`
+  return `<button class="session-code ${connectionClass}" id="leaveSessionBtn" data-testid="session-code-btn" title="${defaultTitle}">${escapeHtml(sessionCode)}</button>`
 }
 
 /**

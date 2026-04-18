@@ -44,10 +44,10 @@ func TestCheckMessageRate(t *testing.T) {
 	}
 
 	// Burst check
-	for i := 0; i < MaxBurstMessages + 5; i++ {
+	for i := 0; i < MaxBurstMessages+5; i++ {
 		sec.CheckMessageRate(clientID)
 	}
-	
+
 	// Eventually it should return false, but exact count depends on timing
 	// Just ensure the function runs without panic and logic holds
 }
@@ -66,19 +66,19 @@ func TestGenerateID(t *testing.T) {
 func TestCleanup(t *testing.T) {
 	sec := NewSecurity(context.Background())
 	// Inject stale data manually if possible, but map is private.
-	// We can't easily test private map cleanup from outside package 
+	// We can't easily test private map cleanup from outside package
 	// unless we export it or use reflection, or test behavior (e.g. removed restriction).
 	// For now, we trust the logic or move it to a method we can trigger.
 	// Actually we are in package security so we CAN access private fields in test.
-	
+
 	sec.failedJoins["1.2.3.4"] = &FailedJoinAttempt{
-		Count: 5,
-		LastAttempt: time.Now().Add(-2 * FailedAttemptWindow),
+		Count:            5,
+		LastAttempt:      time.Now().Add(-2 * FailedAttemptWindow),
 		LastBackoffUntil: time.Now().Add(-1 * time.Hour),
 	}
-	
+
 	sec.cleanup()
-	
+
 	if _, ok := sec.failedJoins["1.2.3.4"]; ok {
 		t.Error("Stale failed join should be removed")
 	}
@@ -87,10 +87,10 @@ func TestCleanup(t *testing.T) {
 func TestRemoveMessageRate(t *testing.T) {
 	sec := NewSecurity(context.Background())
 	clientID := "client_rem"
-	
+
 	// Trigger rate limiter creation
 	sec.CheckMessageRate(clientID)
-	
+
 	sec.mu.Lock()
 	if _, ok := sec.messageRates[clientID]; !ok {
 		sec.mu.Unlock()
@@ -98,9 +98,9 @@ func TestRemoveMessageRate(t *testing.T) {
 		return
 	}
 	sec.mu.Unlock()
-	
+
 	sec.RemoveMessageRate(clientID)
-	
+
 	sec.mu.Lock()
 	if _, ok := sec.messageRates[clientID]; ok {
 		sec.mu.Unlock()
@@ -112,14 +112,14 @@ func TestRemoveMessageRate(t *testing.T) {
 func TestShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sec := NewSecurity(ctx)
-	
+
 	// Wait a bit to ensure loop starts
 	time.Sleep(10 * time.Millisecond)
-	
+
 	// Trigger shutdown
 	cancel()
 	sec.Shutdown()
-	
+
 	// Wait for cleanup
 	time.Sleep(10 * time.Millisecond)
 	// We can't verify easily that the goroutine stopped without a waitgroup or channel in Security struct
@@ -130,7 +130,7 @@ func TestGenerateTimestampID(t *testing.T) {
 	id1 := generateTimestampID()
 	time.Sleep(time.Millisecond) // Ensure time difference
 	id2 := generateTimestampID()
-	
+
 	if id1 == id2 {
 		t.Error("Timestamp IDs should be unique over time")
 	}

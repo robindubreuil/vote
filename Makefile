@@ -79,16 +79,22 @@ test-integration:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running WebSocket integration tests...$(COLOR_RESET)"
 	cd $(BINARY_PATH) && $(GOTEST) -v -race -timeout 60s ./integration/...
 
-## test-e2e: Run E2E tests with Playwright (requires backend running)
+## test-e2e: Run E2E protocol tests (CI-friendly, no frontend needed)
 .PHONY: test-e2e
 test-e2e:
-	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running E2E tests...$(COLOR_RESET)"
-	cd tests/e2e && npm test
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running E2E protocol tests...$(COLOR_RESET)"
+	cd tests/e2e && SKIP_VITE=1 npm test -- ws-protocol.spec.ts
 
-## test-e2e-standalone: Run E2E tests with backend auto-started
+## test-e2e-ui: Run full UI E2E tests (requires backend + frontend)
+.PHONY: test-e2e-ui
+test-e2e-ui:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running full UI E2E tests...$(COLOR_RESET)"
+	cd tests/e2e && npm test -- ui.spec.ts
+
+## test-e2e-standalone: Run all E2E tests with servers auto-started
 .PHONY: test-e2e-standalone
 test-e2e-standalone:
-	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running E2E tests (with backend)...$(COLOR_RESET)"
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running all E2E tests...$(COLOR_RESET)"
 	cd tests/e2e && npm test
 
 ## test-all: Run all tests (unit, integration, E2E)
@@ -162,13 +168,34 @@ run: build
 ## dev: Run in development mode with hot reload (requires air)
 .PHONY: dev
 dev:
-	@if command -v air >/dev/null 2>&1; then \
-		cd $(BINARY_PATH) && air; \
+	@AIR_BIN=$$(command -v air 2>/dev/null); \
+	if [ -z "$$AIR_BIN" ]; then \
+		GOPATH=$$(go env GOPATH); \
+		if [ -x "$$GOPATH/bin/air" ]; then \
+			AIR_BIN="$$GOPATH/bin/air"; \
+		fi; \
+	fi; \
+	if [ -n "$$AIR_BIN" ]; then \
+		echo "$(COLOR_BOLD)$(COLOR_GREEN)Starting dev server with air...$(COLOR_RESET)"; \
+		cd $(BINARY_PATH) && "$$AIR_BIN"; \
 	else \
-		echo "$(COLOR_YELLOW)air not installed. Install with:$(COLOR_RESET)"
-		echo "  go install github.com/cosmtrek/air@latest"
-		cd $(BINARY_PATH) && $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) . && ./$(BINARY_NAME); \
+		echo "$(COLOR_YELLOW)air not installed. Install with:$(COLOR_RESET)"; \
+		echo "  go install github.com/air-verse/air@latest"; \
+		echo "$(COLOR_YELLOW)Falling back to standard run...$(COLOR_RESET)"; \
+		cd $(BINARY_PATH) && $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) ./cmd/server && ./$(BINARY_NAME); \
 	fi
+
+## dev-frontend: Start frontend dev server (both apps on port 5173)
+.PHONY: dev-frontend
+dev-frontend:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Starting frontend dev server...$(COLOR_RESET)"
+	cd frontend && npm run dev
+
+## build-frontend: Build frontend assets
+.PHONY: build-frontend
+build-frontend:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Building frontend...$(COLOR_RESET)"
+	cd frontend && npm install && npm run build
 
 ## deps: Download dependencies
 .PHONY: deps
@@ -198,4 +225,5 @@ help:
 	@echo "  make build          # Build the binary"
 	@echo "  make build-deb      # Build the .deb package"
 	@echo "  make test           # Run all tests"
+	@echo "  make dev-frontend   # Start frontend dev server (both apps)"
 	@echo "  make clean-all      # Clean all artifacts"

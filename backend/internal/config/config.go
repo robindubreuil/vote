@@ -15,12 +15,12 @@ type Config struct {
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
-    CleanupInterval time.Duration
+	CleanupInterval time.Duration
 	ValidColors     []string
 }
 
 func LoadConfig() *Config {
-	allowedOrigins := getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174")
+	allowedOrigins := getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5177,http://localhost:5178")
 	var origins []string
 	if allowedOrigins == "*" {
 		// NOTE: Wildcard origin is NOT allowed with credentials enabled.
@@ -36,14 +36,14 @@ func LoadConfig() *Config {
 		Port:            getEnv("PORT", "8080"),
 		AllowedOrigins:  origins,
 		PingInterval:    30 * time.Second,
-		SessionTimeout:  24 * time.Hour,
+		SessionTimeout:  getEnvDuration("SESSION_TIMEOUT", 1*time.Hour),
 		ReadTimeout:     15 * time.Second,
 		WriteTimeout:    15 * time.Second,
 		IdleTimeout:     60 * time.Second,
 		ShutdownTimeout: 5 * time.Second,
-        CleanupInterval: 10 * time.Minute,
+		CleanupInterval: getEnvDuration("CLEANUP_INTERVAL", 10*time.Minute),
 		ValidColors: []string{
-			"rouge", "vert", "bleu", "jaune",  
+			"rouge", "vert", "bleu", "jaune",
 			"orange", "violet", "rose", "gris",
 		},
 	}
@@ -76,6 +76,15 @@ func (c *Config) IsOriginAllowed(origin string) bool {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
+		}
 	}
 	return defaultValue
 }

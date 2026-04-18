@@ -20,6 +20,7 @@ type Server struct {
 	config    *config.Config
 	srv       *http.Server
 	startTime time.Time
+	buildInfo buildInfo
 }
 
 func NewServer(cfg *config.Config, h *hub.Hub) *Server {
@@ -40,13 +41,14 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/health", func(c *gin.Context) {
 		metrics := s.hub.GetMetrics()
 		c.JSON(200, gin.H{
-			"status": "ok",
+			"status":         "ok",
 			"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
-			"metrics": metrics,
+			"metrics":        metrics,
 		})
 	})
 
 	s.router.GET("/ws", s.handleWebSocket)
+	s.router.GET("/metrics", s.handleMetrics)
 }
 
 func (s *Server) Run() error {
@@ -66,7 +68,7 @@ func (s *Server) Run() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-    return s.srv.Shutdown(ctx)
+	return s.srv.Shutdown(ctx)
 }
 
 func (s *Server) setupCORS() {

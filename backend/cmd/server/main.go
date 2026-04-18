@@ -12,6 +12,9 @@ import (
 	"vote-backend/internal/server"
 )
 
+var version = "dev"
+var buildTime = "unknown"
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -22,6 +25,7 @@ func main() {
 	go h.Run()
 
 	srv := server.NewServer(cfg, h)
+	srv.SetBuildInfo(version, buildTime)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -33,7 +37,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("Server started", "port", cfg.Port)
+	slog.Info("Server started", "port", cfg.Port, "version", version)
 
 	<-ctx.Done()
 	slog.Info("Shutting down...")

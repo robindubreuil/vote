@@ -3,15 +3,15 @@ package security
 import (
 	"context"
 	"crypto/rand"
+	"log/slog"
 	"math/big"
 	"sync"
 	"time"
-    "log/slog"
 )
 
 const (
 	MaxFailedAttempts        = 3
-	BaseBackoffMs            = 1000  // 1 second base backoff
+	BaseBackoffMs            = 1000   // 1 second base backoff
 	MaxBackoffMs             = 300000 // 5 minutes max backoff
 	BackoffJitter            = 0.25   // ±25% jitter to prevent timing attacks
 	MaxMessagesPerSecond     = 10
@@ -210,7 +210,7 @@ func GenerateID() string {
 	for i := range b {
 		n, err := rand.Int(rand.Reader, charsetLen)
 		if err != nil {
-            slog.Error("Error generating random ID", "error", err)
+			slog.Error("Error generating random ID", "error", err)
 			return generateTimestampID()
 		}
 		b[i] = charset[n.Int64()]
