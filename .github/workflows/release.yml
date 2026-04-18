@@ -53,14 +53,14 @@ jobs:
       - name: Build Debian package
         run: dpkg-buildpackage -us -uc -d -b
 
-      - name: List built packages
-        run: ls -lh ../vote_*.deb
+      - name: Move package to workspace
+        run: cp ../vote_*.deb ./
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: debian-package
-          path: ../vote_*.deb
+          path: vote_*.deb
 
   release:
     name: Create GitHub Release
