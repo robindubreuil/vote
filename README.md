@@ -1,61 +1,101 @@
 # Vote Coloré
 
-Application de vote en temps réel pour formations - Backend Go + Frontends Vanilla JS.
+Real-time voting app for training sessions — Go backend (WebSocket) + Vanilla JS frontend (Vite).
 
-## Démarrage rapide
+## Quick Start
 
 ```bash
-# Backend (port 8080)
-make run
-
-# Formateur (port 5173)
-cd frontend-formateur && npm run dev
-
-# Stagiaire (port 5174)
-cd frontend-stagiaire && npm run dev
+make run              # Backend → :8080
+cd frontend && npm run dev  # Frontend → :5173 (proxies /ws to backend)
 ```
 
-## Fonctionnalités
+## Features
 
-- **Formateur** : génération de code, sélection couleurs, choix multiple, timer, stats temps réel
-- **Stagiaire** : connexion par code, vote simple/multiple, reconnexion automatique
-- **Temps réel** : WebSocket pour communication instantanée
-- **Persistance** : noms et configuration conservés entre sessions
+- **Trainer**: create sessions, pick colors, single/multiple choice, live stats
+- **Trainee**: join by code, vote, auto-reconnect
+- **Real-time**: WebSocket communication
+- **Docker**: multi-stage build (Go + Node → Alpine)
 
-## Structure
+## Project Structure
 
 ```
 vote/
-├── backend/              # Serveur Go WebSocket
-├── frontend-formateur/   # Interface formateur
-├── frontend-stagiaire/   # Interface stagiaire
-├── shared/               # Code partagé
-└── scripts/              # Build automation
+├── backend/              # Go server (Gin + gorilla/websocket)
+│   ├── cmd/server/       # Entry point
+│   ├── internal/         # hub/, vote/, server/, config/
+│   └── integration/      # WebSocket integration tests
+├── frontend/             # Vite multi-page app
+│   ├── formateur/        # Trainer HTML entry
+│   ├── stagiaire/        # Trainee HTML entry
+│   └── src/              # JS: formateur/ & stagiaire/ modules
+├── shared/               # Shared JS (colors, icons, validation, websocket-client)
+├── tests/e2e/            # Playwright E2E tests
+├── scripts/              # Build tools (version gen, asset compression)
+└── debian/               # Debian packaging
 ```
 
-## Build prod
+## Makefile
+
+| Target | Description |
+|--------|-------------|
+| `make run` | Build + start server (:8080) |
+| `make build` | Compile Go binary |
+| `make dev` | Hot reload (requires [air](https://github.com/air-verse/air)) |
+| `make test` | Unit tests (`-race -cover`) |
+| `make test-integration` | WebSocket integration tests |
+| `make test-e2e` | Playwright E2E (requires running backend) |
+| `make test-all` | Unit + Integration + E2E |
+| `make test-cover` | Generate HTML coverage report |
+| `make lint` | golangci-lint |
+| `make docker` | Build Docker image |
+| `make build-deb` | Package as .deb |
+| `make clean-all` | Remove all artifacts |
+
+## Testing
 
 ```bash
-make build                                    # Backend
-cd frontend-formateur && npm run build       # Formateur
-cd frontend-stagiaire && npm run build       # Stagiaire
+# Backend
+make test              # Unit
+make test-integration  # Integration
+
+# Frontend
+cd frontend && npm test
+
+# E2E
+make test-e2e          # Requires backend running
 ```
 
 ## Environment
 
-Variables d'environnement optionnelles (voir `.env.example`) :
+See `.env.example`:
 
-- `PORT` : Port du serveur (défaut: 8080)
-- `ALLOWED_ORIGINS` : Origines CORS autorisées (défaut: *)
-- `VALID_COLORS` : Liste des couleurs valides séparées par virgules (défaut: rouge, vert, bleu, jaune, orange, violet, rose, gris)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | Server port |
+| `ALLOWED_ORIGINS` | `*` | CORS origins (comma-separated) |
+| `VALID_COLORS` | `rouge,vert,bleu,jaune,orange,violet,rose,gris` | Allowed vote colors |
 
-## Tests
+## Production Build
 
 ```bash
-make test              # Backend tests
-npm test               # Frontend tests (Vitest)
+make build                    # Backend binary
+cd frontend && npm run build  # Frontend assets → frontend/dist/
+docker build -t vote .        # Full Docker image
 ```
+
+## Colors
+
+| Name | Hex |
+|------|-----|
+| rouge | `#ef4444` |
+| vert | `#22c55e` |
+| bleu | `#3b82f6` |
+| jaune | `#eab308` |
+| orange | `#f97316` |
+| violet | `#a855f7` |
+| rose | `#ec4899` |
+| gris | `#6b7280` |
 
 ## License
 
-MIT
+MIT — Copyright (c) 2025 Robin DUBREUIL

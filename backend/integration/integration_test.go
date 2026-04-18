@@ -21,13 +21,13 @@ import (
 
 // TestServer wraps a real server instance for integration testing.
 type TestServer struct {
-	hub       *hub.Hub
-	srv       *server.Server
-	httpSrv   *http.Server
-	cfg       *config.Config
-	baseURL   string
-	wsURL     string
-	shutdown  context.CancelFunc
+	hub      *hub.Hub
+	srv      *server.Server
+	httpSrv  *http.Server
+	cfg      *config.Config
+	baseURL  string
+	wsURL    string
+	shutdown context.CancelFunc
 }
 
 // NewTestServer creates and starts a test server on a random port.

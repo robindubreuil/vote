@@ -36,7 +36,7 @@ func TestClientHandleMessage(t *testing.T) {
 	go h.Run()
 	defer h.Shutdown()
 
-	// 1. Test Trainer Join - use 12-char lowercase alphanumeric ID matching GenerateID format
+	// 1. Test Trainer Join - use "new" to create a session
 	trainer := &Client{
 		ID:   "trainer1abcde",
 		Hub:  h,
@@ -47,7 +47,7 @@ func TestClientHandleMessage(t *testing.T) {
 
 	joinMsg := models.Message{
 		Type:        "trainer_join",
-		SessionCode: "1234",
+		SessionCode: "new",
 	}
 	joinBytes, _ := json.Marshal(joinMsg)
 	trainer.handleMessage(joinBytes)
@@ -58,6 +58,7 @@ func TestClientHandleMessage(t *testing.T) {
 	// 3. session_created (from handleTrainerJoin)
 	// We need to consume all of them to clear the channel for subsequent tests.
 
+	var sessionCode string
 	expectedTypes := map[string]bool{
 		"connected_count": true,
 		"config_updated":  true,
@@ -73,6 +74,12 @@ func TestClientHandleMessage(t *testing.T) {
 			if !expectedTypes[msgType] {
 				t.Errorf("Unexpected message type during join: %v", msgType)
 			}
+			// Capture the generated session code
+			if msgType == "session_created" {
+				if code, ok := resp["sessionCode"].(string); ok {
+					sessionCode = code
+				}
+			}
 			delete(expectedTypes, msgType)
 		case <-time.After(time.Second):
 			t.Error("Timeout waiting for trainer join messages")
@@ -83,11 +90,15 @@ func TestClientHandleMessage(t *testing.T) {
 		t.Errorf("Did not receive all expected messages. Missing: %v", expectedTypes)
 	}
 
+	if sessionCode == "" {
+		t.Fatal("Expected session code to be generated")
+	}
+
 	// Wait for hub to process registration
 	time.Sleep(50 * time.Millisecond)
 
-	if !h.SessionExists("1234") {
-		t.Error("Session 1234 should exist")
+	if !h.SessionExists(sessionCode) {
+		t.Errorf("Session %s should exist", sessionCode)
 	}
 
 	// 2. Test Stagiaire Join - use 12-char lowercase alphanumeric ID matching GenerateID format
@@ -101,9 +112,9 @@ func TestClientHandleMessage(t *testing.T) {
 
 	stJoinMsg := models.Message{
 		Type:        "stagiaire_join",
-		SessionCode: "1234",
+		SessionCode: sessionCode,
 		// StagiaireID is no longer used - ID comes from client.ID (server-generated)
-		Name:        "Bob",
+		Name: "Bob",
 	}
 	stJoinBytes, _ := json.Marshal(stJoinMsg)
 	stagiaire.handleMessage(stJoinBytes)
@@ -160,17 +171,17 @@ func TestClientHandleMessage(t *testing.T) {
 		t.Error("Timeout waiting for vote_started broadcast")
 	}
 
-    // Trainer also receives vote_started since excludeID is empty
-    select {
-    case msg := <-trainer.Send:
-        var resp map[string]interface{}
-        json.Unmarshal(msg, &resp)
-        if resp["type"] != "vote_started" {
-             t.Errorf("Expected vote_started for trainer, got %v", resp["type"])
-        }
-    case <-time.After(time.Second):
-        t.Error("Timeout waiting for vote_started for trainer")
-    }
+	// Trainer also receives vote_started since excludeID is empty
+	select {
+	case msg := <-trainer.Send:
+		var resp map[string]interface{}
+		json.Unmarshal(msg, &resp)
+		if resp["type"] != "vote_started" {
+			t.Errorf("Expected vote_started for trainer, got %v", resp["type"])
+		}
+	case <-time.After(time.Second):
+		t.Error("Timeout waiting for vote_started for trainer")
+	}
 
 	// 4. Test Submit Vote (Stagiaire)
 	voteMsg := models.Message{
@@ -236,9 +247,9 @@ func TestClientHandleMessage(t *testing.T) {
 		t.Error("Timeout waiting for name update ack")
 	}
 
-    if stagiaire.Name != "Robert" {
-        t.Errorf("Stagiaire name not updated in struct, got %s", stagiaire.Name)
-    }
+	if stagiaire.Name != "Robert" {
+		t.Errorf("Stagiaire name not updated in struct, got %s", stagiaire.Name)
+	}
 
 	// 6. Test Reset Vote
 	resetMsg := models.Message{

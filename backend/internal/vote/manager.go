@@ -2,6 +2,7 @@ package vote
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"time"
 	"vote-backend/internal/models"
@@ -28,10 +29,10 @@ func (m *Manager) CreateSession(sessionID, trainerID string) (*Session, error) {
 	if !IsValidSessionCode(sessionID) {
 		return nil, ErrInvalidInput
 	}
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	session := NewSession(sessionID, trainerID)
 	m.sessions[sessionID] = session
 	return session, nil
@@ -65,7 +66,7 @@ func (m *Manager) UpdateTrainer(sessionID, trainerID string) error {
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	
+
 	session.TrainerID = trainerID
 	session.LastActivity = time.Now().Unix()
 	return nil
@@ -82,7 +83,7 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	
+
 	if !ok {
 		return ErrSessionNotFound
 	}
@@ -99,7 +100,7 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	
+
 	if !ok {
 		return ErrSessionNotFound
 	}
@@ -125,7 +126,7 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	
+
 	if !ok {
 		return "", ErrSessionNotFound
 	}
@@ -133,9 +134,17 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
-    if session.VoteState != models.VoteStateActive {
-        return "", errors.New("vote is not active")
-    }
+	if session.VoteState != models.VoteStateActive {
+		return "", errors.New("vote is not active")
+	}
+
+	if !session.MultipleChoice && len(colors) > 1 {
+		return "", errors.New("only one color allowed in single-choice mode")
+	}
+
+	if len(colors) == 0 {
+		return "", errors.New("at least one color is required")
+	}
 
 	// Validate colors against active colors (O(N^2) but N is small)
 	activeSet := make(map[string]bool)
@@ -160,7 +169,7 @@ func (m *Manager) CloseVote(sessionID, trainerID string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	
+
 	if !ok {
 		return ErrSessionNotFound
 	}
@@ -181,7 +190,7 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	
+
 	if !ok {
 		return ErrSessionNotFound
 	}
@@ -207,41 +216,53 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 }
 
 func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error {
-    if !IsValidName(name) {
-        return ErrInvalidInput
-    }
-	
+	if !IsValidName(name) {
+		return ErrInvalidInput
+	}
+
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
-	
-    if !ok {
-        return ErrSessionNotFound
-    }
+
+	if !ok {
+		return ErrSessionNotFound
+	}
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
-    session.Stagiaires[stagiaireID] = name
-    session.LastActivity = time.Now().Unix()
-    return nil
+	if _, exists := session.Stagiaires[stagiaireID]; !exists {
+		return errors.New("stagiaire not found in session")
+	}
+
+	// Check for name collision
+	normalizedNew := normalizeName(name)
+	for id, n := range session.Stagiaires {
+		if id != stagiaireID && normalizeName(n) == normalizedNew {
+			return errors.New("Ce nom est déjà utilisé")
+		}
+	}
+
+	session.Stagiaires[stagiaireID] = name
+	session.LastActivity = time.Now().Unix()
+	return nil
 }
 
 func (m *Manager) CleanupExpiredSessions(timeout time.Duration) {
-    now := time.Now().Unix()
-    timeoutSec := int64(timeout.Seconds())
-    
-    var expiredSessions []string
+	now := time.Now().Unix()
+	timeoutSec := int64(timeout.Seconds())
+
+	var expiredSessions []string
 	m.mu.RLock()
-    for id, session := range m.sessions {
+	for id, session := range m.sessions {
 		session.mu.RLock()
-		inactive := now - session.LastActivity > timeoutSec
+		inactive := now-session.LastActivity > timeoutSec
 		session.mu.RUnlock()
-		
-        if inactive {
-            expiredSessions = append(expiredSessions, id)
-        }
-    }
+
+		if inactive {
+			expiredSessions = append(expiredSessions, id)
+		}
+	}
 	m.mu.RUnlock()
 
 	if len(expiredSessions) > 0 {
@@ -256,7 +277,7 @@ func (m *Manager) CleanupExpiredSessions(timeout time.Duration) {
 func (m *Manager) RemoveSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-    delete(m.sessions, sessionID)
+	delete(m.sessions, sessionID)
 }
 
 func (m *Manager) GetAllSessions() []*Session {
@@ -294,4 +315,76 @@ func (m *Manager) StagiaireExists(stagiaireID string) bool {
 		}
 	}
 	return false
+}
+
+// GetStagiaireIDByName checks if a stagiaire name already exists in the session and returns their ID
+func (m *Manager) GetStagiaireIDByName(sessionID, name string) (string, bool) {
+	m.mu.RLock()
+	session, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return "", false
+	}
+
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+
+	normalizedNew := normalizeName(name)
+	for id, n := range session.Stagiaires {
+		if normalizeName(n) == normalizedNew {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// IsNameInUse checks if a normalized name exists in the session, excluding a specific ID
+func (m *Manager) IsNameInUse(sessionID, name string, excludeID string) bool {
+	m.mu.RLock()
+	session, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return false
+	}
+
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+
+	normalizedNew := normalizeName(name)
+	for id, n := range session.Stagiaires {
+		if id != excludeID && normalizeName(n) == normalizedNew {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeName(name string) string {
+	name = strings.ToLower(name)
+
+	// Remove accents
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case 'à', 'â', 'ä':
+			b.WriteRune('a')
+		case 'é', 'è', 'ê', 'ë':
+			b.WriteRune('e')
+		case 'î', 'ï':
+			b.WriteRune('i')
+		case 'ô', 'ö':
+			b.WriteRune('o')
+		case 'ù', 'û', 'ü':
+			b.WriteRune('u')
+		case 'ç':
+			b.WriteRune('c')
+		case ' ', '-':
+			// Skip spaces and hyphens
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

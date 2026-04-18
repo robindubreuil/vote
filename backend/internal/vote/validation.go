@@ -4,11 +4,12 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
 	MaxNameLength  = 16
-	MaxLabelLength = 6   // Matches frontend maxlength for UI brevity
+	MaxLabelLength = 6 // Matches frontend maxlength for UI brevity
 
 	// Server-generated identifiers
 	sessionCodePattern = `^\d{4}$`        // 4-digit codes
@@ -32,20 +33,14 @@ func IsValidStagiaireID(id string) bool {
 }
 
 func IsValidName(name string) bool {
-	if len(name) == 0 || len(name) > MaxNameLength {
+	if utf8.RuneCountInString(name) == 0 || utf8.RuneCountInString(name) > MaxNameLength {
 		return false
 	}
 	name = strings.TrimSpace(name)
-	if len(name) == 0 {
+	if utf8.RuneCountInString(name) == 0 {
 		return false
 	}
-	for _, r := range name {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) &&
-			r != ' ' && r != '-' && r != '\'' {
-			return false
-		}
-	}
-	return true
+	return hasValidCharacters(name)
 }
 
 // ValidateColors checks if all colors in the slice are present in the allowed list
@@ -66,11 +61,14 @@ func ValidateColors(colors []string, allowed []string) bool {
 // IsValidLabel validates custom color labels
 func IsValidLabel(label string) bool {
 	label = strings.TrimSpace(label)
-	if len(label) == 0 || len(label) > MaxLabelLength {
+	if utf8.RuneCountInString(label) == 0 || utf8.RuneCountInString(label) > MaxLabelLength {
 		return false
 	}
-	// Allow letters, digits, spaces, hyphens, apostrophes
-	for _, r := range label {
+	return hasValidCharacters(label)
+}
+
+func hasValidCharacters(s string) bool {
+	for _, r := range s {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) &&
 			r != ' ' && r != '-' && r != '\'' {
 			return false
@@ -96,4 +94,15 @@ func ValidateLabels(labels map[string]string, allowedColors []string) bool {
 		}
 	}
 	return true
+}
+
+func HasDuplicates(items []string) bool {
+	seen := make(map[string]bool)
+	for _, item := range items {
+		if seen[item] {
+			return true
+		}
+		seen[item] = true
+	}
+	return false
 }
