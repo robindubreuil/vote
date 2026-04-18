@@ -26,6 +26,53 @@ func TestHealthCheck(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpoint(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	srv := NewServer(cfg, h)
+	srv.SetBuildInfo("test-version", "2026-01-01")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/metrics", nil)
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+
+	expectedMetrics := []string{
+		"# HELP vote_uptime_seconds",
+		"# TYPE vote_uptime_seconds gauge",
+		"vote_uptime_seconds",
+		"# HELP vote_sessions_active",
+		"vote_sessions_active 0",
+		"# HELP vote_trainers_connected",
+		"vote_trainers_connected 0",
+		"# HELP vote_stagiaires_connected",
+		"vote_stagiaires_connected 0",
+		`vote_sessions_by_state{state="idle"}`,
+		`vote_sessions_by_state{state="active"}`,
+		`vote_sessions_by_state{state="closed"}`,
+		"# HELP go_goroutines",
+		"# HELP go_mem_alloc_bytes",
+		"# HELP go_gc_total",
+		`vote_build_info{version="test-version",build_time="2026-01-01"} 1`,
+	}
+
+	for _, expected := range expectedMetrics {
+		if !strings.Contains(body, expected) {
+			t.Errorf("Metrics body missing expected string %q\nBody:\n%s", expected, body)
+		}
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "text/plain") {
+		t.Errorf("Expected text/plain content type, got %q", contentType)
+	}
+}
+
 func TestSetupCORS(t *testing.T) {
 	cfg := &config.Config{
 		AllowedOrigins: []string{"http://example.com"},
@@ -57,9 +104,9 @@ func TestSetupCORS(t *testing.T) {
 
 func TestWebsocketConnection(t *testing.T) {
 	cfg := &config.Config{
-		AllowedOrigins: []string{"*"},
-		PingInterval:   time.Second,
-        CleanupInterval: time.Hour,
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Second,
+		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
 	go h.Run()
@@ -81,9 +128,9 @@ func TestWebsocketConnection(t *testing.T) {
 
 func TestWebSocketSuccess(t *testing.T) {
 	cfg := &config.Config{
-		AllowedOrigins: []string{"*"},
-		PingInterval:   time.Second,
-        CleanupInterval: time.Hour,
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Second,
+		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
 	go h.Run()
@@ -110,9 +157,9 @@ func TestWebSocketSuccess(t *testing.T) {
 
 func TestWebSocketWithProxyHeader(t *testing.T) {
 	cfg := &config.Config{
-		AllowedOrigins: []string{"*"},
-		PingInterval:   time.Second,
-        CleanupInterval: time.Hour,
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Second,
+		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
 	go h.Run()
@@ -135,7 +182,7 @@ func TestWebSocketWithProxyHeader(t *testing.T) {
 	defer conn.Close()
 
 	// Sending a message should work, and internally the IP should be recorded as 10.0.0.1
-	// We can't verify the IP easily without inspecting internal state, 
+	// We can't verify the IP easily without inspecting internal state,
 	// but this ensures the code path covering header extraction is executed.
 	err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping"}`))
 	if err != nil {

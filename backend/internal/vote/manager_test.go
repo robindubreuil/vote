@@ -125,6 +125,55 @@ func TestSubmitVote(t *testing.T) {
 	}
 }
 
+func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("1234", "trainer1")
+	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
+	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, false)
+
+	_, err := m.SubmitVote("1234", "s1abc1234567", []string{"rouge", "bleu"})
+	if err == nil {
+		t.Error("expected error when submitting multiple colors in single-choice mode")
+	}
+	if err.Error() != "only one color allowed in single-choice mode" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestSubmitVoteMultipleChoiceAllowed(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("1234", "trainer1")
+	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
+	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, true)
+
+	_, err := m.SubmitVote("1234", "s1abc1234567", []string{"rouge", "bleu"})
+	if err != nil {
+		t.Errorf("multiple colors should be allowed in multiple-choice mode, got: %v", err)
+	}
+}
+
+func TestSubmitVoteEmptyColors(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("1234", "trainer1")
+	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
+	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, false)
+
+	_, err := m.SubmitVote("1234", "s1abc1234567", []string{})
+	if err == nil {
+		t.Error("expected error when submitting empty colors")
+	}
+}
+
+func TestUpdateStagiaireNameNonexistent(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("1234", "trainer1")
+
+	err := m.UpdateStagiaireName("1234", "nonexistent1234", "Paul")
+	if err == nil {
+		t.Error("expected error when updating name for non-existent stagiaire")
+	}
+}
+
 func TestResetVote(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("1234", "trainer1")
@@ -191,12 +240,12 @@ func TestCleanupExpiredSessions(t *testing.T) {
 }
 
 func TestRemoveSession(t *testing.T) {
-    m := NewManager()
-    m.CreateSession("1234", "trainer1")
-    m.RemoveSession("1234")
-    if _, ok := m.GetSession("1234"); ok {
-        t.Error("Session should be removed")
-    }
+	m := NewManager()
+	m.CreateSession("1234", "trainer1")
+	m.RemoveSession("1234")
+	if _, ok := m.GetSession("1234"); ok {
+		t.Error("Session should be removed")
+	}
 }
 
 func TestUpdateTrainer(t *testing.T) {

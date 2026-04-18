@@ -9,6 +9,7 @@ vote-backend
 backend/vote-server
 backend/vote-backend
 backend/coverage.out
+backend/tmp/
 _build/
 *.out
 *.test
@@ -21,8 +22,13 @@ debian/*.substvars
 debian/vote/
 debian/*.debhelper
 
-# Node modules (redundant but explicit)
+# Node modules
 node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
 
 # Editor files
 .vscode/*
@@ -48,7 +54,12 @@ dist/
 dist-ssr/
 *.local
 
-# Tool and Test Artifacts
+# AI tools
+CLAUDE.md
+.claude/
+GEMINI.md
 .serena/
+
+# Test artifacts
 test-results/
 playwright-report/

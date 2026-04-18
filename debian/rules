@@ -19,9 +19,15 @@ override_dh_dwz:
 override_dh_auto_configure:
 	@echo "Configure not needed for Go"
 
-# Build the Go binary
+# Build the Go binary and Frontends
 override_dh_auto_build:
-	cd backend && go build -ldflags="-s -w" -o ../vote-server .
+	# Build Backend
+	cd backend && go build \
+		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -s -w" \
+		-o ../vote-server ./cmd/server
+
+	# Build Frontend (single build for both formateur & stagiaire)
+	cd frontend && npm install && npm run build
 
 # Install files manually
 override_dh_auto_install:
@@ -31,6 +37,13 @@ override_dh_auto_install:
 	# Install systemd service
 	install -D -m 0644 debian/vote.service debian/vote/usr/lib/systemd/system/vote.service
 
+	# Install Default Config
+	install -D -m 0644 debian/vote.default debian/vote/etc/default/vote
+
+	# Install Frontend Assets (single build output with both apps)
+	install -d -m 0755 debian/vote/usr/share/vote/www
+	cp -a frontend/dist/. debian/vote/usr/share/vote/www/
+
 	# Create state directories
 	install -d -m 0750 debian/vote/var/lib/vote
 	install -d -m 0750 debian/vote/var/log/vote
@@ -38,3 +51,5 @@ override_dh_auto_install:
 override_dh_auto_clean:
 	rm -f vote-server
 	rm -rf debian/vote
+	# Clean frontend builds
+	rm -rf frontend/dist frontend/node_modules

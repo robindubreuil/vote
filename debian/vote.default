@@ -1,0 +1,7 @@
+# Configuration for Vote Coloré server
+
+# Port to listen on (default: 8080)
+PORT=8080
+
+# Allowed CORS origins (comma separated)
+ALLOWED_ORIGINS=https://vote.dubreuil.pro

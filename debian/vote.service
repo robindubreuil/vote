@@ -1,12 +1,13 @@
 [Unit]
 Description=Vote Coloré - Real-time voting server
 After=network.target
-Documentation=https://github.com/robin/vote
+Documentation=https://github.com/robindubreuil/vote
 
 [Service]
 Type=simple
 User=vote
 Group=vote
+EnvironmentFile=-/etc/default/vote
 ExecStart=/usr/bin/vote-server
 Restart=on-failure
 RestartSec=5s

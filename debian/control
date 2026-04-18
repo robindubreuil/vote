@@ -2,11 +2,11 @@ Source: vote
 Section: web
 Priority: optional
 Maintainer: Robin <63008968+robindubreuil@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 13), golang-any (>= 2:1.23~)
+Build-Depends: debhelper-compat (= 13), golang-any (>= 2:1.23~), nodejs, npm, brotli
 Standards-Version: 4.7.0
-Homepage: https://github.com/robin/vote
-Vcs-Git: https://github.com/robin/vote.git
-Vcs-Browser: https://github.com/robin/vote
+Homepage: https://github.com/robindubreuil/vote
+Vcs-Git: https://github.com/robindubreuil/vote.git
+Vcs-Browser: https://github.com/robindubreuil/vote
 
 Package: vote
 Architecture: any
