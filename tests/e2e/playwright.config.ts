@@ -27,14 +27,7 @@ export default defineConfig({
   ],
 
   webServer: process.env.SKIP_VITE
-    ? [
-        {
-          command: 'cd ../../backend && go run ./cmd/server',
-          url: 'http://localhost:8080/health',
-          reuseExistingServer: !process.env.CI,
-          timeout: 30 * 1000,
-        },
-      ]
+    ? undefined
     : [
         {
           command: 'cd ../../backend && go run ./cmd/server',
