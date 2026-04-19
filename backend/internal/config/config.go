@@ -7,6 +7,7 @@ import (
 )
 
 type Config struct {
+	Host            string
 	Port            string
 	AllowedOrigins  []string
 	PingInterval    time.Duration
@@ -33,6 +34,7 @@ func LoadConfig() *Config {
 	}
 
 	config := &Config{
+		Host:            getEnv("HOST", ""),
 		Port:            getEnv("PORT", "8080"),
 		AllowedOrigins:  origins,
 		PingInterval:    30 * time.Second,
