@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,6 +17,17 @@ var version = "dev"
 var buildTime = "unknown"
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--help", "-h":
+			fmt.Printf("vote-server %s (built %s)\n\nUsage: vote-server\n\nEnvironment variables:\n  PORT             Listen port (default: 8080)\n  ALLOWED_ORIGINS  Comma-separated CORS origins (default: localhost origins)\n", version, buildTime)
+			return
+		case "--version", "-v":
+			fmt.Printf("vote-server %s (built %s)\n", version, buildTime)
+			return
+		}
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
