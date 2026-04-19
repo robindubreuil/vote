@@ -120,4 +120,4 @@ jobs:
         run: docker build -t vote:ci .
 
       - name: Verify binary runs
-        run: docker run --rm -e PORT=0 vote:ci --help 2>&1 || true
+        run: timeout 10 docker run --rm -e PORT=0 vote:ci --help 2>&1 || true
