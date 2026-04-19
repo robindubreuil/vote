@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -53,7 +54,7 @@ func (s *Server) setupRoutes() {
 
 func (s *Server) Run() error {
 	s.srv = &http.Server{
-		Addr:         ":" + s.config.Port,
+		Addr:         net.JoinHostPort(s.config.Host, s.config.Port),
 		Handler:      s.router,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
