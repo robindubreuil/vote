@@ -241,7 +241,7 @@ func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error
 	normalizedNew := NormalizeName(name)
 	for id, n := range session.Stagiaires {
 		if id != stagiaireID && NormalizeName(n) == normalizedNew {
-			return errors.New("Ce nom est déjà utilisé")
+			return errors.New("Ce nom est déjà utilisé") //nolint:staticcheck // user-facing French message
 		}
 	}
 
