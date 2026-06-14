@@ -23,7 +23,6 @@ import (
 type TestServer struct {
 	hub      *hub.Hub
 	srv      *server.Server
-	httpSrv  *http.Server
 	cfg      *config.Config
 	baseURL  string
 	wsURL    string
@@ -140,29 +139,4 @@ func getFreePort(t *testing.T) string {
 
 	port := l.Addr().(*net.TCPAddr).Port
 	return fmt.Sprintf("%d", port)
-}
-
-// waitFor with a timeout, useful for synchronization in tests.
-func waitFor[T any](condition func() (T, bool), timeout time.Duration) (T, bool) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if result, ok := condition(); ok {
-			return result, true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	var zero T
-	return zero, false
-}
-
-// requireWithTimeout waits for a condition or fails the test.
-func requireWithTimeout[T any](t *testing.T, condition func() (T, bool), msg string, timeout time.Duration) T {
-	t.Helper()
-
-	if result, ok := waitFor(condition, timeout); ok {
-		return result
-	}
-	t.Fatalf("Timeout waiting for: %s", msg)
-	var zero T
-	return zero
 }
