@@ -156,7 +156,9 @@ func (h *Hub) registerClient(client *Client) {
 				Stagiaires: make(map[string]*Client),
 			}
 			h.Connections[client.SessionID] = conns
-			h.VoteManager.CreateSession(client.SessionID, client.ID)
+			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
+				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
+			}
 		} else {
 			client.SendError("Session not found")
 			return
@@ -174,9 +176,13 @@ func (h *Hub) registerClient(client *Client) {
 
 		conns.Trainer = client
 		if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
-			h.VoteManager.CreateSession(client.SessionID, client.ID)
+			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
+				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
+			}
 		} else {
-			h.VoteManager.UpdateTrainer(client.SessionID, client.ID)
+			if err := h.VoteManager.UpdateTrainer(client.SessionID, client.ID); err != nil {
+				slog.Error("Failed to update trainer", "session", client.SessionID, "error", err)
+			}
 		}
 
 		client.SendJSON(map[string]any{
