@@ -17,7 +17,7 @@ RUN npm ci --ignore-scripts
 COPY frontend/ .
 RUN npm run build
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata wget
 RUN adduser -D -H -u 10001 vote
 
