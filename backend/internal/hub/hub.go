@@ -195,14 +195,19 @@ func (h *Hub) registerClient(client *Client) {
 
 		if session, ok := h.VoteManager.GetSession(client.SessionID); ok {
 			state, colors, multipleChoice, voteStartTime := session.GetState()
+			labels := session.GetActiveLabels()
 
 			if state == models.VoteStateActive || state == models.VoteStateClosed {
-				client.SendJSON(map[string]any{
+				replayMsg := map[string]any{
 					"type":           "vote_started",
 					"colors":         colors,
 					"multipleChoice": multipleChoice,
 					"voteStartTime":  voteStartTime,
-				})
+				}
+				if labels != nil {
+					replayMsg["labels"] = labels
+				}
+				client.SendJSON(replayMsg)
 
 				votes := session.GetVotes()
 				stagiaires := session.GetStagiaires()

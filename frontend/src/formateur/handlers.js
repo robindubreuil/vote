@@ -5,7 +5,7 @@ import { renderMainContent, attachConfigListeners } from './renderers.js'
 import { getClient } from './websocket.js'
 
 export async function resetConfig() {
-  state.selectedColors = new Set(COLORS.slice(0, 3).map(c => c.id))
+  state.selectedColors = new Set(COLORS.slice(0, 3).map((c) => c.id))
   state.colorLabels = {}
   state.multipleChoice = false
   renderMainContent()
@@ -17,7 +17,7 @@ export async function resetConfig() {
 
 export function startVote(client) {
   if (!client) {
-    showError("Erreur de connexion")
+    showError('Erreur de connexion')
     return
   }
 
@@ -32,7 +32,7 @@ export function startVote(client) {
 
 export function closeVote(client) {
   if (!client) {
-    showError("Erreur de connexion")
+    showError('Erreur de connexion')
     return
   }
 
@@ -44,7 +44,7 @@ export function closeVote(client) {
 
 export function resetVote(client) {
   if (!client) {
-    showError("Erreur de connexion")
+    showError('Erreur de connexion')
     return
   }
 
@@ -57,7 +57,7 @@ export function resetVote(client) {
 }
 
 export function joinSession(code, setLoadingFn, initClientFn) {
-  state.sessionCode = code || ""
+  state.sessionCode = code || ''
   state.connecting = true
 
   if (code) {

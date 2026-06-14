@@ -2,10 +2,11 @@ import { COLORS, escapeHtml } from '../../../shared/colors.js'
 import { vote, timer, users, chart, rocket, stop, refresh, plus, loader } from '../../../shared/icons.js'
 import { renderFooterHTML, renderSessionCodeButton } from '../../../shared/ui.js'
 import { t } from '../../../shared/i18n.js'
+import { createListenerTracker } from '../../../shared/dom/listeners.js'
 import { state } from './state.js'
 import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
 
-const currentListeners = new Set()
+const { track: trackListener, cleanup: cleanupAllListeners } = createListenerTracker()
 
 const _actionHandlers = {}
 
@@ -13,25 +14,7 @@ export function setActionHandlers(handlers) {
   Object.assign(_actionHandlers, handlers)
 }
 
-function trackListener(target, event, handler) {
-  if (!target) return
-  target.addEventListener(event, handler)
-  currentListeners.add({ element: target, event, handler })
-}
-
-function trackListenersForAll(selector, event, handler) {
-  document.querySelectorAll(selector).forEach(element => {
-    element.addEventListener(event, handler)
-    currentListeners.add({ element, event, handler })
-  })
-}
-
-export function cleanupAllListeners() {
-  for (const { element, event, handler } of currentListeners) {
-    element.removeEventListener(event, handler)
-  }
-  currentListeners.clear()
-}
+export { cleanupAllListeners }
 
 /**
  * Render the landing page
@@ -113,6 +96,12 @@ export function updateHeader(client) {
   if (!header) return
 
   const isConnected = client ? client.isConnected() : state.connected
+  const existingBtn = document.getElementById('leaveSessionBtn')
+
+  if (existingBtn && existingBtn.textContent === state.sessionCode) {
+    existingBtn.className = `session-code ${isConnected ? 'connected' : 'disconnected'}`
+    return
+  }
 
   header.innerHTML = `
     <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore} - ${t.common.formateur}</h1>
@@ -158,7 +147,7 @@ export function renderMainContent() {
  */
 export function attachConfigListeners(client) {
   // Color checkboxes
-  document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach(checkbox => {
+  document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach((checkbox) => {
     trackListener(checkbox, 'change', (e) => {
       const colorId = e.target.value
       if (e.target.checked) {
@@ -180,7 +169,7 @@ export function attachConfigListeners(client) {
   })
 
   // Label inputs for custom color names
-  document.querySelectorAll('.color-label-input').forEach(input => {
+  document.querySelectorAll('.color-label-input').forEach((input) => {
     trackListener(input, 'input', (e) => {
       const colorId = e.target.dataset.colorId
       const value = e.target.value.trim()
@@ -195,7 +184,7 @@ export function attachConfigListeners(client) {
   // Multiple choice toggle
   const toggleMultiple = document.querySelector('.multiple-choice-toggle')
   if (toggleMultiple) {
-    trackListener(toggleMultiple, 'click', (e) => {
+    trackListener(toggleMultiple, 'click', () => {
       state.multipleChoice = !state.multipleChoice
       const switchEl = toggleMultiple.querySelector('.toggle-switch')
       switchEl.classList.toggle('active', state.multipleChoice)
@@ -244,7 +233,7 @@ export function renderConfigHTML() {
         <div>
           <div class="stats-header">${t.formateur.availableColors}</div>
           <div class="colors-grid">
-            ${COLORS.map(color => {
+            ${COLORS.map((color) => {
               const customLabel = state.colorLabels[color.id] || ''
               return `
               <label class="color-checkbox ${state.selectedColors.has(color.id) ? 'selected' : ''}">
@@ -265,7 +254,8 @@ export function renderConfigHTML() {
                   />
                 </div>
               </label>
-            `}).join('')}
+            `
+            }).join('')}
           </div>
         </div>
 
@@ -292,10 +282,10 @@ export function renderConfigHTML() {
  * @returns {string}
  */
 export function renderVoteHTML() {
-  const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
+  const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))
 
   // Calculate initial stats
-  const voteCount = state.stagiaires.filter(s => s.vote && s.vote.length > 0).length
+  const voteCount = state.stagiaires.filter((s) => s.vote && s.vote.length > 0).length
   const colorCounts = getColorCounts()
   const maxCount = Math.max(...Object.values(colorCounts), 1)
   const isConnected = state.connected
@@ -333,11 +323,15 @@ export function renderVoteHTML() {
       </div>
 
       <div class="button-row">
-        ${state.voteState === 'active' ? `
+        ${
+          state.voteState === 'active'
+            ? `
           <button class="btn btn-danger" id="closeVote" data-testid="close-vote-btn" ${!isConnected ? 'disabled' : ''}>${stop(' class="icon icon-md"')} ${t.formateur.closeVote}</button>
-        ` : `
+        `
+            : `
           <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
-        `}
+        `
+        }
       </div>
     </div>
   `
@@ -354,11 +348,12 @@ export function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
   // Sort colors by vote count desc
   const sortedColors = [...activeColors].sort((a, b) => (colorCounts[b.id] || 0) - (colorCounts[a.id] || 0))
 
-  return sortedColors.map(color => {
-    const count = colorCounts[color.id] || 0
-    const percent = (count / maxCount) * 100
-    const displayName = state.colorLabels[color.id] || color.name
-    return `
+  return sortedColors
+    .map((color) => {
+      const count = colorCounts[color.id] || 0
+      const percent = (count / maxCount) * 100
+      const displayName = state.colorLabels[color.id] || color.name
+      return `
       <div class="color-bar-row" data-color="${color.id}">
         <div class="color-bar-label">
           <span class="color-bar-swatch" style="background-color: ${color.color}"></span>
@@ -370,7 +365,8 @@ export function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
         </div>
       </div>
     `
-  }).join('')
+    })
+    .join('')
 }
 
 /**
@@ -389,19 +385,23 @@ export function renderCombinationsHTML() {
     `
   }
 
-  return combinations.map(combo => {
-    return `
+  return combinations
+    .map((combo) => {
+      return `
       <div class="combo-item">
         <div class="combo-colors">
-          ${combo.colors.map(colorId => {
-            const color = COLORS.find(c => c.id === colorId)
-            return `<span class="combo-swatch" style="background-color: ${color?.color || '#666'}"></span>`
-          }).join('')}
+          ${combo.colors
+            .map((colorId) => {
+              const color = COLORS.find((c) => c.id === colorId)
+              return `<span class="combo-swatch" style="background-color: ${color?.color || '#666'}"></span>`
+            })
+            .join('')}
         </div>
         <div class="combo-count">${combo.count}</div>
       </div>
     `
-  }).join('')
+    })
+    .join('')
 }
 
 /**
@@ -420,37 +420,41 @@ export function renderStagiairesVotesHTML() {
 
   const sorted = sortStagiaires(state.stagiaires)
 
-  return sorted.map(s => {
-    const displayName = s.name || t.formateur.anonymous
-    const hasVoted = s.vote && s.vote.length > 0
-    const isConnected = s.connected
+  return sorted
+    .map((s) => {
+      const displayName = s.name || t.formateur.anonymous
+      const hasVoted = s.vote && s.vote.length > 0
+      const isConnected = s.connected
 
-    // Online indicator dot
-    const onlineDot = `<span class="online-dot ${isConnected ? 'connected' : 'disconnected'}" title="${isConnected ? t.formateur.online : t.formateur.offline}"></span>`
+      // Online indicator dot
+      const onlineDot = `<span class="online-dot ${isConnected ? 'connected' : 'disconnected'}" title="${isConnected ? t.formateur.online : t.formateur.offline}"></span>`
 
-    if (!hasVoted) {
-      // Non-voter: "waiting" label
-      return `
+      if (!hasVoted) {
+        // Non-voter: "waiting" label
+        return `
         <div class="stagiaire-vote-item waiting">
           <span class="stagiaire-vote-name">${onlineDot}<span class="name-text" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span></span>
           <span class="stagiaire-vote-waiting">${t.formateur.waiting}</span>
         </div>
       `
-    }
+      }
 
-    // Voter: show colors
-    const colorsHTML = s.vote.map(colorId => {
-      const color = COLORS.find(c => c.id === colorId)
-      return `<span class="stagiaire-vote-swatch" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
-    }).join('')
+      // Voter: show colors
+      const colorsHTML = s.vote
+        .map((colorId) => {
+          const color = COLORS.find((c) => c.id === colorId)
+          return `<span class="stagiaire-vote-swatch" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+        })
+        .join('')
 
-    return `
+      return `
       <div class="stagiaire-vote-item">
         <span class="stagiaire-vote-name">${onlineDot}<span class="name-text" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span></span>
         <div class="stagiaire-vote-colors">${colorsHTML}</div>
       </div>
     `
-  }).join('')
+    })
+    .join('')
 }
 
 /**

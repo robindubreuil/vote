@@ -74,7 +74,7 @@
   transform: scale(1.01);
 }
 
-.color-checkbox input[type="checkbox"] {
+.color-checkbox input[type='checkbox'] {
   display: none;
 }
 
@@ -162,7 +162,7 @@
   background: white;
   border-radius: 50%;
   transition: transform var(--transition-slow);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .toggle-switch.active::after {
@@ -273,7 +273,7 @@
   min-width: 0;
   contain: layout style paint;
   /* Glossy effect */
-  background-image: linear-gradient(to bottom, rgba(255,255,255,0.15), rgba(255,255,255,0));
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 

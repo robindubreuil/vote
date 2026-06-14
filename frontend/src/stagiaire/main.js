@@ -49,7 +49,7 @@ function init() {
   // Check URL params for session code (override saved code if present)
   const urlSession = getSessionCodeFromURL()
   if (urlSession && validateSessionCode(urlSession) === null) {
-      savedCode = urlSession
+    savedCode = urlSession
   }
 
   if (savedCode) {

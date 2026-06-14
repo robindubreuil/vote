@@ -83,7 +83,7 @@ function handleMessage(msg) {
       render()
       break
 
-    case 'error':
+    case 'error': {
       let errorMessage = msg.message || 'Erreur de connexion'
       if (errorMessage === 'Session not found') {
         errorMessage = 'Session introuvable'
@@ -95,6 +95,7 @@ function handleMessage(msg) {
         // Keep in JOINING state, error is shown via showError()
       }
       break
+    }
 
     case 'vote_started':
       // Nouveau vote lancé
@@ -105,7 +106,7 @@ function handleMessage(msg) {
 
       // Restore existing vote if rejoining
       if (msg.existingVote && Array.isArray(msg.existingVote)) {
-        msg.existingVote.forEach(colorId => state.selectedColors.add(colorId))
+        msg.existingVote.forEach((colorId) => state.selectedColors.add(colorId))
         state.hasVoted = true
         state.appState = AppState.VOTED
       } else {

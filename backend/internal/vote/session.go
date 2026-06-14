@@ -10,12 +10,13 @@ type Session struct {
 	mu             sync.RWMutex
 	ID             string
 	TrainerID      string
-	Stagiaires     map[string]string // Map ID -> Name
+	Stagiaires     map[string]string
 	VoteState      string
 	ActiveColors   []string
+	ActiveLabels   map[string]string
 	MultipleChoice bool
-	Votes          map[string][]string // Map ID -> Colors
-	VoteStartTime  int64               // Unix timestamp when vote was started
+	Votes          map[string][]string
+	VoteStartTime  int64
 	LastActivity   int64
 }
 
@@ -60,7 +61,6 @@ func (s *Session) GetVotes() map[string][]string {
 	return votes
 }
 
-// GetVote returns the vote for a specific stagiaire
 func (s *Session) GetVote(stagiaireID string) ([]string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -73,4 +73,17 @@ func (s *Session) GetVote(stagiaireID string) ([]string, bool) {
 	vCopy := make([]string, len(vote))
 	copy(vCopy, vote)
 	return vCopy, true
+}
+
+func (s *Session) GetActiveLabels() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.ActiveLabels) == 0 {
+		return nil
+	}
+	labels := make(map[string]string, len(s.ActiveLabels))
+	for k, v := range s.ActiveLabels {
+		labels[k] = v
+	}
+	return labels
 }

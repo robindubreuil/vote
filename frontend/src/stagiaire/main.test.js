@@ -5,10 +5,12 @@ import { AppState } from './state.js'
 import { state } from './state.js'
 
 function formatSelectedColorNames(selectedColors, colors) {
-  return Array.from(selectedColors).map(id => {
-    const color = colors.find(c => c.id === id)
-    return color?.name || id
-  }).join(' + ')
+  return Array.from(selectedColors)
+    .map((id) => {
+      const color = colors.find((c) => c.id === id)
+      return color?.name || id
+    })
+    .join(' + ')
 }
 
 describe('Stagiaire - Validation du code de session', () => {
@@ -83,7 +85,7 @@ describe('Stagiaire - Colors', () => {
   })
 
   it('should have valid hex color codes', () => {
-    COLORS.forEach(color => {
+    COLORS.forEach((color) => {
       expect(color.id).toBeTruthy()
       expect(color.name).toBeTruthy()
       expect(color.color).toMatch(/^#[0-9a-fA-F]{6}$/)
@@ -92,7 +94,7 @@ describe('Stagiaire - Colors', () => {
 
   it('should filter active colors', () => {
     const availableColors = ['rouge', 'vert', 'bleu']
-    const activeColors = COLORS.filter(c => availableColors.includes(c.id))
+    const activeColors = COLORS.filter((c) => availableColors.includes(c.id))
 
     expect(activeColors).toHaveLength(3)
     expect(activeColors[0].id).toBe('rouge')

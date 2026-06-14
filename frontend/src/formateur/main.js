@@ -1,7 +1,9 @@
 import './style.css'
 import {
-  renderLandingPage, renderFullLayout,
-  attachAppKeyboardShortcuts, cleanupAllListeners,
+  renderLandingPage,
+  renderFullLayout,
+  attachAppKeyboardShortcuts,
+  cleanupAllListeners,
   setActionHandlers
 } from './renderers.js'
 import { initClient, closeClient, attachLandingListenersWithHandlers } from './websocket.js'

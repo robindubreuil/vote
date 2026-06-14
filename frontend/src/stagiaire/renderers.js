@@ -2,13 +2,12 @@ import { vote, hourglass, pencil, check, stop } from '../../../shared/icons.js'
 import { COLORS, escapeHtml } from '../../../shared/colors.js'
 import { renderFooterHTML, renderSessionCodeButton } from '../../../shared/ui.js'
 import { t } from '../../../shared/i18n.js'
+import { createListenerTracker } from '../../../shared/dom/listeners.js'
 import { state, AppState } from './state.js'
 
-// Keyboard shortcuts handler reference
 let handleKeyPress = null
 
-// Track all event listeners for cleanup
-const currentListeners = new Set()
+const { track: trackListener, cleanup: cleanupEventListeners } = createListenerTracker()
 
 /**
  * Render the initial layout structure (Header, Main, Footer)
@@ -193,7 +192,7 @@ function renderEditNameHTML() {
  * Render the voting interface
  */
 function renderVotingHTML() {
-  const activeColors = COLORS.filter(c => state.availableColors.includes(c.id))
+  const activeColors = COLORS.filter((c) => state.availableColors.includes(c.id))
 
   return `
     <header class="header">
@@ -205,10 +204,7 @@ function renderVotingHTML() {
     <div class="card">
       <h2 class="card-title">${t.stagiaire.voteNow}</h2>
       <p class="vote-instruction ${state.multipleChoice ? 'multiple-choice' : 'single-choice'}" data-testid="vote-instruction" aria-live="polite">
-        ${state.multipleChoice
-          ? t.stagiaire.multipleChoice
-          : t.stagiaire.singleChoice
-        }
+        ${state.multipleChoice ? t.stagiaire.multipleChoice : t.stagiaire.singleChoice}
       </p>
 
       ${state.multipleChoice ? renderMultipleChoiceHTML(activeColors) : renderSingleChoiceHTML(activeColors)}
@@ -223,9 +219,10 @@ function renderSingleChoiceHTML(activeColors) {
   const isConnected = state.connected
   return `
     <div class="vote-grid">
-      ${activeColors.map(color => {
-        const label = state.colorLabels[color.id] || color.name
-        return `
+      ${activeColors
+        .map((color) => {
+          const label = state.colorLabels[color.id] || color.name
+          return `
         <button
           type="button"
           class="vote-button bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''}"
@@ -238,7 +235,8 @@ function renderSingleChoiceHTML(activeColors) {
           ${escapeHtml(label)}
         </button>
         `
-      }).join('')}
+        })
+        .join('')}
     </div>
   `
 }
@@ -250,9 +248,10 @@ function renderMultipleChoiceHTML(activeColors) {
   const isConnected = state.connected
   return `
     <div class="vote-grid">
-      ${activeColors.map(color => {
-        const label = state.colorLabels[color.id] || color.name
-        return `
+      ${activeColors
+        .map((color) => {
+          const label = state.colorLabels[color.id] || color.name
+          return `
         <input
           type="checkbox"
           id="color-${color.id}"
@@ -270,7 +269,8 @@ function renderMultipleChoiceHTML(activeColors) {
           <span class="check-indicator"></span>
         </label>
         `
-      }).join('')}
+        })
+        .join('')}
     </div>
     <button type="button" class="btn btn-success btn-large" id="submitVote" data-testid="submit-vote-btn" ${state.selectedColors.size === 0 || !isConnected ? 'disabled' : ''}>
       ${t.stagiaire.validateVote}
@@ -282,9 +282,11 @@ function renderMultipleChoiceHTML(activeColors) {
  * Render the voted state
  */
 function renderVotedHTML() {
-  const selectedNames = Array.from(state.selectedColors).map(id => {
-    return state.colorLabels[id] || COLORS.find(c => c.id === id)?.name || id
-  }).join(' + ')
+  const selectedNames = Array.from(state.selectedColors)
+    .map((id) => {
+      return state.colorLabels[id] || COLORS.find((c) => c.id === id)?.name || id
+    })
+    .join(' + ')
 
   return `
     <header class="header">
@@ -326,37 +328,6 @@ function renderClosedHTML() {
   `
 }
 
-/**
- * Helper function to add and track event listeners
- * @param {Element|string} target - Element or selector
- * @param {string} event - Event name
- * @param {Function} handler - Event handler
- * @param {boolean} useSelector - If true, target is a selector string
- */
-function trackListener(target, event, handler, useSelector = false) {
-  const element = useSelector ? document.querySelector(target) : target
-  if (!element) return
-
-  element.addEventListener(event, handler)
-  currentListeners.add({ element, event, handler })
-}
-
-/**
- * Helper function to add and track event listeners to multiple elements
- * @param {string} selector - CSS selector
- * @param {string} event - Event name
- * @param {Function} handler - Event handler
- */
-function trackListenersForAll(selector, event, handler) {
-  document.querySelectorAll(selector).forEach(element => {
-    element.addEventListener(event, handler)
-    currentListeners.add({ element, event, handler })
-  })
-}
-
-/**
- * Attach all event listeners to DOM elements
- */
 export function attachEventListeners() {
   // Input Binding (plus explicite pour éviter les pertes d'état)
   const prenomInput = document.getElementById('prenom')
@@ -411,7 +382,7 @@ export function attachEventListeners() {
   }
 
   // Boutons de vote (choix unique)
-  document.querySelectorAll('.vote-button').forEach(btn => {
+  document.querySelectorAll('.vote-button').forEach((btn) => {
     trackListener(btn, 'click', handleSingleChoiceVote)
     // Accessibility: Activate on Enter/Space
     trackListener(btn, 'keydown', (e) => {
@@ -423,7 +394,7 @@ export function attachEventListeners() {
   })
 
   // Checkboxes (choix multiple)
-  document.querySelectorAll('.vote-checkbox').forEach(checkbox => {
+  document.querySelectorAll('.vote-checkbox').forEach((checkbox) => {
     trackListener(checkbox, 'change', handleCheckboxChange)
     // Accessibility for label
     const label = document.querySelector(`label[for="${checkbox.id}"]`)
@@ -469,23 +440,18 @@ export function attachEventListeners() {
   }
 }
 
-/**
- * Remove all tracked event listeners
- */
-export function cleanupEventListeners() {
-  for (const { element, event, handler } of currentListeners) {
-    element.removeEventListener(event, handler)
-  }
-  currentListeners.clear()
-}
+export { cleanupEventListeners }
 
-// Import handlers to avoid circular dependency
-// These will be passed in from handlers.js
 let handleJoin, handleEditName, handleSingleChoiceVote, handleCheckboxChange, handleSubmitVote, leaveSession
 
-/**
- * Set the handler functions (called from handlers.js)
- */
 export function setHandlers(handlers) {
-  ({ handleJoin, handleEditName, handleSingleChoiceVote, handleCheckboxChange, handleSubmitVote, leaveSession, handleKeyPress } = handlers)
+  ;({
+    handleJoin,
+    handleEditName,
+    handleSingleChoiceVote,
+    handleCheckboxChange,
+    handleSubmitVote,
+    leaveSession,
+    handleKeyPress
+  } = handlers)
 }

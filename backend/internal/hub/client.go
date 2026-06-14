@@ -312,7 +312,7 @@ func (c *Client) handleStartVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice)
+	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels)
 
 	if err != nil {
 		c.SendError(err.Error())
@@ -390,7 +390,7 @@ func (c *Client) handleResetVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice)
+	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, nil)
 	if err != nil {
 		c.SendError(err.Error())
 		return

@@ -138,7 +138,7 @@ export function handleSubmitVote() {
 export function submitVote(triggerButton = null) {
   const client = getClient()
   if (!client) {
-    showError("Erreur de connexion")
+    showError('Erreur de connexion')
     return
   }
 
@@ -148,10 +148,10 @@ export function submitVote(triggerButton = null) {
   if (btn) {
     btn.disabled = true
     if (btn.id === 'submitVote') {
-       btn.innerHTML = `${loader(' class="icon icon-md spin"')} Envoi...`
+      btn.innerHTML = `${loader(' class="icon icon-md spin"')} Envoi...`
     } else {
-       btn.style.opacity = '0.7'
-       btn.style.cursor = 'wait'
+      btn.style.opacity = '0.7'
+      btn.style.cursor = 'wait'
     }
   }
 
@@ -168,7 +168,7 @@ export function submitVote(triggerButton = null) {
       btn.style.opacity = ''
       btn.style.cursor = ''
     }
-    showError("Erreur de connexion")
+    showError('Erreur de connexion')
   }
 }
 

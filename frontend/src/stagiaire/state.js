@@ -4,11 +4,11 @@
 
 // États de l'application
 export const AppState = {
-  JOINING: 'joining',      // Saisie du code session
-  WAITING: 'waiting',      // En attente du prochain vote
-  VOTING: 'voting',        // Vote en cours
-  VOTED: 'voted',          // Vote enregistré
-  CLOSED: 'closed'         // Vote terminé par le formateur
+  JOINING: 'joining', // Saisie du code session
+  WAITING: 'waiting', // En attente du prochain vote
+  VOTING: 'voting', // Vote en cours
+  VOTED: 'voted', // Vote enregistré
+  CLOSED: 'closed' // Vote terminé par le formateur
 }
 
 /**

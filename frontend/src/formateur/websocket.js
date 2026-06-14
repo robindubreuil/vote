@@ -3,7 +3,18 @@ import { getWebSocketURL } from '../../../shared/config.js'
 import { showError, hideError } from '../../../shared/ui.js'
 import { validateSessionCode } from '../../../shared/validation.js'
 import { state } from './state.js'
-import { renderFullLayout, updateHeader, renderMainContent, renderLandingPage, updateLandingPageLoadingState, attachConfigListeners, attachHeaderListeners, attachVoteListeners, cleanupAllListeners, attachLandingListeners } from './renderers.js'
+import {
+  renderFullLayout,
+  updateHeader,
+  renderMainContent,
+  renderLandingPage,
+  updateLandingPageLoadingState,
+  attachConfigListeners,
+  attachHeaderListeners,
+  attachVoteListeners,
+  cleanupAllListeners,
+  attachLandingListeners
+} from './renderers.js'
 import { startTimer, stopTimer, updateVoteResults } from './utils.js'
 import { users } from '../../../shared/icons.js'
 
@@ -25,8 +36,6 @@ export function initClient() {
     onStatusChange: (connected) => {
       state.connected = connected
       updateHeader(client)
-      renderMainContent()
-      attachListeners()
     },
     onOpen: () => {
       client.send({
@@ -86,11 +95,11 @@ function handleMessage(msg) {
           configInfo.innerHTML = `${users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${s} connecté${s}`
         } else if (document.getElementById('app-content')) {
           renderMainContent()
+          attachListeners()
         }
       } else {
         updateVoteResults()
       }
-      attachListeners()
       break
 
     case 'vote_started':
@@ -136,10 +145,10 @@ function handleMessage(msg) {
       break
 
     case 'error':
-      console.error("Backend error:", msg.message)
+      console.error('Backend error:', msg.message)
       state.connecting = false
 
-      if (msg.message === "Session introuvable") {
+      if (msg.message === 'Session introuvable') {
         sessionStorage.removeItem('vote_session_code')
         state.sessionCode = null
         cleanupAllListeners()
@@ -190,9 +199,11 @@ function attachListeners() {
 
 export function attachLandingListenersWithHandlers() {
   const createSession = () => {
-    import('./handlers.js').then(({ joinSession }) => {
-      joinSession(null, updateLandingPageLoadingState, initClient)
-    }).catch(() => showError("Erreur de chargement"))
+    import('./handlers.js')
+      .then(({ joinSession }) => {
+        joinSession(null, updateLandingPageLoadingState, initClient)
+      })
+      .catch(() => showError('Erreur de chargement'))
   }
 
   const joinSessionFn = (code) => {
@@ -205,9 +216,11 @@ export function attachLandingListenersWithHandlers() {
     }
     const joinInput = document.getElementById('joinSessionInput')
     if (joinInput) joinInput.classList.remove('error')
-    import('./handlers.js').then(({ joinSession }) => {
-      joinSession(code, updateLandingPageLoadingState, initClient)
-    }).catch(() => showError("Erreur de chargement"))
+    import('./handlers.js')
+      .then(({ joinSession }) => {
+        joinSession(code, updateLandingPageLoadingState, initClient)
+      })
+      .catch(() => showError('Erreur de chargement'))
   }
 
   attachLandingListeners(joinSessionFn, createSession)

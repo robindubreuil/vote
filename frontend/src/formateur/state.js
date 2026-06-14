@@ -5,7 +5,7 @@ export const state = {
   connected: false,
   connecting: false,
   voteState: 'idle',
-  selectedColors: new Set(COLORS.slice(0, 3).map(c => c.id)),
+  selectedColors: new Set(COLORS.slice(0, 3).map((c) => c.id)),
   colorLabels: {},
   multipleChoice: false,
   connectedCount: 0,

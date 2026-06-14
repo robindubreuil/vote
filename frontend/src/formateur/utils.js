@@ -8,9 +8,9 @@ import { state } from './state.js'
  */
 export function getColorCounts() {
   const counts = {}
-  state.stagiaires.forEach(s => {
+  state.stagiaires.forEach((s) => {
     if (s.vote) {
-      s.vote.forEach(colorId => {
+      s.vote.forEach((colorId) => {
         counts[colorId] = (counts[colorId] || 0) + 1
       })
     }
@@ -25,7 +25,7 @@ export function getColorCounts() {
 export function getCombinations() {
   const comboMap = new Map()
 
-  state.stagiaires.forEach(s => {
+  state.stagiaires.forEach((s) => {
     if (s.vote && s.vote.length > 0) {
       const key = s.vote.slice().sort().join('+')
       comboMap.set(key, (comboMap.get(key) || 0) + 1)
@@ -49,7 +49,7 @@ export function getCombinations() {
 export function sortStagiaires(stagiaires) {
   // Calculate popularity of each combination (among voters)
   const comboPopularity = new Map()
-  stagiaires.forEach(s => {
+  stagiaires.forEach((s) => {
     if (s.vote && s.vote.length > 0) {
       const key = s.vote.slice().sort().join('+')
       comboPopularity.set(key, (comboPopularity.get(key) || 0) + 1)
@@ -99,14 +99,14 @@ export function updateColorBars(activeColors, colorCounts, maxCount) {
 
   // Create a Map of existing elements for fast lookup
   const existingRows = new Map()
-  Array.from(container.children).forEach(row => {
+  Array.from(container.children).forEach((row) => {
     const colorId = row.getAttribute('data-color')
     if (colorId) existingRows.set(colorId, row)
   })
 
   // Rebuild HTML with correct order
   const fragment = document.createDocumentFragment()
-  sortedColors.forEach(color => {
+  sortedColors.forEach((color) => {
     const count = colorCounts[color.id] || 0
     const percent = (count / maxCount) * 100
 
@@ -164,7 +164,9 @@ export function startTimer() {
     const timerEl = document.querySelector('.vote-timer')
     if (timerEl && state.voteStartTime) {
       const elapsed = Math.floor((Date.now() - state.voteStartTime) / 1000)
-      const mins = Math.floor(elapsed / 60).toString().padStart(2, '0')
+      const mins = Math.floor(elapsed / 60)
+        .toString()
+        .padStart(2, '0')
       const secs = (elapsed % 60).toString().padStart(2, '0')
       timerEl.innerHTML = `${icons.timer(' class="icon icon-sm"')} ${mins}:${secs}`
     }
@@ -186,7 +188,7 @@ export function stopTimer() {
  */
 export function updateVoteResults() {
   // Count votes from stagiaires
-  const voteCount = state.stagiaires.filter(s => s.vote && s.vote.length > 0).length
+  const voteCount = state.stagiaires.filter((s) => s.vote && s.vote.length > 0).length
 
   // Update vote count
   const voteCountEl = document.querySelector('.vote-count')
@@ -194,7 +196,7 @@ export function updateVoteResults() {
     voteCountEl.innerHTML = `${icons.chart(' class="icon icon-sm"')} ${voteCount} / ${state.connectedCount} votes`
   }
 
-  const activeColors = COLORS.filter(c => state.selectedColors.has(c.id))
+  const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))
   const colorCounts = getColorCounts()
   const maxCount = Math.max(...Object.values(colorCounts), 1)
 
