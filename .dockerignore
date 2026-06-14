@@ -1,3 +1,13 @@
+# Version control
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# Debian packaging
+debian/
+
 # Build artifacts
 backend/vote-server
 backend/coverage.out

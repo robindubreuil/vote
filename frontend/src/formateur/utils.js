@@ -1,4 +1,4 @@
-import { COLORS } from '../../../shared/colors.js'
+import { COLORS, escapeHtml } from '../../../shared/colors.js'
 import { icons } from '../../../shared/icons.js'
 import { state } from './state.js'
 
@@ -140,7 +140,7 @@ export function updateColorBars(activeColors, colorCounts, maxCount) {
       row.innerHTML = `
         <div class="color-bar-label">
           <span class="color-bar-swatch" style="background-color: ${color.color}"></span>
-          <span class="color-bar-name">${state.colorLabels[color.id] || color.name}</span>
+          <span class="color-bar-name">${escapeHtml(state.colorLabels[color.id] || color.name)}</span>
         </div>
         <div class="color-bar-track">
           <span class="color-bar-count">${count}</span>

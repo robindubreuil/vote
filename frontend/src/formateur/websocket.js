@@ -1,6 +1,7 @@
 import { VoteClient } from '../../../shared/websocket-client.js'
 import { getWebSocketURL } from '../../../shared/config.js'
-import { showError } from '../../../shared/ui.js'
+import { showError, hideError } from '../../../shared/ui.js'
+import { validateSessionCode } from '../../../shared/validation.js'
 import { state } from './state.js'
 import { renderFullLayout, updateHeader, renderMainContent, renderLandingPage, updateLandingPageLoadingState, attachConfigListeners, attachHeaderListeners, attachVoteListeners, cleanupAllListeners, attachLandingListeners } from './renderers.js'
 import { startTimer, stopTimer, updateVoteResults } from './utils.js'
@@ -187,7 +188,7 @@ function attachListeners() {
   })
 }
 
-function attachLandingListenersWithHandlers() {
+export function attachLandingListenersWithHandlers() {
   const createSession = () => {
     import('./handlers.js').then(({ joinSession }) => {
       joinSession(null, updateLandingPageLoadingState, initClient)
@@ -195,19 +196,17 @@ function attachLandingListenersWithHandlers() {
   }
 
   const joinSessionFn = (code) => {
-    import('../../../shared/validation.js').then(({ validateSessionCode }) => {
-      const error = validateSessionCode(code)
-      if (error) {
-        const joinInput = document.getElementById('joinSessionInput')
-        if (joinInput) joinInput.classList.add('error')
-        showError(error)
-        return
-      }
+    const error = validateSessionCode(code)
+    if (error) {
       const joinInput = document.getElementById('joinSessionInput')
-      if (joinInput) joinInput.classList.remove('error')
-      import('./handlers.js').then(({ joinSession }) => {
-        joinSession(code, updateLandingPageLoadingState, initClient)
-      }).catch(() => showError("Erreur de chargement"))
+      if (joinInput) joinInput.classList.add('error')
+      showError(error)
+      return
+    }
+    const joinInput = document.getElementById('joinSessionInput')
+    if (joinInput) joinInput.classList.remove('error')
+    import('./handlers.js').then(({ joinSession }) => {
+      joinSession(code, updateLandingPageLoadingState, initClient)
     }).catch(() => showError("Erreur de chargement"))
   }
 
@@ -217,7 +216,7 @@ function attachLandingListenersWithHandlers() {
   if (joinInput) {
     joinInput.addEventListener('input', () => {
       joinInput.classList.remove('error')
-      showError(null)
+      hideError()
     })
   }
 }

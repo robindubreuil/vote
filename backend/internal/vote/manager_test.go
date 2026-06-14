@@ -232,7 +232,7 @@ func TestCleanupExpiredSessions(t *testing.T) {
 	session, _ := m.GetSession("1234")
 	session.LastActivity = time.Now().Add(-2 * time.Hour).Unix()
 
-	m.CleanupExpiredSessions(time.Hour)
+	m.CleanupExpiredSessions(time.Hour, nil)
 
 	if _, ok := m.GetSession("1234"); ok {
 		t.Error("Session should have been cleaned up")

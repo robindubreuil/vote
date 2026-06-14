@@ -49,7 +49,6 @@ export const t = {
     resetting: 'Réinitialisation...',
     or: 'OU',
     sessionPlaceholder: 'Code session (ex: 1234)',
-    connectedStagiaires: '{count} stagiaire(s) connecté(s)',
     byColor: 'Par couleur',
     byCombination: 'Par combinaison',
     byStagiaire: 'Par stagiaire',

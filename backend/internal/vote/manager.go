@@ -236,9 +236,9 @@ func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error
 	}
 
 	// Check for name collision
-	normalizedNew := normalizeName(name)
+	normalizedNew := NormalizeName(name)
 	for id, n := range session.Stagiaires {
-		if id != stagiaireID && normalizeName(n) == normalizedNew {
+		if id != stagiaireID && NormalizeName(n) == normalizedNew {
 			return errors.New("Ce nom est déjà utilisé")
 		}
 	}
@@ -248,29 +248,23 @@ func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error
 	return nil
 }
 
-func (m *Manager) CleanupExpiredSessions(timeout time.Duration) {
+func (m *Manager) CleanupExpiredSessions(timeout time.Duration, protected map[string]bool) {
 	now := time.Now().Unix()
 	timeoutSec := int64(timeout.Seconds())
 
-	var expiredSessions []string
-	m.mu.RLock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for id, session := range m.sessions {
+		if protected[id] {
+			continue
+		}
 		session.mu.RLock()
 		inactive := now-session.LastActivity > timeoutSec
 		session.mu.RUnlock()
-
 		if inactive {
-			expiredSessions = append(expiredSessions, id)
-		}
-	}
-	m.mu.RUnlock()
-
-	if len(expiredSessions) > 0 {
-		m.mu.Lock()
-		for _, id := range expiredSessions {
 			delete(m.sessions, id)
 		}
-		m.mu.Unlock()
 	}
 }
 
@@ -330,9 +324,9 @@ func (m *Manager) GetStagiaireIDByName(sessionID, name string) (string, bool) {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 
-	normalizedNew := normalizeName(name)
+	normalizedNew := NormalizeName(name)
 	for id, n := range session.Stagiaires {
-		if normalizeName(n) == normalizedNew {
+		if NormalizeName(n) == normalizedNew {
 			return id, true
 		}
 	}
@@ -352,19 +346,18 @@ func (m *Manager) IsNameInUse(sessionID, name string, excludeID string) bool {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 
-	normalizedNew := normalizeName(name)
+	normalizedNew := NormalizeName(name)
 	for id, n := range session.Stagiaires {
-		if id != excludeID && normalizeName(n) == normalizedNew {
+		if id != excludeID && NormalizeName(n) == normalizedNew {
 			return true
 		}
 	}
 	return false
 }
 
-func normalizeName(name string) string {
+func NormalizeName(name string) string {
 	name = strings.ToLower(name)
 
-	// Remove accents
 	var b strings.Builder
 	for _, r := range name {
 		switch r {
@@ -381,7 +374,6 @@ func normalizeName(name string) string {
 		case 'ç':
 			b.WriteRune('c')
 		case ' ', '-':
-			// Skip spaces and hyphens
 		default:
 			b.WriteRune(r)
 		}

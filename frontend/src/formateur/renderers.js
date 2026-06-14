@@ -5,27 +5,20 @@ import { t } from '../../../shared/i18n.js'
 import { state } from './state.js'
 import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
 
-// Track all event listeners for cleanup
 const currentListeners = new Set()
 
-/**
- * Helper function to add and track event listeners
- * @param {Element} target - DOM element
- * @param {string} event - Event name
- * @param {Function} handler - Event handler
- */
+const _actionHandlers = {}
+
+export function setActionHandlers(handlers) {
+  Object.assign(_actionHandlers, handlers)
+}
+
 function trackListener(target, event, handler) {
   if (!target) return
   target.addEventListener(event, handler)
   currentListeners.add({ element: target, event, handler })
 }
 
-/**
- * Helper function to add and track event listeners for all matching elements
- * @param {string} selector - CSS selector
- * @param {string} event - Event name
- * @param {Function} handler - Event handler
- */
 function trackListenersForAll(selector, event, handler) {
   document.querySelectorAll(selector).forEach(element => {
     element.addEventListener(event, handler)
@@ -33,9 +26,6 @@ function trackListenersForAll(selector, event, handler) {
   })
 }
 
-/**
- * Remove all tracked event listeners
- */
 export function cleanupAllListeners() {
   for (const { element, event, handler } of currentListeners) {
     element.removeEventListener(event, handler)
@@ -137,7 +127,7 @@ export function updateHeader(client) {
  * @param {Object} client
  * @param {Function} renderLandingPageFn
  */
-export function attachHeaderListeners(client, renderLandingPageFn) {
+export function attachHeaderListeners(client, leaveSessionFn) {
   const leaveSessionBtn = document.getElementById('leaveSessionBtn')
   if (leaveSessionBtn) {
     trackListener(leaveSessionBtn, 'click', () => {
@@ -212,22 +202,14 @@ export function attachConfigListeners(client) {
     })
   }
 
-  // Start vote button
   const startBtn = document.getElementById('startVote')
-  if (startBtn) {
-    // Import handler dynamically to avoid circular dependency
-    import('./handlers.js').then(({ startVote }) => {
-      trackListener(startBtn, 'click', () => startVote(client))
-    }).catch(() => {})
+  if (startBtn && _actionHandlers.startVote) {
+    trackListener(startBtn, 'click', () => _actionHandlers.startVote(client))
   }
 
-  // Reset config button
   const resetBtn = document.getElementById('resetConfig')
-  if (resetBtn) {
-    trackListener(resetBtn, 'click', async () => {
-      const { resetConfig } = await import('./handlers.js').catch(() => ({}))
-      if (resetConfig) await resetConfig()
-    })
+  if (resetBtn && _actionHandlers.resetConfig) {
+    trackListener(resetBtn, 'click', () => _actionHandlers.resetConfig())
   }
 }
 
@@ -236,20 +218,14 @@ export function attachConfigListeners(client) {
  * @param {Object} client
  */
 export function attachVoteListeners(client) {
-  // Close vote button
   const closeBtn = document.getElementById('closeVote')
-  if (closeBtn) {
-    import('./handlers.js').then(({ closeVote }) => {
-      trackListener(closeBtn, 'click', () => closeVote(client))
-    }).catch(() => {})
+  if (closeBtn && _actionHandlers.closeVote) {
+    trackListener(closeBtn, 'click', () => _actionHandlers.closeVote(client))
   }
 
-  // New vote button
   const newVoteBtn = document.getElementById('newVote')
-  if (newVoteBtn) {
-    import('./handlers.js').then(({ resetVote }) => {
-      trackListener(newVoteBtn, 'click', () => resetVote(client))
-    }).catch(() => {})
+  if (newVoteBtn && _actionHandlers.resetVote) {
+    trackListener(newVoteBtn, 'click', () => _actionHandlers.resetVote(client))
   }
 }
 
@@ -501,11 +477,10 @@ export function attachLandingListeners(joinSessionFn, createSessionFn) {
 
   // Keyboard shortcuts on landing page
   const keyHandler = (e) => {
-    // Enter key - create session or join with code
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !(document.activeElement instanceof HTMLButtonElement)) {
       if (document.activeElement === joinInput && joinInput.value.trim()) {
         joinSessionFn(joinInput.value.trim())
-      } else if (!joinInput.value.trim()) {
+      } else if (!joinInput || !joinInput.value.trim()) {
         createSessionFn()
       }
     }

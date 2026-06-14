@@ -7,25 +7,28 @@ import (
 )
 
 type Config struct {
-	Host            string
-	Port            string
-	AllowedOrigins  []string
-	PingInterval    time.Duration
-	SessionTimeout  time.Duration
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ShutdownTimeout time.Duration
-	CleanupInterval time.Duration
-	ValidColors     []string
+	Host             string
+	Port             string
+	AllowedOrigins   []string
+	AllowCredentials bool
+	TrustedProxies   []string
+	PingInterval     time.Duration
+	SessionTimeout   time.Duration
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+	IdleTimeout      time.Duration
+	ShutdownTimeout  time.Duration
+	CleanupInterval  time.Duration
+	ValidColors      []string
 }
 
 func LoadConfig() *Config {
 	allowedOrigins := getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5177,http://localhost:5178")
 	var origins []string
+	allowCreds := true
 	if allowedOrigins == "*" {
-		// NOTE: Wildcard origin is NOT allowed with credentials enabled.
 		origins = []string{}
+		allowCreds = false
 	} else {
 		origins = strings.Split(allowedOrigins, ",")
 		for i := range origins {
@@ -33,17 +36,27 @@ func LoadConfig() *Config {
 		}
 	}
 
+	trustedProxies := []string{}
+	if tp := os.Getenv("TRUSTED_PROXIES"); tp != "" {
+		trustedProxies = strings.Split(tp, ",")
+		for i := range trustedProxies {
+			trustedProxies[i] = strings.TrimSpace(trustedProxies[i])
+		}
+	}
+
 	config := &Config{
-		Host:            getEnv("HOST", ""),
-		Port:            getEnv("PORT", "8080"),
-		AllowedOrigins:  origins,
-		PingInterval:    30 * time.Second,
-		SessionTimeout:  getEnvDuration("SESSION_TIMEOUT", 1*time.Hour),
-		ReadTimeout:     15 * time.Second,
-		WriteTimeout:    15 * time.Second,
-		IdleTimeout:     60 * time.Second,
-		ShutdownTimeout: 5 * time.Second,
-		CleanupInterval: getEnvDuration("CLEANUP_INTERVAL", 10*time.Minute),
+		Host:             getEnv("HOST", ""),
+		Port:             getEnv("PORT", "8080"),
+		AllowedOrigins:   origins,
+		AllowCredentials: allowCreds,
+		TrustedProxies:   trustedProxies,
+		PingInterval:     30 * time.Second,
+		SessionTimeout:   getEnvDuration("SESSION_TIMEOUT", 1*time.Hour),
+		ReadTimeout:      15 * time.Second,
+		WriteTimeout:     15 * time.Second,
+		IdleTimeout:      60 * time.Second,
+		ShutdownTimeout:  5 * time.Second,
+		CleanupInterval:  getEnvDuration("CLEANUP_INTERVAL", 10*time.Minute),
 		ValidColors: []string{
 			"rouge", "vert", "bleu", "jaune",
 			"orange", "violet", "rose", "gris",

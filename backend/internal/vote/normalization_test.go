@@ -23,10 +23,10 @@ func TestNameNormalization(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		n1 := normalizeName(tt.name1)
-		n2 := normalizeName(tt.name2)
+		n1 := NormalizeName(tt.name1)
+		n2 := NormalizeName(tt.name2)
 		if (n1 == n2) != tt.shouldMatch {
-			t.Errorf("normalizeName comparison failed for '%s' vs '%s': got %v, want %v (n1=%s, n2=%s)",
+			t.Errorf("NormalizeName comparison failed for '%s' vs '%s': got %v, want %v (n1=%s, n2=%s)",
 				tt.name1, tt.name2, n1 == n2, tt.shouldMatch, n1, n2)
 		}
 	}
