@@ -55,7 +55,7 @@ dist-ssr/
 *.local
 
 # Generated files
-shared/version.js
+frontend/shared/version.js
 
 # AI tools
 CLAUDE.md

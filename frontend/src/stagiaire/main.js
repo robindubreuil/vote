@@ -3,8 +3,8 @@ import { renderLayout, render, setHandlers } from './renderers.js'
 import { initClient, connectToSession } from './websocket.js'
 import * as handlers from './handlers.js'
 import { state } from './state.js'
-import { validateSessionCode } from '../../../shared/validation.js'
-import { getSessionCodeFromURL } from '../../../shared/utils/url.js'
+import { validateSessionCode } from '@shared/validation.js'
+import { getSessionCodeFromURL } from '@shared/utils/url.js'
 
 // Élément DOM principal
 const app = document.getElementById('app')

@@ -1,6 +1,5 @@
 import { VERSION } from './version.js'
 import { escapeHtml } from './colors.js'
-import { icons } from './icons.js'
 
 /**
  * Generates the common footer HTML containing author info, license, and version.
@@ -53,10 +52,10 @@ export function showError(message) {
       clearTimeout(errorTimeoutId)
       errorTimeoutId = null
     }
-    
+
     errorEl.textContent = message
     errorEl.style.display = 'block'
-    
+
     errorTimeoutId = setTimeout(() => {
       hideError()
     }, 5000)

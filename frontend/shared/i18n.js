@@ -6,7 +6,7 @@ export const t = {
     connected: 'Connecté',
     disconnected: 'Déconnecté',
     cancel: 'Annuler',
-    save: 'Enregistrer',
+    save: 'Enregistrer'
   },
   stagiaire: {
     // From frontend-stagiaire main.js
@@ -31,7 +31,7 @@ export const t = {
     codeRequired: 'Le code session est requis',
     invalidCode: 'Le code doit être 4 chiffres',
     connectionError: 'Erreur de connexion',
-    leaveSession: 'Voulez-vous vraiment quitter cette session ?',
+    leaveSession: 'Voulez-vous vraiment quitter cette session ?'
   },
   formateur: {
     // From frontend-formateur main.js
@@ -61,6 +61,6 @@ export const t = {
     votes: 'votes',
     anonymous: 'Anonyme',
     online: 'En ligne',
-    offline: 'Hors ligne',
+    offline: 'Hors ligne'
   }
 }

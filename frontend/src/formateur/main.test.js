@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { COLORS } from '../../../shared/colors.js'
-import { validateSessionCode } from '../../../shared/validation.js'
+import { COLORS } from '@shared/colors.js'
+import { validateSessionCode } from '@shared/validation.js'
 import { getColorCounts, getCombinations, sortStagiaires } from './utils.js'
 import { state } from './state.js'
 

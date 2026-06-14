@@ -1,5 +1,5 @@
-import { COLORS, escapeHtml } from '../../../shared/colors.js'
-import { icons } from '../../../shared/icons.js'
+import { COLORS, escapeHtml } from '@shared/colors.js'
+import { icons } from '@shared/icons.js'
 import { state } from './state.js'
 
 /**

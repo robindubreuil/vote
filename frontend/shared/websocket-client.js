@@ -78,9 +78,9 @@ export class VoteClient {
 
         if (!this.isExplicitlyClosed) {
           if (event.code >= 4000 && event.code < 5000) {
-             console.error(`Connection closed permanently (code: ${event.code})`)
+            console.error(`Connection closed permanently (code: ${event.code})`)
           } else {
-             this.scheduleReconnect()
+            this.scheduleReconnect()
           }
         }
         this.options.onClose()
@@ -90,7 +90,6 @@ export class VoteClient {
         console.error('WebSocket error:', error)
         this.options.onError(error)
       }
-
     } catch (e) {
       console.error('WebSocket connection error:', e)
       this.isConnecting = false
@@ -117,7 +116,7 @@ export class VoteClient {
       this.ws.send(JSON.stringify(data))
       return true
     }
-    console.warn('Tentative d\'envoi sur WebSocket déconnecté')
+    console.warn("Tentative d'envoi sur WebSocket déconnecté")
     return false
   }
 

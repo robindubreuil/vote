@@ -1,4 +1,4 @@
-import { COLORS } from '../../../shared/colors.js'
+import { COLORS } from '@shared/colors.js'
 
 export const state = {
   sessionCode: null,

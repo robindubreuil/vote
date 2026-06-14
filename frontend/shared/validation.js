@@ -21,7 +21,7 @@ export function validateName(name) {
     const isDigit = /\p{N}/u.test(char)
     const isSpace = char === ' '
     const isHyphen = char === '-'
-    const isApostrophe = char === '\'' || char === '`'
+    const isApostrophe = char === "'" || char === '`'
 
     if (!isLetter && !isDigit && !isSpace && !isHyphen && !isApostrophe) {
       return `Caractère non autorisé: "${char}" (lettres, chiffres, espaces, tirets et apostrophes uniquement)`
@@ -40,10 +40,10 @@ export function validateSessionCode(code) {
   if (!code) {
     return 'Le code session est requis'
   }
-  
+
   if (!CONSTANTS.SESSION_CODE_REGEX.test(code)) {
     return `Le code doit contenir ${CONSTANTS.SESSION_CODE_LENGTH} chiffres`
   }
-  
+
   return null
 }

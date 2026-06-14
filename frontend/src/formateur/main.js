@@ -9,7 +9,7 @@ import {
 import { initClient, closeClient, attachLandingListenersWithHandlers } from './websocket.js'
 import * as handlers from './handlers.js'
 import { state } from './state.js'
-import { validateSessionCode } from '../../../shared/validation.js'
+import { validateSessionCode } from '@shared/validation.js'
 
 setActionHandlers({
   startVote: handlers.startVote,

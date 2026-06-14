@@ -32,5 +32,5 @@ export const VERSION = {
 }
 `
 
-writeFileSync(join(rootDir, 'shared/version.js'), version)
+writeFileSync(join(rootDir, 'frontend/shared/version.js'), version)
 console.log(`Version info: ${shortHash} (${commitDate})`)
