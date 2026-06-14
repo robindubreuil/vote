@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { COLORS } from '../../../shared/colors.js'
-import { validateSessionCode, validateName } from '../../../shared/validation.js'
+import { validateSessionCode } from '../../../shared/validation.js'
 import { getColorCounts, getCombinations, sortStagiaires } from './utils.js'
 import { state } from './state.js'
 
@@ -15,7 +15,7 @@ describe('Formateur - Couleurs', () => {
   })
 
   it('should have correct color IDs', () => {
-    const ids = COLORS.map(c => c.id)
+    const ids = COLORS.map((c) => c.id)
     expect(ids).toContain('rouge')
     expect(ids).toContain('vert')
     expect(ids).toContain('bleu')
@@ -27,7 +27,7 @@ describe('Formateur - Couleurs', () => {
   })
 
   it('should have valid hex color codes', () => {
-    COLORS.forEach(color => {
+    COLORS.forEach((color) => {
       expect(color.color).toMatch(/^#[0-9a-fA-F]{6}$/)
     })
   })
@@ -63,11 +63,7 @@ describe('Formateur - getColorCounts', () => {
   })
 
   it('should skip stagiaires without votes', () => {
-    state.stagiaires = [
-      { id: 's1', vote: ['rouge'] },
-      { id: 's2', vote: null },
-      { id: 's3' }
-    ]
+    state.stagiaires = [{ id: 's1', vote: ['rouge'] }, { id: 's2', vote: null }, { id: 's3' }]
     expect(getColorCounts()).toEqual({ rouge: 1 })
   })
 })
@@ -117,11 +113,7 @@ describe('Formateur - getCombinations', () => {
   })
 
   it('should skip stagiaires with empty votes', () => {
-    state.stagiaires = [
-      { id: 's1', vote: [] },
-      { id: 's2' },
-      { id: 's3', vote: ['rouge'] }
-    ]
+    state.stagiaires = [{ id: 's1', vote: [] }, { id: 's2' }, { id: 's3', vote: ['rouge'] }]
     expect(getCombinations()).toHaveLength(1)
   })
 })
@@ -216,7 +208,9 @@ describe('Formateur - Percentages and bar widths', () => {
 describe('Formateur - Timer formatting', () => {
   it('should format elapsed time correctly', () => {
     const formatTime = (elapsed) => {
-      const mins = Math.floor(elapsed / 60).toString().padStart(2, '0')
+      const mins = Math.floor(elapsed / 60)
+        .toString()
+        .padStart(2, '0')
       const secs = (elapsed % 60).toString().padStart(2, '0')
       return `${mins}:${secs}`
     }

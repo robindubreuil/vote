@@ -96,7 +96,7 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
 	return nil
 }
 
-func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool) error {
+func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -114,6 +114,7 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 
 	session.VoteState = models.VoteStateActive
 	session.ActiveColors = colors
+	session.ActiveLabels = labels
 	session.MultipleChoice = multipleChoice
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = time.Now().Unix()
@@ -186,7 +187,7 @@ func (m *Manager) CloseVote(sessionID, trainerID string) error {
 	return nil
 }
 
-func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multipleChoice bool) error {
+func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -208,6 +209,7 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 	} else {
 		session.ActiveColors = []string{}
 	}
+	session.ActiveLabels = labels
 	session.MultipleChoice = multipleChoice
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = 0

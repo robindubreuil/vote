@@ -52,3 +52,31 @@ func TestLoadConfig_Timeouts(t *testing.T) {
 		}
 	})
 }
+
+func TestWildcardOriginDisablesCredentials(t *testing.T) {
+	os.Setenv("ALLOWED_ORIGINS", "*")
+	defer os.Unsetenv("ALLOWED_ORIGINS")
+
+	cfg := LoadConfig()
+
+	if cfg.AllowCredentials {
+		t.Error("wildcard origin should disable credentials")
+	}
+	if len(cfg.AllowedOrigins) != 0 {
+		t.Error("wildcard should result in empty origins list")
+	}
+}
+
+func TestSpecificOriginsEnableCredentials(t *testing.T) {
+	os.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
+	defer os.Unsetenv("ALLOWED_ORIGINS")
+
+	cfg := LoadConfig()
+
+	if !cfg.AllowCredentials {
+		t.Error("specific origins should enable credentials")
+	}
+	if len(cfg.AllowedOrigins) != 1 || cfg.AllowedOrigins[0] != "http://localhost:5173" {
+		t.Errorf("unexpected origins: %v", cfg.AllowedOrigins)
+	}
+}

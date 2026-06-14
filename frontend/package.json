@@ -9,10 +9,18 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --check src",
+    "format:fix": "prettier --write src",
     "version": "node ../scripts/gen-version.js",
     "compress": "node ../scripts/compress-assets.js dist"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
     "vite": "^7.2.4",
     "vitest": "^3.2.4"
   }

@@ -1,10 +1,6 @@
-/**
- * Escapes HTML special characters to prevent XSS attacks
- * @param {string} text - The text to escape
- * @returns {string} The escaped text
- */
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+
 export function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
+  if (text == null) return ''
+  return String(text).replace(/[&<>"']/g, char => HTML_ESCAPES[char])
 }
