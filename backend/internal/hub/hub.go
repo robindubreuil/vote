@@ -93,7 +93,7 @@ func (h *Hub) GenerateSessionCode() string {
 	defer h.mu.Unlock()
 
 	for i := 0; i < 100; i++ {
-		code := fmt.Sprintf("%04d", rand.IntN(10000))
+		code := fmt.Sprintf("%04d", rand.IntN(10000)) //nolint:gosec // non-crypto random for short session codes
 		if _, exists := h.Connections[code]; !exists && !h.VoteManager.SessionExists(code) {
 			h.Connections[code] = &SessionConnections{Stagiaires: make(map[string]*Client)}
 			return code

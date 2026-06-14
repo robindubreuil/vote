@@ -19,7 +19,6 @@ type LoadClient struct {
 	recv      chan []byte
 	closeOnce sync.Once
 	closed    chan struct{}
-	id        string
 }
 
 func NewLoadClient(wsURL string) (*LoadClient, error) {

@@ -224,7 +224,7 @@ func generateTimestampID() string {
 	b := make([]byte, 12)
 	for i := range b {
 		b[i] = charset[(i+int(nano))%len(charset)]
-		nano = nano >> 4
+		nano >>= 4
 	}
 	return string(b)
 }
