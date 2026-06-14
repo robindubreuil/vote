@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run version && vite build && node ../scripts/compress-assets.js dist",
+    "build": "npm run version && vite build && node scripts/compress-assets.js dist",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -13,8 +13,8 @@
     "lint:fix": "eslint src shared --fix",
     "format": "prettier --check src shared",
     "format:fix": "prettier --write src shared",
-    "version": "node ../scripts/gen-version.js",
-    "compress": "node ../scripts/compress-assets.js dist"
+    "version": "node scripts/gen-version.js",
+    "compress": "node scripts/compress-assets.js dist"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
