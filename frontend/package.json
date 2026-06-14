@@ -7,13 +7,13 @@
     "dev": "vite",
     "build": "npm run version && vite build && node ../scripts/compress-assets.js dist",
     "preview": "vite preview",
-    "test": "vitest",
-    "test:run": "vitest run",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "version": "node ../scripts/gen-version.js",
     "compress": "node ../scripts/compress-assets.js dist"
   },
   "devDependencies": {
     "vite": "^7.2.4",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.4"
   }
 }

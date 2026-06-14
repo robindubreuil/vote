@@ -2,14 +2,13 @@ import { showError } from '../../../shared/ui.js'
 import { COLORS } from '../../../shared/colors.js'
 import { state } from './state.js'
 import { renderMainContent, attachConfigListeners } from './renderers.js'
+import { getClient } from './websocket.js'
 
 export async function resetConfig() {
   state.selectedColors = new Set(COLORS.slice(0, 3).map(c => c.id))
   state.colorLabels = {}
   state.multipleChoice = false
   renderMainContent()
-
-  const { getClient } = await import('./websocket.js')
   const client = getClient()
   if (client) {
     attachConfigListeners(client)

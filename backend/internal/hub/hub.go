@@ -89,29 +89,29 @@ func (h *Hub) IsStagiaireConnected(sessionID, stagiaireID string) bool {
 }
 
 func (h *Hub) GenerateSessionCode() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	for i := 0; i < 100; i++ {
 		code := fmt.Sprintf("%04d", rand.IntN(10000))
-		if !h.SessionExists(code) && !h.VoteManager.SessionExists(code) {
+		if _, exists := h.Connections[code]; !exists && !h.VoteManager.SessionExists(code) {
+			h.Connections[code] = &SessionConnections{Stagiaires: make(map[string]*Client)}
 			return code
 		}
 	}
 
-	used := make(map[string]bool)
-
-	h.mu.RLock()
+	used := make(map[string]bool, len(h.Connections)+10000)
 	for id := range h.Connections {
 		used[id] = true
 	}
-	h.mu.RUnlock()
-
-	vmIDs := h.VoteManager.GetSessionIDs()
-	for _, id := range vmIDs {
+	for _, id := range h.VoteManager.GetSessionIDs() {
 		used[id] = true
 	}
 
 	for i := 0; i < 10000; i++ {
 		code := fmt.Sprintf("%04d", i)
 		if !used[code] {
+			h.Connections[code] = &SessionConnections{Stagiaires: make(map[string]*Client)}
 			return code
 		}
 	}
@@ -119,20 +119,14 @@ func (h *Hub) GenerateSessionCode() string {
 	return ""
 }
 
-func (h *Hub) GenerateUniqueClientID() string {
-	for i := 0; i < 10; i++ {
+func (h *Hub) GenerateUniqueClientID() (string, bool) {
+	for i := 0; i < 1010; i++ {
 		id := security.GenerateID()
 		if !h.ClientIDExists(id) {
-			return id
+			return id, true
 		}
 	}
-	for i := 0; i < 1000; i++ {
-		id := security.GenerateID()
-		if !h.ClientIDExists(id) {
-			return id
-		}
-	}
-	return ""
+	return "", false
 }
 
 func (h *Hub) ClientIDExists(id string) bool {
@@ -184,6 +178,12 @@ func (h *Hub) registerClient(client *Client) {
 		} else {
 			h.VoteManager.UpdateTrainer(client.SessionID, client.ID)
 		}
+
+		client.SendJSON(map[string]any{
+			"type":        "session_created",
+			"sessionCode": client.SessionID,
+			"trainerId":   client.ID,
+		})
 
 		h.notifyTrainerStagiaireListLocked(conns, client.SessionID, "connected_count")
 
@@ -238,6 +238,12 @@ func (h *Hub) registerClient(client *Client) {
 			}
 		}
 		conns.Stagiaires[client.ID] = client
+
+		client.SendJSON(map[string]any{
+			"type":        "session_joined",
+			"sessionCode": client.SessionID,
+			"stagiaireId": client.ID,
+		})
 
 		h.notifyTrainerStagiaireListLocked(conns, client.SessionID, "connected_count")
 
@@ -309,7 +315,8 @@ func (h *Hub) BroadcastSession(sessionID string, message any, excludeID string) 
 		select {
 		case c.Send <- data:
 		default:
-			slog.Warn("Broadcast dropped: channel full", "client_id", c.ID)
+			slog.Warn("Broadcast dropped: disconnecting slow client", "client_id", c.ID)
+			c.Conn.Close()
 		}
 	}
 }
@@ -388,15 +395,24 @@ func (h *Hub) cleanupLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			h.VoteManager.CleanupExpiredSessions(h.Config.SessionTimeout)
+			h.mu.RLock()
+			protected := make(map[string]bool)
+			for id, conns := range h.Connections {
+				if conns.Trainer != nil || len(conns.Stagiaires) > 0 {
+					protected[id] = true
+				}
+			}
+			h.mu.RUnlock()
+
+			h.VoteManager.CleanupExpiredSessions(h.Config.SessionTimeout, protected)
+
 			h.mu.Lock()
 			for id, conns := range h.Connections {
-				if _, ok := h.VoteManager.GetSession(id); !ok {
-					if conns.Trainer != nil || len(conns.Stagiaires) > 0 {
-						h.VoteManager.CreateSession(id, "")
-					} else {
-						delete(h.Connections, id)
-					}
+				if _, ok := h.VoteManager.GetSession(id); ok {
+					continue
+				}
+				if conns.Trainer == nil && len(conns.Stagiaires) == 0 {
+					delete(h.Connections, id)
 				}
 			}
 			h.mu.Unlock()

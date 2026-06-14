@@ -75,13 +75,14 @@ export function handleEditName(e) {
   state.prenom = newPrenom
   localStorage.setItem('vote_stagiaire_prenom', newPrenom)
 
-  // Envoyer la mise à jour au serveur
-  getClient().send({
-    type: 'update_name',
-    name: newPrenom
-  })
+  const client = getClient()
+  if (client) {
+    client.send({
+      type: 'update_name',
+      name: newPrenom
+    })
+  }
 
-  // Fermer le modal
   state.prenomEdit = false
   render()
 }
@@ -135,23 +136,26 @@ export function handleSubmitVote() {
  * Submit the vote to the server
  */
 export function submitVote(triggerButton = null) {
+  const client = getClient()
+  if (!client) {
+    showError("Erreur de connexion")
+    return
+  }
+
   const btn = triggerButton || document.getElementById('submitVote')
   const originalContent = btn ? btn.innerHTML : ''
 
   if (btn) {
     btn.disabled = true
-    // If it's a small color button, maybe just a spinner or opacity?
-    // For single choice buttons, let's just keep the text but add a spinner if it fits, or just disable style
     if (btn.id === 'submitVote') {
        btn.innerHTML = `${loader(' class="icon icon-md spin"')} Envoi...`
     } else {
-       // Single choice button
        btn.style.opacity = '0.7'
        btn.style.cursor = 'wait'
     }
   }
 
-  const success = getClient().send({
+  const success = client.send({
     type: 'vote',
     colors: Array.from(state.selectedColors),
     stagiaireId: state.stagiaireId || undefined
@@ -174,12 +178,19 @@ export function submitVote(triggerButton = null) {
 export function leaveSession() {
   if (confirm('Voulez-vous vraiment quitter cette session ?')) {
     sessionStorage.removeItem('vote_session_code')
+    sessionStorage.removeItem('vote_stagiaire_id')
     state.sessionCode = ''
     state.appState = AppState.JOINING
     state.connected = false
+    state.hasVoted = false
+    state.selectedColors.clear()
+    state.availableColors = []
+    state.colorLabels = {}
+    state.multipleChoice = false
+    state.stagiaireId = null
     const client = getClient()
     if (client) {
-      client.close() // Close WebSocket connection
+      client.close()
     }
     render()
   }

@@ -35,39 +35,6 @@ export function renderSessionCodeButton(sessionCode, connected = false, title = 
   return `<button class="session-code ${connectionClass}" id="leaveSessionBtn" data-testid="session-code-btn" title="${defaultTitle}">${escapeHtml(sessionCode)}</button>`
 }
 
-/**
- * Creates or updates the connection status indicator
- * @param {boolean} connected
- * @param {HTMLElement} parentElement (optional) if null, appends to body
- * @param {HTMLElement} existingElement (optional) to update existing
- * @returns {HTMLElement} The status element
- */
-export function renderConnectionStatus(connected, parentElement = document.body, existingElement = null) {
-  let statusEl = existingElement
-
-  if (!statusEl) {
-    statusEl = document.createElement('div')
-    // Check if parentElement is document.body to apply fixed positioning class
-    // If it's inside a container, the CSS might need adjustment or we keep using the fixed one
-    statusEl.className = 'connection-status'
-    statusEl.setAttribute('role', 'status')
-    statusEl.setAttribute('aria-live', 'polite')
-    parentElement.appendChild(statusEl)
-  }
-
-  statusEl.className = `connection-status ${connected ? 'connected' : 'disconnected'}`
-
-  // Accessibility text
-  const statusText = connected ? 'Connecté' : 'Reconnexion...'
-
-  statusEl.innerHTML = `
-    <span class="dot" aria-hidden="true"></span>
-    <span>${statusText}</span>
-  `
-
-  return statusEl
-}
-
 let errorTimeoutId = null
 
 /**
@@ -76,6 +43,10 @@ let errorTimeoutId = null
  * @param {string} message - The error message to display
  */
 export function showError(message) {
+  if (message == null) {
+    hideError()
+    return
+  }
   const errorEl = document.querySelector('.error-message')
   if (errorEl) {
     if (errorTimeoutId) {

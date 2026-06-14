@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -25,7 +24,9 @@ type Server struct {
 }
 
 func NewServer(cfg *config.Config, h *hub.Hub) *Server {
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+	r.SetTrustedProxies(cfg.TrustedProxies)
 	s := &Server{
 		router:    r,
 		hub:       h,
@@ -76,7 +77,7 @@ func (s *Server) setupCORS() {
 	s.router.Use(cors.New(cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With"},
-		AllowCredentials: true,
+		AllowCredentials: s.config.AllowCredentials,
 		AllowOriginFunc: func(origin string) bool {
 			return s.config.IsOriginAllowed(origin)
 		},
@@ -114,21 +115,19 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		return
 	}
 
+	clientID, ok := s.hub.GenerateUniqueClientID()
+	if !ok {
+		slog.Error("Failed to generate unique client ID")
+		conn.Close()
+		return
+	}
+
 	client := hub.NewClient(s.hub, conn, clientIP)
-	client.ID = s.hub.GenerateUniqueClientID() // Server-generated with collision detection
+	client.ID = clientID
 
 	client.Start()
 }
 
 func getClientIP(c *gin.Context) string {
-	if forwarded := c.GetHeader("X-Forwarded-For"); forwarded != "" {
-		if idx := strings.Index(forwarded, ","); idx != -1 {
-			return strings.TrimSpace(forwarded[:idx])
-		}
-		return strings.TrimSpace(forwarded)
-	}
-	if realIP := c.GetHeader("X-Real-IP"); realIP != "" {
-		return strings.TrimSpace(realIP)
-	}
 	return c.ClientIP()
 }

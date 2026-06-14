@@ -3,7 +3,6 @@ package hub
 import (
 	"encoding/json"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -13,11 +12,11 @@ import (
 
 const (
 	ClientSendBufferSize = 256
+	pongWait             = 70 * time.Second
 )
 
 type Client struct {
 	ID           string
-	ConnID       int64
 	Name         string
 	SessionID    string
 	Type         string
@@ -72,7 +71,9 @@ func (c *Client) readPump() {
 	}()
 
 	c.Conn.SetReadLimit(4096)
-	c.Conn.SetPongHandler(func(appData string) error {
+	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		c.LastActivity = time.Now().Unix()
 		return nil
 	})
@@ -192,17 +193,11 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 	}
 
 	c.Type = "trainer"
-	// ID is already set by security.GenerateID() in handleWebSocket
 	c.SessionID = code
 	c.Hub.Security.ClearFailedJoin(c.IP)
 
 	select {
 	case c.Hub.Register <- c:
-		c.SendJSON(map[string]any{
-			"type":        "session_created",
-			"sessionCode": code,
-			"trainerId":   c.ID,
-		})
 	case <-c.Hub.Context().Done():
 		c.SendError("Server is shutting down")
 	}
@@ -219,7 +214,6 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 	}
 
 	c.Type = "stagiaire"
-	// ID is already set by security.GenerateID() in handleWebSocket
 	c.Name = msg.Name
 	c.SessionID = msg.SessionCode
 
@@ -249,7 +243,7 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 
 	// 1.5. When reconnecting with credentials, validate the name
 	// If the provided name differs from the stored name (case-insensitive), check for collision
-	if isCredentialed && msg.Name != "" && strings.ToLower(msg.Name) != strings.ToLower(existingName) {
+	if isCredentialed && msg.Name != "" && vote.NormalizeName(msg.Name) != vote.NormalizeName(existingName) {
 		if c.Hub.VoteManager.IsNameInUse(c.SessionID, msg.Name, finalID) {
 			c.SendErrorWithBackoff("Ce nom est déjà utilisé")
 			return
@@ -279,11 +273,6 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 
 	select {
 	case c.Hub.Register <- c:
-		c.SendJSON(map[string]any{
-			"type":        "session_joined",
-			"sessionCode": msg.SessionCode,
-			"stagiaireId": c.ID,
-		})
 	case <-c.Hub.Context().Done():
 		c.SendError("Server is shutting down")
 	}
@@ -327,10 +316,16 @@ func (c *Client) handleStartVote(msg models.Message) {
 		return
 	}
 
+	var voteStartTime int64
+	if session, ok := c.Hub.VoteManager.GetSession(c.SessionID); ok {
+		_, _, _, voteStartTime = session.GetState()
+	}
+
 	broadcastMsg := map[string]any{
 		"type":           "vote_started",
 		"colors":         msg.Colors,
 		"multipleChoice": msg.MultipleChoice,
+		"voteStartTime":  voteStartTime,
 	}
 	if len(msg.Labels) > 0 {
 		broadcastMsg["labels"] = msg.Labels
@@ -343,6 +338,10 @@ func (c *Client) handleStartVote(msg models.Message) {
 }
 
 func (c *Client) handleVote(msg models.Message) {
+	if vote.HasDuplicates(msg.Colors) {
+		c.SendError("Duplicate colors are not allowed")
+		return
+	}
 	stagiaireName, err := c.Hub.VoteManager.SubmitVote(c.SessionID, c.ID, msg.Colors)
 	if err != nil {
 		c.SendError(err.Error())

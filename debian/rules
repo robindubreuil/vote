@@ -27,7 +27,7 @@ override_dh_auto_build:
 		-o ../vote-server ./cmd/server
 
 	# Build Frontend (single build for both formateur & stagiaire)
-	cd frontend && npm install && npm run build
+	cd frontend && npm ci && npm run build
 
 # Install files manually
 override_dh_auto_install:

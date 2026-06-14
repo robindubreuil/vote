@@ -1,12 +1,20 @@
 import './style.css'
 import {
-  renderLandingPage, renderFullLayout, updateHeader, renderMainContent,
-  attachLandingListeners, attachAppKeyboardShortcuts, cleanupAllListeners
+  renderLandingPage, renderFullLayout,
+  attachAppKeyboardShortcuts, cleanupAllListeners,
+  setActionHandlers
 } from './renderers.js'
-import { initClient, closeClient } from './websocket.js'
+import { initClient, closeClient, attachLandingListenersWithHandlers } from './websocket.js'
+import * as handlers from './handlers.js'
 import { state } from './state.js'
 import { validateSessionCode } from '../../../shared/validation.js'
-import { showError, hideError } from '../../../shared/ui.js'
+
+setActionHandlers({
+  startVote: handlers.startVote,
+  closeVote: handlers.closeVote,
+  resetVote: handlers.resetVote,
+  resetConfig: handlers.resetConfig
+})
 
 function leaveSession() {
   sessionStorage.removeItem('vote_session_code')
@@ -21,43 +29,9 @@ function leaveSession() {
   attachLandingListenersWithHandlers()
 }
 
-function attachLandingListenersWithHandlers() {
-  const createSession = () => {
-    import('./handlers.js').then(({ joinSession }) => {
-      joinSession(null, undefined, initClient)
-    }).catch(() => showError("Erreur de chargement"))
-  }
-
-  const joinSessionFn = (code) => {
-    const error = validateSessionCode(code)
-    if (error) {
-      const joinInput = document.getElementById('joinSessionInput')
-      if (joinInput) joinInput.classList.add('error')
-      showError(error)
-      return
-    }
-    const joinInput = document.getElementById('joinSessionInput')
-    if (joinInput) joinInput.classList.remove('error')
-    import('./handlers.js').then(({ joinSession }) => {
-      joinSession(code, undefined, initClient)
-    }).catch(() => showError("Erreur de chargement"))
-  }
-
-  attachLandingListeners(joinSessionFn, createSession)
-
-  const joinInput = document.getElementById('joinSessionInput')
-  if (joinInput) {
-    joinInput.addEventListener('input', () => {
-      joinInput.classList.remove('error')
-      hideError()
-    })
-  }
-}
-
 function init() {
   const app = document.getElementById('app')
 
-  let trainerId = sessionStorage.getItem('vote_trainer_id')
   let savedSessionCode = sessionStorage.getItem('vote_session_code')
 
   const urlParams = new URLSearchParams(window.location.search)

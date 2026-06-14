@@ -72,7 +72,8 @@ See `.env.example`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | Server port |
-| `ALLOWED_ORIGINS` | `*` | CORS origins (comma-separated) |
+| `ALLOWED_ORIGINS` | localhost dev origins | CORS origins (comma-separated; `*` disables credentials) |
+| `TRUSTED_PROXIES` | _(empty)_ | Trusted proxy IPs for correct client IP detection behind reverse proxy |
 | `VALID_COLORS` | `rouge,vert,bleu,jaune,orange,violet,rose,gris` | Allowed vote colors |
 
 ## Production Build

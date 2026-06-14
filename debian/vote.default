@@ -4,4 +4,8 @@
 PORT=8080
 
 # Allowed CORS origins (comma separated)
-ALLOWED_ORIGINS=https://vote.dubreuil.pro
+# Default: localhost dev origins. Change to your production origins.
+# ALLOWED_ORIGINS=https://vote.example.com
+
+# Trusted proxy IPs (comma separated) for correct client IP behind reverse proxy
+# TRUSTED_PROXIES=127.0.0.1
