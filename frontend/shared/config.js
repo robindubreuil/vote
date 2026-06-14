@@ -13,7 +13,7 @@ export const getWebSocketURL = () => {
   if (import.meta.env.VITE_WS_URL) {
     return import.meta.env.VITE_WS_URL
   }
-  
+
   // Otherwise construct from current location
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${location.host}/ws`

@@ -19,7 +19,7 @@ export const COLORS = [
  * @returns {{id: string, name: string, color: string}} The color object, or the first color (rouge) if not found
  */
 export function getColorById(id) {
-  return COLORS.find(c => c.id === id) || COLORS[0]
+  return COLORS.find((c) => c.id === id) || COLORS[0]
 }
 
 export { escapeHtml } from './utils/sanitize.js'

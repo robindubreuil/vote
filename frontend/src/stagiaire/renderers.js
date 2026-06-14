@@ -1,8 +1,8 @@
-import { vote, hourglass, pencil, check, stop } from '../../../shared/icons.js'
-import { COLORS, escapeHtml } from '../../../shared/colors.js'
-import { renderFooterHTML, renderSessionCodeButton } from '../../../shared/ui.js'
-import { t } from '../../../shared/i18n.js'
-import { createListenerTracker } from '../../../shared/dom/listeners.js'
+import { vote, hourglass, pencil, check, stop } from '@shared/icons.js'
+import { COLORS, escapeHtml } from '@shared/colors.js'
+import { renderFooterHTML, renderSessionCodeButton } from '@shared/ui.js'
+import { t } from '@shared/i18n.js'
+import { createListenerTracker } from '@shared/dom/listeners.js'
 import { state, AppState } from './state.js'
 
 let handleKeyPress = null

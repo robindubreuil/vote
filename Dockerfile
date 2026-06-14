@@ -12,7 +12,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM node:22-alpine AS frontend-builder
 WORKDIR /build
-COPY shared/ shared/
 COPY scripts/ scripts/
 
 WORKDIR /build/frontend

@@ -1,6 +1,6 @@
-import { VoteClient } from '../../../shared/websocket-client.js'
-import { getWebSocketURL } from '../../../shared/config.js'
-import { showError } from '../../../shared/ui.js'
+import { VoteClient } from '@shared/websocket-client.js'
+import { getWebSocketURL } from '@shared/config.js'
+import { showError } from '@shared/ui.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 

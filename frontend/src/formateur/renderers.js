@@ -1,8 +1,8 @@
-import { COLORS, escapeHtml } from '../../../shared/colors.js'
-import { vote, timer, users, chart, rocket, stop, refresh, plus, loader } from '../../../shared/icons.js'
-import { renderFooterHTML, renderSessionCodeButton } from '../../../shared/ui.js'
-import { t } from '../../../shared/i18n.js'
-import { createListenerTracker } from '../../../shared/dom/listeners.js'
+import { COLORS, escapeHtml } from '@shared/colors.js'
+import { vote, timer, users, chart, rocket, stop, refresh, plus, loader } from '@shared/icons.js'
+import { renderFooterHTML, renderSessionCodeButton } from '@shared/ui.js'
+import { t } from '@shared/i18n.js'
+import { createListenerTracker } from '@shared/dom/listeners.js'
 import { state } from './state.js'
 import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
 

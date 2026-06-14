@@ -9,7 +9,7 @@ export function createListenerTracker() {
   }
 
   function trackAll(selector, event, handler) {
-    document.querySelectorAll(selector).forEach(element => {
+    document.querySelectorAll(selector).forEach((element) => {
       element.addEventListener(event, handler)
       listeners.add({ element, event, handler })
     })

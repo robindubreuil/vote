@@ -1,5 +1,5 @@
-import { showError } from '../../../shared/ui.js'
-import { COLORS } from '../../../shared/colors.js'
+import { showError } from '@shared/ui.js'
+import { COLORS } from '@shared/colors.js'
 import { state } from './state.js'
 import { renderMainContent, attachConfigListeners } from './renderers.js'
 import { getClient } from './websocket.js'

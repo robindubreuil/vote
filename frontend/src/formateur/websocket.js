@@ -1,7 +1,7 @@
-import { VoteClient } from '../../../shared/websocket-client.js'
-import { getWebSocketURL } from '../../../shared/config.js'
-import { showError, hideError } from '../../../shared/ui.js'
-import { validateSessionCode } from '../../../shared/validation.js'
+import { VoteClient } from '@shared/websocket-client.js'
+import { getWebSocketURL } from '@shared/config.js'
+import { showError, hideError } from '@shared/ui.js'
+import { validateSessionCode } from '@shared/validation.js'
 import { state } from './state.js'
 import {
   renderFullLayout,
@@ -16,7 +16,7 @@ import {
   attachLandingListeners
 } from './renderers.js'
 import { startTimer, stopTimer, updateVoteResults } from './utils.js'
-import { users } from '../../../shared/icons.js'
+import { users } from '@shared/icons.js'
 
 const WS_URL = getWebSocketURL()
 
