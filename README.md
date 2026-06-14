@@ -30,6 +30,7 @@ vote/
 │   ├── shared/           # Shared JS (colors, icons, validation, websocket-client)
 │   ├── scripts/          # Build tools (version gen, asset compression)
 │   └── src/              # JS: formateur/ & stagiaire/ modules
+├── tests/e2e/            # Playwright E2E tests
 └── debian/               # Debian packaging
 ```
 
