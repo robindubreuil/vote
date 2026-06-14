@@ -71,9 +71,12 @@ func (c *Client) readPump() {
 	}()
 
 	c.Conn.SetReadLimit(4096)
-	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err := c.Conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		slog.Error("Failed to set read deadline", "error", err)
+		return
+	}
 	c.Conn.SetPongHandler(func(string) error {
-		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 		c.LastActivity = time.Now().Unix()
 		return nil
 	})
@@ -102,7 +105,7 @@ func (c *Client) writePump() {
 		if c.pingTick != nil {
 			c.pingTick.Stop()
 		}
-		c.Conn.WriteMessage(
+		_ = c.Conn.WriteMessage(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 		)
@@ -112,7 +115,7 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
-			c.Conn.SetWriteDeadline(time.Now().Add(c.Hub.Config.WriteTimeout))
+			_ = c.Conn.SetWriteDeadline(time.Now().Add(c.Hub.Config.WriteTimeout))
 			if !ok {
 				return
 			}
@@ -121,7 +124,7 @@ func (c *Client) writePump() {
 				return
 			}
 		case <-c.pingTick.C:
-			c.Conn.SetWriteDeadline(time.Now().Add(c.Hub.Config.WriteTimeout))
+			_ = c.Conn.SetWriteDeadline(time.Now().Add(c.Hub.Config.WriteTimeout))
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

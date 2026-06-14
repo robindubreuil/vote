@@ -26,7 +26,9 @@ type Server struct {
 func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-	r.SetTrustedProxies(cfg.TrustedProxies)
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		slog.Warn("Failed to set trusted proxies", "error", err)
+	}
 	s := &Server{
 		router:    r,
 		hub:       h,
