@@ -11,9 +11,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o vote-server ./cmd/server
 
 FROM node:22-alpine AS frontend-builder
-WORKDIR /build
-COPY scripts/ scripts/
-
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
