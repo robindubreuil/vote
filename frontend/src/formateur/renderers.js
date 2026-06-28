@@ -13,7 +13,6 @@ import {
   bookmark,
   download,
   upload,
-  check,
   checkPlain
 } from '@shared/icons.js'
 import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog } from '@shared/ui.js'
