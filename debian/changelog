@@ -1,3 +1,10 @@
+vote (1.2.1-1) unstable; urgency=medium
+
+  * Fix timer clock-skew: send elapsed seconds instead of absolute timestamp
+  * Fix timer clamp to avoid negative display values
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Sat, 28 Jun 2026 16:00:00 +0100
+
 vote (1.2.0-1) unstable; urgency=medium
 
   * Add maintainer dashboard with HMAC cookie auth (/dashboard)
