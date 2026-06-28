@@ -97,7 +97,11 @@ export function createSessionPublisher(sessionCode, readState) {
 
   return {
     publish(partial) {
-      const snapshot = { count: 0, voteState: 'idle', connected: false, ...partial }
+      const snapshot = {
+        count: 0, voteState: 'idle', connected: false,
+        competitive: false, leaderboard: null,
+        ...partial
+      }
       persist(snapshot)
       try {
         channel.postMessage({ type: 'state', ...snapshot })
@@ -139,7 +143,9 @@ export function createSessionSubscriber(sessionCode, onUpdate) {
       onUpdate({
         count: event.data.count ?? 0,
         voteState: event.data.voteState ?? 'idle',
-        connected: Boolean(event.data.connected)
+        connected: Boolean(event.data.connected),
+        competitive: Boolean(event.data.competitive),
+        leaderboard: event.data.leaderboard ?? null
       })
     }
   }

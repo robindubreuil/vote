@@ -192,7 +192,7 @@ func TestMetricsEndpointProductCounters(t *testing.T) {
 	mgr := h.VoteManager
 	mgr.CreateSession("ABC", "trainer1")
 	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
-	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false)
+	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 
 	srv := NewServer(cfg, h)

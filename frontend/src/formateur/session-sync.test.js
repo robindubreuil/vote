@@ -80,7 +80,7 @@ describe('session-sync — publisher/subscriber over BroadcastChannel', () => {
     subscriber.start()
 
     expect(states).toHaveLength(1)
-    expect(states[0]).toEqual({ count: 5, voteState: 'idle', connected: true })
+    expect(states[0]).toEqual({ count: 5, voteState: 'idle', connected: true, competitive: false, leaderboard: null })
   })
 
   it('delivers subsequent state pushes live', () => {
@@ -93,8 +93,8 @@ describe('session-sync — publisher/subscriber over BroadcastChannel', () => {
     publisher.publish({ count: 2, voteState: 'active', connected: true })
 
     expect(states).toEqual([
-      { count: 1, voteState: 'active', connected: true },
-      { count: 2, voteState: 'active', connected: true }
+      { count: 1, voteState: 'active', connected: true, competitive: false, leaderboard: null },
+      { count: 2, voteState: 'active', connected: true, competitive: false, leaderboard: null }
     ])
   })
 
@@ -131,7 +131,7 @@ describe('session-sync — publisher/subscriber over BroadcastChannel', () => {
 
     const raw = sessionStorage.getItem('vote_session_state_snapshot')
     expect(raw).not.toBeNull()
-    expect(JSON.parse(raw)).toEqual({ count: 3, voteState: 'closed', connected: false })
+    expect(JSON.parse(raw)).toEqual({ count: 3, voteState: 'closed', connected: false, competitive: false, leaderboard: null })
   })
 
   it('emits a periodic heartbeat so subscribers can detect a missing publisher', async () => {
@@ -149,7 +149,7 @@ describe('session-sync — publisher/subscriber over BroadcastChannel', () => {
     await vi.advanceTimersByTimeAsync(4001)
 
     expect(states.length).toBeGreaterThanOrEqual(2)
-    expect(states[0]).toEqual({ count: 4, voteState: 'idle', connected: true })
+    expect(states[0]).toEqual({ count: 4, voteState: 'idle', connected: true, competitive: false, leaderboard: null })
   })
 })
 

@@ -31,13 +31,20 @@ export const state = {
   sessionCode: '',
   connected: false,
   availableColors: [],
-  colorLabels: {}, // Custom labels for colors
+  colorLabels: {},
   multipleChoice: false,
   selectedColors: new Set(),
   hasVoted: false,
   stagiaireId: null,
   prenom: '',
-  prenomEdit: false, // Mode édition du nom
-  gameEnabled: false, // Trainer has enabled the waiting mini-game
-  gamePlaying: false // Trainee is currently in the game overlay
+  prenomEdit: false,
+  gameEnabled: false,
+  gamePlaying: false,
+  competitive: false,
+  allowBlank: false,
+  voteScore: 0,
+  totalScore: 0,
+  rank: 0,
+  totalStagiaires: 0,
+  revealed: false
 }

@@ -16,7 +16,12 @@ type Session struct {
 	ActiveLabels   map[string]string
 	MultipleChoice bool
 	GameEnabled    bool
+	Competitive    bool
+	AllowBlank     bool
+	GameScores     map[string]int
 	Votes          map[string][]string
+	CorrectColors  []string
+	Scores         map[string]int
 	VoteStartTime  int64
 	CreatedAt      int64
 	LastActivity   int64
@@ -30,6 +35,8 @@ func NewSession(id, trainerID string) *Session {
 		Stagiaires:   make(map[string]string),
 		VoteState:    models.VoteStateIdle,
 		Votes:        make(map[string][]string),
+		Scores:       make(map[string]int),
+		GameScores:   make(map[string]int),
 		CreatedAt:    now,
 		LastActivity: now,
 	}
@@ -96,4 +103,47 @@ func (s *Session) GetGameEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.GameEnabled
+}
+
+func (s *Session) GetCompetitive() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Competitive
+}
+
+func (s *Session) GetAllowBlank() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.AllowBlank
+}
+
+func (s *Session) GetCorrectColors() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.CorrectColors) == 0 {
+		return nil
+	}
+	out := make([]string, len(s.CorrectColors))
+	copy(out, s.CorrectColors)
+	return out
+}
+
+func (s *Session) GetScores() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int, len(s.Scores))
+	for k, v := range s.Scores {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *Session) GetGameScores() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int, len(s.GameScores))
+	for k, v := range s.GameScores {
+		out[k] = v
+	}
+	return out
 }

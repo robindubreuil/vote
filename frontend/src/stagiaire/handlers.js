@@ -6,8 +6,8 @@ import { t } from '@shared/i18n.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 import { getClient } from './websocket.js'
-import { Mastermind } from './game.js'
-import { loadHighScore } from '@shared/game-storage.js'
+import { Mastermind, getDifficulty, getLevelProgress, streakMultiplier } from './game.js'
+import { loadHighScore, hasSeenRules, markRulesSeen } from '@shared/game-storage.js'
 import { COLORS, escapeHtml } from '@shared/colors.js'
 import { safeLocalSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 
@@ -17,6 +17,8 @@ let connectToSessionFn = null
 // Active Mastermind instance. Module-local so the websocket layer can
 // pause the game on incoming vote events without going through render().
 let game = null
+let pendingPegAnimation = false
+let scoreAnimId = null
 
 export function setConnectToSession(fn) {
   connectToSessionFn = fn
@@ -40,17 +42,14 @@ function hideAllOverlayScreens() {
   }
 }
 
-function activeColorsForGame() {
-  if (state.availableColors && state.availableColors.length > 0) {
-    const list = state.availableColors
-      .map((id) => {
-        const c = COLORS.find((x) => x.id === id)
-        return c ? { id: c.id, color: c.color, name: c.name } : null
-      })
-      .filter(Boolean)
-    if (list.length >= 2) return list
-  }
-  return COLORS.slice(0, 6).map((c) => ({ id: c.id, color: c.color, name: c.name }))
+function createGame() {
+  const diff = getDifficulty(loadHighScore())
+  return new Mastermind({
+    colors: COLORS.slice(0, diff.paletteSize).map((c) => ({ id: c.id, color: c.color, name: c.name })),
+    codeLength: 4,
+    maxAttempts: 8,
+    level: diff.level
+  })
 }
 
 /**
@@ -61,27 +60,43 @@ function renderBoard() {
   if (!game) return
   const boardState = game.getBoardState()
 
-  // HUD: best score + attempts left
   const bestEl = document.getElementById('gameBest')
   if (bestEl) bestEl.textContent = String(boardState.best)
+  const levelEl = document.getElementById('gameLevel')
+  if (levelEl) levelEl.textContent = String(boardState.level)
+  const progEl = document.getElementById('gameLevelProgress')
+  if (progEl) {
+    const prog = getLevelProgress(boardState.best)
+    progEl.style.width = `${prog.pct}%`
+    progEl.title = prog.toNext > 0 ? `Plus que ${prog.toNext} pts → Niveau ${boardState.level + 1}` : 'Niveau maximum'
+  }
+  const streakEl = document.getElementById('gameStreak')
+  if (streakEl) streakEl.textContent = String(boardState.streak)
+  const multBadge = document.getElementById('gameMultBadge')
+  if (multBadge) {
+    const mult = streakMultiplier(boardState.streak)
+    if (mult > 1) {
+      const label = mult >= 3 ? '×3' : `×${mult.toString().replace(/\.?0+$/, '')}`
+      multBadge.textContent = label
+      multBadge.hidden = false
+    } else {
+      multBadge.hidden = true
+    }
+  }
   const attemptsEl = document.getElementById('gameAttempts')
   if (attemptsEl) attemptsEl.textContent = String(boardState.attemptsLeft)
 
-  // Board: past guesses + current row + remaining empty rows
   const board = document.getElementById('gameBoard')
   if (!board) return
   const rows = []
-  // Past guesses (most recent first)
   for (let i = boardState.guesses.length - 1; i >= 0; i--) {
-    rows.push(renderPastRow(boardState.guesses[i], boardState.pegs[i], boardState.codeLength, i))
+    const animate = pendingPegAnimation && i === boardState.guesses.length - 1
+    rows.push(renderPastRow(boardState.guesses[i], boardState.pegs[i], boardState.codeLength, i, animate))
   }
-  // Current row (only if still playing)
+  pendingPegAnimation = false
   if (boardState.status === 'playing') {
     rows.push(renderCurrentRow(boardState.currentRow, boardState.codeLength, boardState.guesses.length))
-  }
-  // Empty rows (visual fill)
-  if (boardState.status === 'playing') {
-    const remaining = boardState.attemptsLeft - 1 // current row already counted
+    const remaining = boardState.attemptsLeft - 1
     for (let i = 0; i < remaining; i++) {
       rows.push(renderEmptyRow(boardState.codeLength))
     }
@@ -131,19 +146,36 @@ function renderBoard() {
   }
 }
 
-function renderPastRow(guess, peg, codeLength, rowIndex) {
+function renderPastRow(guess, peg, codeLength, rowIndex, animate = false) {
   const slots = guess
     .map(
       (id) => `
       <span class="game-slot game-slot-filled bg-${id}" aria-label="Couleur placée"></span>`
     )
     .join('')
-  const black = '<span class="game-peg game-peg-black" aria-label="Pion noir"></span>'.repeat(peg.black)
-  const white = '<span class="game-peg game-peg-white" aria-label="Pion blanc"></span>'.repeat(peg.white)
-  const empty = '<span class="game-peg game-peg-empty"></span>'.repeat(Math.max(0, codeLength - peg.black - peg.white))
+  const pegs = []
+  let di = 0
+  for (let i = 0; i < peg.black; i++) {
+    const cls = animate ? 'game-peg game-peg-black game-peg-pop' : 'game-peg game-peg-black'
+    const style = animate ? ` style="animation-delay:${di * 80}ms"` : ''
+    pegs.push(`<span class="${cls}"${style} aria-label="Pion doré"></span>`)
+    di++
+  }
+  for (let i = 0; i < peg.white; i++) {
+    const cls = animate ? 'game-peg game-peg-white game-peg-pop' : 'game-peg game-peg-white'
+    const style = animate ? ` style="animation-delay:${di * 80}ms"` : ''
+    pegs.push(`<span class="${cls}"${style} aria-label="Pion blanc"></span>`)
+    di++
+  }
+  for (let i = 0; i < Math.max(0, codeLength - peg.black - peg.white); i++) {
+    const cls = animate ? 'game-peg game-peg-empty game-peg-pop' : 'game-peg game-peg-empty'
+    const style = animate ? ` style="animation-delay:${di * 80}ms"` : ''
+    pegs.push(`<span class="${cls}"${style}></span>`)
+    di++
+  }
   return `
     <li class="game-row game-row-past" data-row="${rowIndex}">
-      <span class="game-row-pegs">${black}${white}${empty}</span>
+      <span class="game-row-pegs">${pegs.join('')}</span>
       <span class="game-row-slots">${slots}</span>
     </li>
   `
@@ -182,8 +214,34 @@ function showEndScreen(boardState) {
   if (titleEl) {
     titleEl.textContent = boardState.status === 'won' ? t.stagiaire.gameWon : t.stagiaire.gameLost
   }
+  const multEl = document.getElementById('gameOverMultiplier')
+  if (multEl) {
+    if (boardState.status === 'won' && boardState.multiplier > 1 && boardState.baseScore != null) {
+      multEl.hidden = false
+      const multLabel = boardState.multiplier >= 3 ? '3' : boardState.multiplier.toString().replace(/\.?0+$/, '')
+      multEl.innerHTML = `<span class="game-mult-base">${boardState.baseScore}</span> <span class="game-mult-x">×</span> <span class="game-mult-val">${multLabel}</span>`
+    } else {
+      multEl.hidden = true
+    }
+  }
   const scoreEl = document.getElementById('gameOverScore')
-  if (scoreEl) scoreEl.textContent = t.stagiaire.gameFinalScore(boardState.score || 0)
+  if (scoreEl) {
+    if (boardState.status === 'won' && boardState.score > 0) {
+      animateScoreCountUp(scoreEl, boardState.score)
+    } else {
+      scoreEl.textContent = t.stagiaire.gameFinalScore(0)
+    }
+  }
+  const levelUpEl = document.getElementById('gameLevelUp')
+  if (levelUpEl) {
+    if (boardState.leveledUp) {
+      const newLevel = getDifficulty(boardState.best).level
+      levelUpEl.textContent = `Niveau ${newLevel} débloqué !`
+      levelUpEl.hidden = false
+    } else {
+      levelUpEl.hidden = true
+    }
+  }
   const bestEl = document.getElementById('gameOverBest')
   if (bestEl) {
     bestEl.hidden = !boardState.isRecord
@@ -199,6 +257,23 @@ function showEndScreen(boardState) {
   showOverlayScreen('gameOverScreen')
 }
 
+function animateScoreCountUp(el, target, duration = 800) {
+  if (scoreAnimId) cancelAnimationFrame(scoreAnimId)
+  const start = performance.now()
+  function tick(now) {
+    const elapsed = now - start
+    const progress = Math.min(1, elapsed / duration)
+    const eased = 1 - Math.pow(1 - progress, 3)
+    el.textContent = t.stagiaire.gameFinalScore(Math.round(target * eased))
+    if (progress < 1) {
+      scoreAnimId = requestAnimationFrame(tick)
+    } else {
+      scoreAnimId = null
+    }
+  }
+  scoreAnimId = requestAnimationFrame(tick)
+}
+
 function handleColorPlace(colorId) {
   if (!game || game.status !== 'playing') return
   game.place(colorId)
@@ -208,7 +283,16 @@ function handleColorPlace(colorId) {
 function handleSubmit() {
   if (!game) return
   const ok = game.submit()
-  if (ok) renderBoard()
+  if (ok) {
+    pendingPegAnimation = true
+    renderBoard()
+    if (game.status === 'won' || game.status === 'lost') {
+      const client = getClient()
+      if (client) {
+        client.send({ type: 'report_game_score', gameScore: loadHighScore() })
+      }
+    }
+  }
 }
 
 function handleClear() {
@@ -218,8 +302,7 @@ function handleClear() {
 }
 
 function handleNewGame() {
-  if (!game) return
-  game.newGame()
+  game = createGame()
   hideAllOverlayScreens()
   renderBoard()
 }
@@ -235,16 +318,20 @@ export function handlePlayGame() {
   state.gamePlaying = true
   overlay.hidden = false
 
-  if (game) game = null
-  game = new Mastermind({ colors: activeColorsForGame() })
+  if (game && game.status === 'playing') {
+    hideAllOverlayScreens()
+    renderBoard()
+    return
+  }
+
+  game = createGame()
   hideAllOverlayScreens()
   renderBoard()
   bindOverlayButtons()
 
-  // First-time visitor? Show rules automatically if no high score yet
-  // (= never played before on this device).
-  if (loadHighScore() === 0) {
+  if (!hasSeenRules()) {
     showOverlayScreen('gameRulesScreen')
+    markRulesSeen()
   }
 }
 
@@ -295,10 +382,14 @@ export function pauseGameExternal() {
 }
 
 /**
- * Hard-quit the game when the trainee leaves the session entirely.
+ * Soft teardown: hide the overlay but preserve the game instance so the
+ * trainee can resume the same puzzle after voting or after the formateur
+ * closes the vote.
  */
 export function teardownGame() {
-  handleQuitGame()
+  const overlay = getOverlay()
+  if (overlay) overlay.hidden = true
+  state.gamePlaying = false
 }
 
 /**
@@ -380,12 +471,16 @@ export function handleEditName(e) {
 export function handleSingleChoiceVote(e) {
   const colorId = e.target.dataset.color
 
-  // Désélectionner les autres
   state.selectedColors.clear()
   state.selectedColors.add(colorId)
 
-  // Envoyer le vote immédiatement
   submitVote(e.target)
+}
+
+export function handleBlankVote() {
+  state.selectedColors.clear()
+  state.selectedColors.add('blank')
+  submitVote()
 }
 
 /**
@@ -471,6 +566,7 @@ export async function leaveSession() {
   if (!ok) return
 
   teardownGame()
+  game = null
   safeSessionRemove('vote_session_code')
   safeSessionRemove('vote_stagiaire_id')
   state.sessionCode = ''

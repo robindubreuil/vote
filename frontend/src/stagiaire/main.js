@@ -25,6 +25,7 @@ function init() {
     handleSingleChoiceVote: handlers.handleSingleChoiceVote,
     handleCheckboxChange: handlers.handleCheckboxChange,
     handleSubmitVote: handlers.handleSubmitVote,
+    handleBlankVote: handlers.handleBlankVote,
     leaveSession: handlers.leaveSession,
     handleKeyPress: handlers.handleKeyPress,
     handlePlayGame: handlers.handlePlayGame

@@ -2,10 +2,16 @@ package vote
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 	"vote-backend/internal/models"
+)
+
+const (
+	PointsPerCorrect = 2000
+	PointsPerWrong   = -500
 )
 
 var (
@@ -104,7 +110,7 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
 	return nil
 }
 
-func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool) error {
+func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool, competitive bool, allowBlank bool) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -125,6 +131,9 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 	session.ActiveLabels = labels
 	session.MultipleChoice = multipleChoice
 	session.GameEnabled = gameEnabled
+	session.Competitive = competitive
+	session.AllowBlank = allowBlank
+	session.CorrectColors = nil
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = time.Now().Unix()
 	session.LastActivity = time.Now().Unix()
@@ -160,7 +169,21 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 		return "", errors.New("only one color allowed in single-choice mode")
 	}
 
-	if len(colors) == 0 {
+	hasBlank := false
+	for _, c := range colors {
+		if c == "blank" {
+			hasBlank = true
+			break
+		}
+	}
+	if hasBlank {
+		if !session.AllowBlank {
+			return "", errors.New("blank votes are not allowed")
+		}
+		if len(colors) > 1 {
+			return "", errors.New("blank vote cannot be combined with other colors")
+		}
+	} else if len(colors) == 0 {
 		return "", errors.New("at least one color is required")
 	}
 
@@ -171,6 +194,9 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	}
 
 	for _, c := range colors {
+		if c == "blank" {
+			continue
+		}
 		if !activeSet[c] {
 			return "", errors.New("invalid color: " + c)
 		}
@@ -205,7 +231,7 @@ func (m *Manager) CloseVote(sessionID, trainerID string) error {
 	return nil
 }
 
-func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool) error {
+func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool, competitive bool, allowBlank bool) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -230,10 +256,82 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 	session.ActiveLabels = labels
 	session.MultipleChoice = multipleChoice
 	session.GameEnabled = gameEnabled
+	session.Competitive = competitive
+	session.AllowBlank = allowBlank
+	session.CorrectColors = nil
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = 0
 	session.LastActivity = time.Now().Unix()
 	return nil
+}
+
+type ScoreEntry struct {
+	StagiaireID string   `json:"id"`
+	Name        string   `json:"name"`
+	Vote        []string `json:"vote,omitempty"`
+	VoteScore   int      `json:"voteScore"`
+	TotalScore  int      `json:"totalScore"`
+	Rank        int      `json:"rank"`
+}
+
+func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []string) ([]ScoreEntry, error) {
+	m.mu.RLock()
+	session, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if session.TrainerID != trainerID {
+		return nil, ErrUnauthorized
+	}
+
+	if session.VoteState != models.VoteStateClosed {
+		return nil, errors.New("vote must be closed before revealing answers")
+	}
+
+	correctSet := make(map[string]bool, len(correctColors))
+	for _, c := range correctColors {
+		correctSet[c] = true
+	}
+
+	session.CorrectColors = correctColors
+
+	entries := make([]ScoreEntry, 0, len(session.Stagiaires))
+	for id, name := range session.Stagiaires {
+		entry := ScoreEntry{StagiaireID: id, Name: name}
+		if vote, hasVote := session.Votes[id]; hasVote {
+			entry.Vote = vote
+			for _, color := range vote {
+				if correctSet[color] {
+					entry.VoteScore += PointsPerCorrect
+				} else {
+					entry.VoteScore += PointsPerWrong
+				}
+			}
+		}
+		session.Scores[id] += entry.VoteScore
+		entry.TotalScore = session.Scores[id]
+		entries = append(entries, entry)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].TotalScore != entries[j].TotalScore {
+			return entries[i].TotalScore > entries[j].TotalScore
+		}
+		return entries[i].Name < entries[j].Name
+	})
+
+	for i := range entries {
+		entries[i].Rank = i + 1
+	}
+
+	session.LastActivity = time.Now().Unix()
+	return entries, nil
 }
 
 func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error {
@@ -382,6 +480,29 @@ func (m *Manager) IsNameInUse(sessionID, name string, excludeID string) bool {
 		}
 	}
 	return false
+}
+
+func (m *Manager) UpdateGameScore(sessionID, stagiaireID string, score int) error {
+	m.mu.RLock()
+	session, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return ErrSessionNotFound
+	}
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if _, exists := session.Stagiaires[stagiaireID]; !exists {
+		return errors.New("stagiaire not found in session")
+	}
+
+	if score > session.GameScores[stagiaireID] {
+		session.GameScores[stagiaireID] = score
+	}
+	session.LastActivity = time.Now().Unix()
+	return nil
 }
 
 func NormalizeName(name string) string {

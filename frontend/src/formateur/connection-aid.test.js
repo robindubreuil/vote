@@ -2,36 +2,36 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { buildJoinURL } from './connection-aid-url.js'
 
 describe('connection-aid — buildJoinURL', () => {
-  it('uses the short hash form: <base>#<code>', () => {
+  it('uses the short root hash form: <origin>/#<code>', () => {
     expect(buildJoinURL('ABC', { origin: 'http://localhost:5173', pathname: '/formateur/' })).toBe(
-      'http://localhost:5173/stagiaire/#ABC'
+      'http://localhost:5173/#ABC'
     )
   })
 
   it('handles formateur/index.html form', () => {
     expect(buildJoinURL('DEF', { origin: 'http://vote.example', pathname: '/formateur/index.html' })).toBe(
-      'http://vote.example/stagiaire/#DEF'
+      'http://vote.example/#DEF'
     )
   })
 
   it('works under a subpath deployment', () => {
     expect(buildJoinURL('KQR', { origin: 'https://host', pathname: '/app/formateur/' })).toBe(
-      'https://host/app/stagiaire/#KQR'
+      'https://host/app/#KQR'
     )
   })
 
   it('url-encodes the session code (defensive)', () => {
-    expect(buildJoinURL('A C', { origin: 'http://h', pathname: '/formateur/' })).toBe('http://h/stagiaire/#A%20C')
+    expect(buildJoinURL('A C', { origin: 'http://h', pathname: '/formateur/' })).toBe('http://h/#A%20C')
   })
 
-  it('falls back to /stagiaire/ at the root when no /formateur/ segment is present', () => {
-    expect(buildJoinURL('ABC', { origin: 'http://h', pathname: '/' })).toBe('http://h/stagiaire/#ABC')
-    expect(buildJoinURL('ABC', { origin: 'http://h', pathname: '/some-other-path' })).toBe('http://h/stagiaire/#ABC')
+  it('falls back to root when no /formateur/ segment is present', () => {
+    expect(buildJoinURL('ABC', { origin: 'http://h', pathname: '/' })).toBe('http://h/#ABC')
+    expect(buildJoinURL('ABC', { origin: 'http://h', pathname: '/some-other-path' })).toBe('http://h/#ABC')
   })
 
-  it('always ends in a trailing slash before the hash', () => {
+  it('always ends in /#<code>', () => {
     const url = buildJoinURL('ABC', { origin: 'http://h', pathname: '/formateur/' })
-    expect(url).toMatch(/\/stagiaire\/#ABC$/)
+    expect(url).toMatch(/\/#ABC$/)
   })
 })
 

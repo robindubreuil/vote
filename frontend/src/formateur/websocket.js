@@ -42,10 +42,19 @@ export function getClient() {
  */
 function publishState() {
   if (!publisher) return
+  const leaderboard = state.competitive && state.stagiaires.length > 0
+    ? state.stagiaires
+        .filter((s) => s.connected)
+        .map((s) => ({ name: s.name || 'Anonyme', score: (s.score || 0) + (s.gameScore || 0) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+    : null
   publisher.publish({
     count: state.connectedCount,
     voteState: state.voteState,
-    connected: state.connected
+    connected: state.connected,
+    competitive: state.competitive,
+    leaderboard
   })
 }
 
@@ -162,6 +171,11 @@ function handleMessage(msg) {
       if (msg.colors) state.selectedColors = new Set(msg.colors)
       if (msg.multipleChoice !== undefined) state.multipleChoice = msg.multipleChoice
       if (msg.labels) state.colorLabels = msg.labels
+      if (msg.competitive !== undefined) state.competitive = msg.competitive
+      if (msg.allowBlank !== undefined) state.allowBlank = msg.allowBlank
+      if (msg.gameEnabled !== undefined) state.gameEnabled = msg.gameEnabled
+      state.revealed = false
+      state.correctColors = new Set()
 
       renderMainContent()
       attachListeners()
@@ -180,9 +194,23 @@ function handleMessage(msg) {
       publishState()
       break
 
+    case 'answers_revealed':
+      state.revealed = true
+      if (msg.correctColors) state.correctColors = new Set(msg.correctColors)
+      if (msg.scores) state.scoreboard = msg.scores
+      renderMainContent()
+      attachListeners()
+      publishState()
+      break
+
     case 'vote_reset':
       state.voteState = 'idle'
       stopTimer()
+      if (msg.competitive !== undefined) state.competitive = msg.competitive
+      if (msg.allowBlank !== undefined) state.allowBlank = msg.allowBlank
+      if (msg.gameEnabled !== undefined) state.gameEnabled = msg.gameEnabled
+      state.revealed = false
+      state.correctColors = new Set()
       renderMainContent()
       attachListeners()
       publishState()
@@ -257,6 +285,12 @@ function attachListeners() {
     state.selectedColors = new Set(COLORS.slice(0, 3).map((c) => c.id))
     state.colorLabels = {}
     state.multipleChoice = false
+    state.gameEnabled = false
+    state.competitive = false
+    state.allowBlank = false
+    state.correctColors = new Set()
+    state.revealed = false
+    state.scoreboard = []
     state.presetSaving = false
     state.lastConfigApplied = false
     cleanupAllListeners()

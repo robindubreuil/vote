@@ -22,7 +22,6 @@
  * @returns {string}
  */
 export function buildJoinURL(sessionCode, loc) {
-  // (1) Explicit deployment override wins over everything else.
   const envOverride = import.meta.env && import.meta.env.VITE_STAGIAIRE_BASE_URL
   if (envOverride) {
     const normalized = envOverride.endsWith('/') ? envOverride : envOverride + '/'
@@ -33,11 +32,9 @@ export function buildJoinURL(sessionCode, loc) {
   const formateurIdx = location.pathname.indexOf('/formateur/')
   let basePath
   if (formateurIdx !== -1) {
-    // (2) Swap formateur -> stagiaire, preserving sub-path.
-    basePath = location.pathname.slice(0, formateurIdx) + '/stagiaire/'
+    basePath = location.pathname.slice(0, formateurIdx) + '/'
   } else {
-    // (3) Defensive fallback.
-    basePath = '/stagiaire/'
+    basePath = '/'
   }
   return `${location.origin}${basePath}#${encodeURIComponent(sessionCode)}`
 }

@@ -23,6 +23,17 @@ export function renderLayout(app) {
             <span class="game-hud-label">${t.stagiaire?.gameBest || 'Record'}</span>
             <span class="game-hud-value" id="gameBest">0</span>
           </div>
+          <div class="game-hud-stat game-hud-stat-level">
+            <span class="game-hud-label">${t.stagiaire?.gameLevel || 'Niveau'}</span>
+            <span class="game-hud-value" id="gameLevel">1</span>
+            <div class="game-hud-progress"><div class="game-hud-progress-bar" id="gameLevelProgress"></div></div>
+          </div>
+          <div class="game-hud-stat">
+            <span class="game-hud-label">${t.stagiaire?.gameStreak || 'Série'}</span>
+            <span class="game-hud-value">
+              <span id="gameStreak">0</span><span class="game-mult-badge" id="gameMultBadge" hidden></span>
+            </span>
+          </div>
           <div class="game-hud-stat">
             <span class="game-hud-label">${t.stagiaire?.gameAttempts || 'Coups restants'}</span>
             <span class="game-hud-value" id="gameAttempts">8</span>
@@ -48,7 +59,9 @@ export function renderLayout(app) {
           <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromPauseBtn">${t.stagiaire?.quitGame || 'Quitter'}</button>
         </div>
         <div class="game-overlay-screen" id="gameOverScreen" hidden>
+          <div class="game-screen-levelup" id="gameLevelUp" hidden></div>
           <div class="game-screen-title" id="gameOverTitle"></div>
+          <div class="game-screen-multiplier" id="gameOverMultiplier" hidden></div>
           <div class="game-screen-score" id="gameOverScore"></div>
           <div class="game-screen-best" id="gameOverBest" hidden></div>
           <div class="game-screen-secret" id="gameOverSecret"></div>
@@ -61,7 +74,7 @@ export function renderLayout(app) {
             ${(t.stagiaire?.gameRules || []).map((r) => `<li>${r}</li>`).join('')}
           </ul>
           <div class="game-peg-example">
-            <span class="game-peg game-peg-black" aria-label="Pion noir"></span>
+            <span class="game-peg game-peg-black" aria-label="Pion doré"></span>
             <span class="game-peg-label">bonne couleur, bonne position</span>
           </div>
           <div class="game-peg-example">
@@ -334,6 +347,11 @@ function renderMultipleChoiceHTML(activeColors) {
     <button type="button" class="btn btn-success btn-large" id="submitVote" data-testid="submit-vote-btn" ${state.selectedColors.size === 0 || !isConnected ? 'disabled' : ''}>
       ${t.stagiaire.validateVote}
     </button>
+    ${state.allowBlank ? `
+    <button type="button" class="btn btn-secondary" id="blankVoteBtn" data-testid="blank-vote-btn" ${!isConnected ? 'disabled' : ''}>
+      ${t.formateur.blankVote}
+    </button>
+    ` : ''}
   `
 }
 
@@ -343,6 +361,7 @@ function renderMultipleChoiceHTML(activeColors) {
 function renderVotedHTML() {
   const selectedNames = Array.from(state.selectedColors)
     .map((id) => {
+      if (id === 'blank') return t.formateur.blankVote
       return state.colorLabels[id] || COLORS.find((c) => c.id === id)?.name || id
     })
     .join(' + ')
@@ -372,6 +391,21 @@ function renderVotedHTML() {
  * Render the vote closed state
  */
 function renderClosedHTML() {
+  const competitiveHTML = state.competitive && state.revealed
+    ? (() => {
+        const positive = state.voteScore >= 0
+        const scoreText = positive ? `+${state.voteScore}` : String(state.voteScore)
+        const rankSuffix = state.rank === 1 ? 'er' : 'e'
+        return `
+        <div class="score-feedback ${positive ? 'positive' : 'negative'}">
+          <div class="score-feedback-vote">${scoreText} pts</div>
+          <div class="score-feedback-total">${t.stagiaire.totalScoreLabel || 'Total'} : ${state.totalScore} pts</div>
+          <div class="score-feedback-rank">${state.rank}${rankSuffix} / ${state.totalStagiaires}</div>
+        </div>
+      `
+      })()
+    : ''
+
   return `
     <header class="header">
       <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
@@ -383,7 +417,7 @@ function renderClosedHTML() {
       <div class="vote-closed-state">
         <div class="closed-icon">${stop(' class="icon icon-xl"')}</div>
         <div class="waiting-text" data-testid="vote-closed-text">${t.stagiaire.voteClosed}</div>
-        ${renderPlayGameButtonHTML()}
+        ${competitiveHTML}
       </div>
     </div>
   `
@@ -485,6 +519,14 @@ export function attachEventListeners() {
     trackListener(submitBtn, 'click', handleSubmitVote)
   }
 
+  // Bouton vote blanc
+  const blankBtn = document.getElementById('blankVoteBtn')
+  if (blankBtn) {
+    trackListener(blankBtn, 'click', () => {
+      if (handleBlankVote) handleBlankVote()
+    })
+  }
+
   // Bouton modifier le vote
   const changeVoteBtn = document.getElementById('changeVoteBtn')
   if (changeVoteBtn) {
@@ -520,6 +562,7 @@ let handleJoin,
   handleSingleChoiceVote,
   handleCheckboxChange,
   handleSubmitVote,
+  handleBlankVote,
   leaveSession,
   handlePlayGame
 
@@ -530,6 +573,7 @@ export function setHandlers(handlers) {
     handleSingleChoiceVote,
     handleCheckboxChange,
     handleSubmitVote,
+    handleBlankVote,
     leaveSession,
     handleKeyPress,
     handlePlayGame

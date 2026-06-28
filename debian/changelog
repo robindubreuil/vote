@@ -1,3 +1,20 @@
+vote (1.3.0-1) unstable; urgency=medium
+
+  * Add competitive mode: server-side scoring, reveal UI, per-vote scoreboard
+  * Add allow-blank-vote toggle (pseudo-color "blank" in vote array)
+  * Add classroom leaderboard display (live top-3 via BroadcastChannel)
+  * Add game score reporting from stagiaire mini-game
+  * Improve mini-game: adaptive difficulty (4-8 colors by high score)
+  * Improve mini-game: streak multiplier (1 + streak*0.25, capped at 3x)
+  * Improve mini-game: gold pegs, peg animations, score count-up
+  * Improve mini-game: level-up celebration banner, progress bar
+  * Shorten stagiaire join URL to root hash form (#ABC via Caddy redirect)
+  * Add presets schema v3 (competitive, allowBlank, correctColors)
+  * Fix button spacing in stagiaire (name edit, blank vote)
+  * Fix timer clock-skew (already in 1.2.1, formalized)
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Sat, 28 Jun 2026 19:30:00 +0100
+
 vote (1.2.1-1) unstable; urgency=medium
 
   * Fix timer clock-skew: send elapsed seconds instead of absolute timestamp

@@ -3,8 +3,9 @@ import { getWebSocketURL } from '@shared/config.js'
 import { showError } from '@shared/ui.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
-import { pauseGameExternal } from './handlers.js'
+import { pauseGameExternal, teardownGame } from './handlers.js'
 import { safeSessionSet } from '@shared/utils/safe-storage.js'
+import { loadHighScore, resetHighScore, saveStreak } from '@shared/game-storage.js'
 
 // Configuration de l'API WebSocket
 const WS_URL = getWebSocketURL()
@@ -78,12 +79,14 @@ export function connectToSession(code) {
 function handleMessage(msg) {
   switch (msg.type) {
     case 'session_joined':
-      // Connexion réussie à la session
       state.sessionCode = msg.sessionCode
-      // Store the server-generated stagiaireId
       if (msg.stagiaireId) {
         state.stagiaireId = msg.stagiaireId
         safeSessionSet('vote_stagiaire_id', msg.stagiaireId)
+      }
+      if (state.appState === AppState.JOINING) {
+        resetHighScore()
+        saveStreak(0)
       }
       state.appState = AppState.WAITING
       safeSessionSet('vote_session_code', msg.sessionCode)
@@ -100,18 +103,23 @@ function handleMessage(msg) {
     }
 
     case 'vote_started':
-      // Nouveau vote lancé — pause the mini-game if it was open and
-      // surface the vote UI. The trainee must vote before resuming.
-      pauseGameExternal()
+      teardownGame()
       state.availableColors = msg.colors || []
       state.multipleChoice = msg.multipleChoice || false
       state.colorLabels = msg.labels || {}
       if (typeof msg.gameEnabled === 'boolean') {
         state.gameEnabled = msg.gameEnabled
       }
+      if (typeof msg.competitive === 'boolean') {
+        state.competitive = msg.competitive
+      }
+      if (typeof msg.allowBlank === 'boolean') {
+        state.allowBlank = msg.allowBlank
+      }
       state.selectedColors.clear()
+      state.revealed = false
+      state.voteScore = 0
 
-      // Restore existing vote if rejoining
       if (msg.existingVote && Array.isArray(msg.existingVote)) {
         msg.existingVote.forEach((colorId) => state.selectedColors.add(colorId))
         state.hasVoted = true
@@ -131,22 +139,37 @@ function handleMessage(msg) {
       break
 
     case 'vote_closed':
-      // Vote terminé par le formateur — pause the game too; the trainee
-      // shouldn't be mid-catch when the round result is shown.
-      pauseGameExternal()
+      teardownGame()
       state.appState = AppState.CLOSED
       render()
       break
 
+    case 'answers_revealed':
+      state.revealed = true
+      if (typeof msg.voteScore === 'number') state.voteScore = msg.voteScore
+      if (typeof msg.totalScore === 'number') state.totalScore = msg.totalScore + loadHighScore()
+      if (typeof msg.rank === 'number') state.rank = msg.rank
+      if (typeof msg.totalStagiaires === 'number') state.totalStagiaires = msg.totalStagiaires
+      if (msg.correctColors) state.availableColors = msg.correctColors
+      render()
+      break
+
     case 'vote_reset':
-      // Réinitialisation pour un nouveau vote
       if (typeof msg.gameEnabled === 'boolean') {
         state.gameEnabled = msg.gameEnabled
+      }
+      if (typeof msg.competitive === 'boolean') {
+        state.competitive = msg.competitive
+      }
+      if (typeof msg.allowBlank === 'boolean') {
+        state.allowBlank = msg.allowBlank
       }
       pauseGameExternal()
       state.appState = AppState.WAITING
       state.selectedColors.clear()
       state.hasVoted = false
+      state.revealed = false
+      state.voteScore = 0
       render()
       break
 

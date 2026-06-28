@@ -41,13 +41,17 @@ describe('getLastConfig / setLastConfig', () => {
       selectedColors: ['rouge', 'vert'],
       colorLabels: { rouge: 'Pour' },
       multipleChoice: true,
-      gameEnabled: true
+      gameEnabled: true,
+      competitive: false, allowBlank: false,
+      correctColors: []
     })
     expect(getLastConfig()).toEqual({
       selectedColors: ['rouge', 'vert'],
       colorLabels: { rouge: 'Pour' },
       multipleChoice: true,
-      gameEnabled: true
+      gameEnabled: true,
+      competitive: false, allowBlank: false,
+      correctColors: []
     })
   })
 
@@ -61,7 +65,9 @@ describe('getLastConfig / setLastConfig', () => {
       selectedColors: ['rouge'],
       colorLabels: {},
       multipleChoice: false,
-      gameEnabled: false
+      gameEnabled: false,
+      competitive: false, allowBlank: false,
+      correctColors: []
     })
   })
 
@@ -78,7 +84,9 @@ describe('getLastConfig / setLastConfig', () => {
       selectedColors: ['rouge'],
       colorLabels: { rouge: 'Pour' },
       multipleChoice: false,
-      gameEnabled: false
+      gameEnabled: false,
+      competitive: false, allowBlank: false,
+      correctColors: []
     })
   })
 
