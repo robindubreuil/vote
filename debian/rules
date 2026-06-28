@@ -1,8 +1,9 @@
 #!/usr/bin/make -f
 
 # Work around Go's GOPATH behavior in package builds
-export GOCACHE=/tmp/go-build-cache
-export GOMODCACHE=/tmp/go-mod-cache
+export GOCACHE=$(CURDIR)/.gocache
+export GOMODCACHE=$(CURDIR)/.gomodcache
+export CGO_ENABLED=0
 
 %:
 	dh $@
@@ -44,12 +45,14 @@ override_dh_auto_install:
 	install -d -m 0755 debian/vote/usr/share/vote/www
 	cp -a frontend/dist/. debian/vote/usr/share/vote/www/
 
-	# Create state directories
+	# Install sample Caddyfile
+	install -D -m 0644 debian/Caddyfile.example debian/vote/usr/share/doc/vote/examples/Caddyfile
+
+	# Create state directory
 	install -d -m 0750 debian/vote/var/lib/vote
-	install -d -m 0750 debian/vote/var/log/vote
 
 override_dh_auto_clean:
 	rm -f vote-server
 	rm -rf debian/vote
-	# Clean frontend builds
 	rm -rf frontend/dist frontend/node_modules
+	rm -rf .gocache .gomodcache

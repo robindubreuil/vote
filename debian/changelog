@@ -1,3 +1,25 @@
+vote (1.1.0-1) unstable; urgency=medium
+
+  * Add maintainer dashboard with HMAC cookie auth (/dashboard)
+  * Add server-side stats persistence (counters.json + stats.jsonl)
+  * Add rate limiting to dashboard login (brute-force protection)
+  * Fix graceful shutdown: os.Exit replaced with errCh pattern
+  * Fix hub: VoteManager errors now propagated to client
+  * Fix client: slow clients disconnected (SendJSON closes conn)
+  * Fix store: corruption logged, rotation failure recovery
+  * Fix frontend: Safari private-mode crash (storage try/catch)
+  * Fix frontend: vote button double-fire removed
+  * Fix frontend: timer leak on leaveSession
+  * Fix tests: E2E session code format, rate limiter assertion
+  * Security: CSP/X-Frame-Options/nosniff headers on dashboard
+  * Security: /health returns 503 during drain
+  * Cleanup: dead code removal, constant extraction, version alignment
+  * Set VOTE_DATA_DIR=/var/lib/vote in default config
+  * Remove unused /var/log/vote directory
+  * Bump TimeoutStopSec to 15s
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Sat, 28 Jun 2026 10:00:00 +0100
+
 vote (1.0.0-1) unstable; urgency=medium
 
   * Initial Debian packaging
