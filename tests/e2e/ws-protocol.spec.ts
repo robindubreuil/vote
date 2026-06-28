@@ -122,7 +122,7 @@ test.describe('WS Protocol', () => {
   });
 
   test('stagiaire rejected on bad code', async () => {
-    const stagiaire = await connectStagiaire('9999', undefined, 'Test');
+    const stagiaire = await connectStagiaire('QXY', undefined, 'Test');
     const error = await stagiaire.waitForMessage('error');
     expect(error.message).toContain('Session introuvable');
     stagiaire.dispose();
