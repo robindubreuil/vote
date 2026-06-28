@@ -163,7 +163,7 @@ export function startTimer() {
   state.timerInterval = setInterval(() => {
     const timerEl = document.querySelector('.vote-timer')
     if (timerEl && state.voteStartTime) {
-      const elapsed = Math.floor((Date.now() - state.voteStartTime) / 1000)
+      const elapsed = Math.max(0, Math.floor((Date.now() - state.voteStartTime) / 1000))
       const mins = Math.floor(elapsed / 60)
         .toString()
         .padStart(2, '0')
