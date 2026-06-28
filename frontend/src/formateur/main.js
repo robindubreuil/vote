@@ -9,23 +9,49 @@ import {
 import { initClient, closeClient, attachLandingListenersWithHandlers } from './websocket.js'
 import * as handlers from './handlers.js'
 import { state } from './state.js'
+import { COLORS } from '@shared/colors.js'
 import { validateSessionCode } from '@shared/validation.js'
+import { CONSTANTS } from '@shared/config.js'
+import { initConnectionAid } from './connection-aid.js'
+import { initPWA } from '@shared/pwa.js'
+import { safeSessionGet, safeSessionRemove } from '@shared/utils/safe-storage.js'
+import { stopTimer } from './utils.js'
 
 setActionHandlers({
   startVote: handlers.startVote,
   closeVote: handlers.closeVote,
   resetVote: handlers.resetVote,
-  resetConfig: handlers.resetConfig
+  resetConfig: handlers.resetConfig,
+  beginSavePreset: handlers.beginSavePreset,
+  cancelSavePreset: handlers.cancelSavePreset,
+  confirmSavePreset: handlers.confirmSavePreset,
+  applyPreset: handlers.applyPreset,
+  deletePreset: handlers.deletePresetHandler,
+  exportPresets: handlers.exportPresetsHandler,
+  importPresets: handlers.importPresetsHandler
 })
 
 function leaveSession() {
-  sessionStorage.removeItem('vote_session_code')
-  sessionStorage.removeItem('vote_trainer_id')
+  stopTimer()
+  safeSessionRemove('vote_session_code')
+  safeSessionRemove('vote_trainer_id')
   closeClient()
   state.sessionCode = null
-  state.connectedCount = 0
-  state.voteState = 'idle'
+  state.connected = false
+  state.everConnected = false
   state.connecting = false
+  state.connectedCount = 0
+  state.stagiaires = []
+  state.voteState = 'idle'
+  state.voteStartTime = null
+  // Reset config so the next session starts from defaults (or from the
+  // autoloaded lastConfig). Without this, stale selections from the previous
+  // session would bleed into the new one and mask the autoload behavior.
+  state.selectedColors = new Set(COLORS.slice(0, 3).map((c) => c.id))
+  state.colorLabels = {}
+  state.multipleChoice = false
+  state.presetSaving = false
+  state.lastConfigApplied = false
   cleanupAllListeners()
   renderLandingPage(document.getElementById('app'))
   attachLandingListenersWithHandlers()
@@ -34,12 +60,27 @@ function leaveSession() {
 function init() {
   const app = document.getElementById('app')
 
-  let savedSessionCode = sessionStorage.getItem('vote_session_code')
-
   const urlParams = new URLSearchParams(window.location.search)
+
+  // "Aide à la connexion" standalone view — render it and bail out.
+  // This view lives in its own tab so the formateur can move it to the
+  // videoprojector. It does NOT connect to the WebSocket (the backend only
+  // allows one trainer per session); instead it subscribes to state updates
+  // from the main formateur tab via BroadcastChannel.
+  const rawAidCode = urlParams.get('aide')
+  if (rawAidCode) {
+    const aidCode = CONSTANTS.SESSION_CODE_NORMALIZE(rawAidCode)
+    if (validateSessionCode(aidCode) === null) {
+      initConnectionAid(aidCode)
+      return
+    }
+  }
+
+  let savedSessionCode = safeSessionGet('vote_session_code')
+
   const urlSession = urlParams.get('session')
   if (urlSession && validateSessionCode(urlSession) === null) {
-    savedSessionCode = urlSession
+    savedSessionCode = CONSTANTS.SESSION_CODE_NORMALIZE(urlSession)
   }
 
   if (savedSessionCode) {
@@ -54,3 +95,4 @@ function init() {
 }
 
 init()
+initPWA()

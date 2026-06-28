@@ -75,6 +75,25 @@ See `.env.example`:
 | `ALLOWED_ORIGINS` | localhost dev origins | CORS origins (comma-separated; `*` disables credentials) |
 | `TRUSTED_PROXIES` | _(empty)_ | Trusted proxy IPs for correct client IP detection behind reverse proxy |
 | `VALID_COLORS` | `rouge,vert,bleu,jaune,orange,violet,rose,gris` | Allowed vote colors |
+| `VOTE_DASHBOARD_SECRET` | _(empty)_ | Gates `/dashboard`. Unset = dashboard disabled (404). Set to a random string to enable the maintainer dashboard behind cookie auth. |
+| `VOTE_DASHBOARD_MAX_AGE` | `168h` (7 days) | How long a dashboard login cookie stays valid. |
+| `VOTE_DATA_DIR` | `./data` (dev), `/var/lib/vote` (Docker/Debian) | FHS location for persistent stats. Holds `counters.json` (restore checkpoint) + `stats.jsonl` (append-only history). Created `0700`, files `0600`. |
+| `VOTE_STATS_INTERVAL` | `5m` | How often the server flushes counters to disk. Crash loses ≤ one interval. |
+
+## Metrics & Dashboard
+
+`GET /metrics` exposes a [Prometheus](https://prometheus.io/docs/instrumenting/exposition_formats/)-format text endpoint with both runtime gauges (active sessions, connected trainers/stagiaires, goroutines, memory) and product counters/histograms (`vote_sessions_created_total`, `vote_votes_cast_total`, `vote_trainees_joined_total`, feature-adoption counters, and per-session distribution histograms). It is public and scrape-friendly.
+
+`GET /dashboard` is an **authed** self-contained maintainer dashboard (no build step, no external deps) that polls `/metrics`, keeps a compact ring buffer of snapshots in `localStorage`, and renders SVG sparklines + histogram bars. **Usage data persists server-side** in `VOTE_DATA_DIR`: counters survive restarts (restored from `counters.json` on boot) and a 5-min append-only history (`stats.jsonl`) is collected 24/7 regardless of whether anyone has the dashboard open. On login the dashboard fetches `GET /dashboard/history` (authed) and seeds the trend from server data, so a maintainer logging in after a month sees all-time totals + the full usage trend.
+
+Enabled only when `VOTE_DASHBOARD_SECRET` is set; login at `/dashboard/login` with the configured secret. If the data dir cannot be opened, the server runs without persistence (counters reset on restart, as before this feature) — failures are non-fatal.
+
+Generate a strong secret:
+
+```bash
+openssl rand -base64 32   # then export VOTE_DASHBOARD_SECRET=<that>
+```
+
 
 ## Production Build
 

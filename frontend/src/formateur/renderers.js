@@ -1,11 +1,25 @@
 import { COLORS, escapeHtml } from '@shared/colors.js'
-import { vote, timer, users, chart, rocket, stop, refresh, plus, loader } from '@shared/icons.js'
-import { renderFooterHTML, renderSessionCodeButton } from '@shared/ui.js'
+import {
+  vote,
+  timer,
+  users,
+  chart,
+  rocket,
+  stop,
+  refresh,
+  plus,
+  loader,
+  qrCode,
+  bookmark,
+  download,
+  upload
+} from '@shared/icons.js'
+import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog } from '@shared/ui.js'
 import { t } from '@shared/i18n.js'
 import { createListenerTracker } from '@shared/dom/listeners.js'
+import { listPresets } from '@shared/presets.js'
 import { state } from './state.js'
 import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
-
 const { track: trackListener, cleanup: cleanupAllListeners } = createListenerTracker()
 
 const _actionHandlers = {}
@@ -15,6 +29,20 @@ export function setActionHandlers(handlers) {
 }
 
 export { cleanupAllListeners }
+
+/**
+ * Open the "Aide à la connexion" view in a new browser tab so the formateur
+ * can drag it onto the videoprojector screen. The URL is built from the
+ * current location so it inherits protocol/host automatically.
+ * @param {string} sessionCode
+ */
+export function openConnectionAid(sessionCode) {
+  if (!sessionCode) return
+  const url = new URL(window.location.href)
+  url.search = `?aide=${encodeURIComponent(sessionCode)}`
+  url.hash = ''
+  window.open(url.toString(), '_blank', 'noopener')
+}
 
 /**
  * Render the landing page
@@ -29,19 +57,20 @@ export function renderLandingPage(app) {
         <p class="landing-subtitle">${t.formateur.subtitle}</p>
 
         <div class="landing-actions">
-          <button id="createSessionBtn" class="btn btn-primary btn-large" data-testid="create-session-btn">
+          <button id="createSessionBtn" class="btn btn-primary btn-large" data-testid="create-session-btn" title="${t.formateur.createSession} — ${t.formateur.shortcutEnter}">
             ${plus(' class="icon icon-md"')} ${t.formateur.createSession}
           </button>
 
           <div class="landing-divider">${t.formateur.or}</div>
 
           <div class="input-group">
-            <input type="text" id="joinSessionInput" class="input-text" data-testid="join-session-input" placeholder="${t.formateur.sessionPlaceholder}" maxlength="4" pattern="[0-9]{4}" inputmode="numeric">
-            <button id="joinSessionBtn" class="btn btn-secondary" data-testid="join-session-btn">
+            <input type="text" id="joinSessionInput" class="input-text" data-testid="join-session-input" placeholder="${t.formateur.sessionPlaceholder}" maxlength="3" pattern="[A-HJ-NP-Ya-hj-np-y]{3}" inputmode="text" autocapitalize="characters" autocomplete="off">
+            <button id="joinSessionBtn" class="btn btn-secondary" data-testid="join-session-btn" title="${t.formateur.joinSession} — ${t.formateur.shortcutEnter}">
               ${t.formateur.joinSession}
             </button>
           </div>
           <div class="error-message" role="alert" data-testid="error-message"></div>
+          <p class="landing-hint">${t.formateur.shortcutHintLanding}</p>
         </div>
       </div>
     </div>
@@ -80,11 +109,33 @@ export function updateLandingPageLoadingState(isLoading) {
 export function renderFullLayout(app) {
   app.innerHTML = `
     <div class="container">
+      <div id="reconnect-banner" class="reconnect-banner" role="alert" aria-live="assertive" hidden>
+        <span class="reconnect-banner-spinner" aria-hidden="true"></span>
+        <span class="reconnect-banner-text">${t.formateur.reconnecting}</span>
+      </div>
       <header class="header" id="app-header"></header>
       <main id="app-content"></main>
     </div>
     ${renderFooterHTML()}
   `
+}
+
+/**
+ * Show or hide the reconnection banner. Visible only when the trainer has
+ * been connected before (so initial load doesn't trigger a false alarm) and
+ * the WS is currently down.
+ */
+export function updateConnectionBanner() {
+  const banner = document.getElementById('reconnect-banner')
+  if (!banner) return
+  const shouldShow = !!state.sessionCode && state.everConnected && !state.connected
+  if (shouldShow) {
+    banner.hidden = false
+    banner.setAttribute('aria-hidden', 'false')
+  } else {
+    banner.hidden = true
+    banner.setAttribute('aria-hidden', 'true')
+  }
 }
 
 /**
@@ -106,7 +157,14 @@ export function updateHeader(client) {
   header.innerHTML = `
     <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore} - ${t.common.formateur}</h1>
     <div class="header-right">
-      ${renderSessionCodeButton(state.sessionCode, isConnected)}
+      <button
+        id="openConnectionAidBtn"
+        class="header-action-btn"
+        data-testid="open-connection-aid-btn"
+        title="${t.formateur.openConnectionAidTitle}"
+        aria-label="${t.formateur.openConnectionAid}"
+      >${qrCode(' class="icon icon-md"')}</button>
+      ${renderSessionCodeButton(state.sessionCode, isConnected, `${t.formateur.leaveSessionTitle} — ${t.formateur.shortcutEsc}`)}
     </div>
   `
 }
@@ -119,11 +177,19 @@ export function updateHeader(client) {
 export function attachHeaderListeners(client, leaveSessionFn) {
   const leaveSessionBtn = document.getElementById('leaveSessionBtn')
   if (leaveSessionBtn) {
-    trackListener(leaveSessionBtn, 'click', () => {
-      if (confirm(t.formateur.leaveSession)) {
-        leaveSessionFn()
-      }
+    trackListener(leaveSessionBtn, 'click', async () => {
+      const ok = await showConfirmDialog({
+        title: t.formateur.leaveSessionTitle,
+        message: t.formateur.leaveSession,
+        confirmLabel: t.formateur.leave
+      })
+      if (ok) leaveSessionFn()
     })
+  }
+
+  const aidBtn = document.getElementById('openConnectionAidBtn')
+  if (aidBtn && state.sessionCode) {
+    trackListener(aidBtn, 'click', () => openConnectionAid(state.sessionCode))
   }
 }
 
@@ -182,12 +248,22 @@ export function attachConfigListeners(client) {
   })
 
   // Multiple choice toggle
-  const toggleMultiple = document.querySelector('.multiple-choice-toggle')
+  const toggleMultiple = document.querySelector('.multiple-choice-toggle[data-testid="multiple-choice-toggle"]')
   if (toggleMultiple) {
     trackListener(toggleMultiple, 'click', () => {
       state.multipleChoice = !state.multipleChoice
       const switchEl = toggleMultiple.querySelector('.toggle-switch')
       switchEl.classList.toggle('active', state.multipleChoice)
+    })
+  }
+
+  // Mini-game toggle
+  const toggleGame = document.querySelector('.multiple-choice-toggle[data-testid="game-toggle"]')
+  if (toggleGame) {
+    trackListener(toggleGame, 'click', () => {
+      state.gameEnabled = !state.gameEnabled
+      const switchEl = toggleGame.querySelector('.toggle-switch')
+      switchEl.classList.toggle('active', state.gameEnabled)
     })
   }
 
@@ -199,6 +275,78 @@ export function attachConfigListeners(client) {
   const resetBtn = document.getElementById('resetConfig')
   if (resetBtn && _actionHandlers.resetConfig) {
     trackListener(resetBtn, 'click', () => _actionHandlers.resetConfig())
+  }
+
+  attachPresetListeners()
+}
+
+/**
+ * Wire up preset chips, the save button, and the inline save form.
+ * Delegates chip clicks via data-action attributes so we don't need per-chip
+ * listeners (works for arbitrary numbers of presets).
+ */
+function attachPresetListeners() {
+  const saveBtn = document.getElementById('savePresetBtn')
+  if (saveBtn && _actionHandlers.beginSavePreset) {
+    trackListener(saveBtn, 'click', () => _actionHandlers.beginSavePreset())
+  }
+
+  const exportBtn = document.getElementById('presetsExportBtn')
+  if (exportBtn && _actionHandlers.exportPresets) {
+    trackListener(exportBtn, 'click', () => _actionHandlers.exportPresets())
+  }
+  const importBtn = document.getElementById('presetsImportBtn')
+  if (importBtn && _actionHandlers.importPresets) {
+    trackListener(importBtn, 'click', () => _actionHandlers.importPresets())
+  }
+
+  const saveConfirm = document.getElementById('presetSaveConfirm')
+  const saveCancel = document.getElementById('presetSaveCancel')
+  const nameInput = document.getElementById('presetNameInput')
+  if (saveConfirm && _actionHandlers.confirmSavePreset) {
+    trackListener(saveConfirm, 'click', () => {
+      _actionHandlers.confirmSavePreset(nameInput ? nameInput.value : '')
+    })
+  }
+  if (saveCancel && _actionHandlers.cancelSavePreset) {
+    trackListener(saveCancel, 'click', () => _actionHandlers.cancelSavePreset())
+  }
+  if (nameInput) {
+    // Auto-focus when the form opens.
+    requestAnimationFrame(() => nameInput.focus())
+    trackListener(nameInput, 'keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (_actionHandlers.confirmSavePreset) _actionHandlers.confirmSavePreset(nameInput.value)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        if (_actionHandlers.cancelSavePreset) _actionHandlers.cancelSavePreset()
+      }
+    })
+  }
+
+  // Chip clicks (apply) and × (delete) — single delegated listener each.
+  const chipsContainer = document.querySelector('.presets-chips')
+  if (chipsContainer) {
+    trackListener(chipsContainer, 'click', (e) => {
+      const trigger = e.target.closest('[data-preset-action]')
+      if (!trigger || !chipsContainer.contains(trigger)) return
+      const id = trigger.dataset.presetId
+      const action = trigger.dataset.presetAction
+      if (action === 'apply' && _actionHandlers.applyPreset) {
+        _actionHandlers.applyPreset(id)
+      } else if (action === 'delete' && _actionHandlers.deletePreset) {
+        _actionHandlers.deletePreset(id)
+      }
+    })
+    // Keyboard: Enter/Space on a chip applies it.
+    trackListener(chipsContainer, 'keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      const trigger = e.target.closest('[data-preset-action="apply"]')
+      if (!trigger) return
+      e.preventDefault()
+      if (_actionHandlers.applyPreset) _actionHandlers.applyPreset(trigger.dataset.presetId)
+    })
   }
 }
 
@@ -229,6 +377,8 @@ export function renderConfigHTML() {
       <h2 class="card-title">${t.formateur.configTitle}</h2>
       <div class="config-info" aria-live="polite" data-testid="connected-count">${users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${state.connectedCount > 1 ? 's' : ''} connecté${state.connectedCount > 1 ? 's' : ''}</div>
 
+      ${renderPresetsSectionHTML()}
+
       <div class="config-section">
         <div>
           <div class="stats-header">${t.formateur.availableColors}</div>
@@ -250,7 +400,7 @@ export function renderConfigHTML() {
                     data-color-id="${color.id}"
                     value="${escapeHtml(customLabel)}"
                     placeholder="${escapeHtml(color.name)}"
-                    maxlength="6"
+                    maxlength="12"
                   />
                 </div>
               </label>
@@ -263,6 +413,13 @@ export function renderConfigHTML() {
           <span class="toggle-switch ${state.multipleChoice ? 'active' : ''}" data-action="toggle-multiple"></span>
           <span>${t.formateur.multipleChoiceToggle}</span>
         </label>
+
+        <label class="multiple-choice-toggle" data-testid="game-toggle">
+          <span class="toggle-switch ${state.gameEnabled ? 'active' : ''}" data-action="toggle-game"></span>
+          <span>${t.formateur.gameToggle}
+            <span class="toggle-hint">${t.formateur.gameToggleHint}</span>
+          </span>
+        </label>
       </div>
 
       <div class="button-row">
@@ -273,6 +430,88 @@ export function renderConfigHTML() {
           ${rocket(' class="icon icon-md"')} ${t.formateur.startVote}
         </button>
       </div>
+    </div>
+  `
+}
+
+/**
+ * Render the "Modèles" (saved layouts) section above the color grid.
+ * The header + save button are always rendered so first-time users can save
+ * their current setup. The chips row only renders when presets exist.
+ */
+function renderPresetsSectionHTML() {
+  const presets = listPresets()
+  const saving = state.presetSaving
+
+  const chips = presets
+    .map((p) => {
+      const swatches = p.config.selectedColors
+        .slice(0, 5)
+        .map((id) => {
+          const c = COLORS.find((x) => x.id === id)
+          return c ? `<span class="preset-chip-swatch" style="background-color:${c.color}"></span>` : ''
+        })
+        .join('')
+      const title = t.formateur.presetSwatchTitle(p.name, p.config.selectedColors.length)
+      return `
+        <div class="preset-chip" data-preset-id="${escapeHtml(p.id)}" data-preset-action="apply" title="${escapeHtml(title)}" tabindex="0">
+          <span class="preset-chip-swatches">${swatches}</span>
+          <span class="preset-chip-name">${escapeHtml(p.name)}</span>
+          <button
+            type="button"
+            class="preset-chip-delete"
+            data-preset-id="${escapeHtml(p.id)}"
+            data-preset-action="delete"
+            aria-label="Supprimer le modèle ${escapeHtml(p.name)}"
+            title="Supprimer"
+          >×</button>
+        </div>
+      `
+    })
+    .join('')
+
+  const saveForm = saving
+    ? `
+      <div class="preset-save-row">
+        <input
+          type="text"
+          id="presetNameInput"
+          class="input-text preset-name-input"
+          placeholder="${escapeHtml(t.formateur.savePresetPlaceholder)}"
+          maxlength="40"
+          autocomplete="off"
+        />
+        <button type="button" id="presetSaveConfirm" class="btn btn-primary btn-sm">${t.formateur.savePresetConfirm}</button>
+        <button type="button" id="presetSaveCancel" class="btn btn-secondary btn-sm">${t.common.cancel}</button>
+      </div>
+    `
+    : ''
+
+  const saveButton = saving
+    ? ''
+    : `
+      <button type="button" id="savePresetBtn" class="preset-save-btn" title="${escapeHtml(t.formateur.savePreset)}">
+        ${bookmark(' class="icon icon-sm"')} ${t.formateur.savePreset}
+      </button>
+    `
+
+  return `
+    <div class="presets-section" data-testid="presets-section">
+      <div class="presets-header">
+        <span class="stats-header presets-header-label">${t.formateur.presets}</span>
+        ${saveButton}
+      </div>
+      ${chips ? `<div class="presets-chips custom-scrollbar">${chips}</div>` : ''}
+      ${presets.length > 0 ? `<p class="presets-hint">${t.formateur.presetsHint}</p>` : ''}
+      <div class="presets-io">
+        <button type="button" id="presetsImportBtn" class="preset-io-btn" title="${escapeHtml(t.formateur.importPresetsTitle)}">
+          ${upload(' class="icon icon-sm"')} ${t.formateur.importPresets}
+        </button>
+        <button type="button" id="presetsExportBtn" class="preset-io-btn" title="${escapeHtml(t.formateur.exportPresetsTitle)}" ${presets.length === 0 ? 'disabled' : ''}>
+          ${download(' class="icon icon-sm"')} ${t.formateur.exportPresets}
+        </button>
+      </div>
+      ${saveForm}
     </div>
   `
 }
@@ -360,9 +599,9 @@ export function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
           <span class="color-bar-name">${escapeHtml(displayName)}</span>
         </div>
         <div class="color-bar-track">
-          <span class="color-bar-count">${count}</span>
           <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${color.color}"></div>
         </div>
+        <span class="color-bar-count">${count}</span>
       </div>
     `
     })
@@ -370,7 +609,12 @@ export function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
 }
 
 /**
- * Render combinations HTML
+ * Render combinations HTML.
+ * Each combination is shown as a horizontal bar whose width is proportional to
+ * its vote count (relative to the most popular combination) and which is
+ * internally divided into equal-width colored segments — one per color of the
+ * combination. This scales gracefully from 1 to N colors: segments shrink as N
+ * grows but always remain visible inside the proportional bar.
  * @returns {string}
  */
 export function renderCombinationsHTML() {
@@ -385,17 +629,22 @@ export function renderCombinationsHTML() {
     `
   }
 
+  const maxCount = combinations.reduce((max, c) => Math.max(max, c.count), 1)
+
   return combinations
     .map((combo) => {
+      const percent = (combo.count / maxCount) * 100
+      const segments = combo.colors
+        .map((colorId) => {
+          const color = COLORS.find((c) => c.id === colorId)
+          return `<span class="combo-segment" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+        })
+        .join('')
+
       return `
-      <div class="combo-item">
-        <div class="combo-colors">
-          ${combo.colors
-            .map((colorId) => {
-              const color = COLORS.find((c) => c.id === colorId)
-              return `<span class="combo-swatch" style="background-color: ${color?.color || '#666'}"></span>`
-            })
-            .join('')}
+      <div class="combo-item" data-count="${combo.count}" data-max="${maxCount}">
+        <div class="combo-bar-track" title="${combo.colors.length} couleur${combo.colors.length > 1 ? 's' : ''} • ${combo.count} vote${combo.count > 1 ? 's' : ''}">
+          <div class="combo-bar-fill" style="width: ${percent}%">${segments}</div>
         </div>
         <div class="combo-count">${combo.count}</div>
       </div>
@@ -498,13 +747,16 @@ export function attachLandingListeners(joinSessionFn, createSessionFn) {
  * @param {Function} leaveSessionFn
  */
 export function attachAppKeyboardShortcuts(leaveSessionFn) {
-  const keyHandler = (e) => {
+  const keyHandler = async (e) => {
     // Escape key - leave session with confirmation
     if (e.key === 'Escape' && state.sessionCode) {
-      if (confirm(t.formateur.leaveSession)) {
-        leaveSessionFn()
-      }
       e.preventDefault()
+      const ok = await showConfirmDialog({
+        title: t.formateur.leaveSessionTitle,
+        message: t.formateur.leaveSession,
+        confirmLabel: t.formateur.leave
+      })
+      if (ok) leaveSessionFn()
     }
   }
 

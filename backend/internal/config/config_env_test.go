@@ -1,17 +1,14 @@
 package config
 
 import (
-	"os"
 	"testing"
 	"time"
 )
 
 func TestLoadConfig_Timeouts(t *testing.T) {
-	// Test defaults
 	t.Run("defaults", func(t *testing.T) {
-		// Ensure clean state
-		os.Unsetenv("SESSION_TIMEOUT")
-		os.Unsetenv("CLEANUP_INTERVAL")
+		t.Setenv("SESSION_TIMEOUT", "")
+		t.Setenv("CLEANUP_INTERVAL", "")
 
 		cfg := LoadConfig()
 
@@ -23,12 +20,9 @@ func TestLoadConfig_Timeouts(t *testing.T) {
 		}
 	})
 
-	// Test environment overrides
 	t.Run("env_overrides", func(t *testing.T) {
-		os.Setenv("SESSION_TIMEOUT", "2h")
-		os.Setenv("CLEANUP_INTERVAL", "30s")
-		defer os.Unsetenv("SESSION_TIMEOUT")
-		defer os.Unsetenv("CLEANUP_INTERVAL")
+		t.Setenv("SESSION_TIMEOUT", "2h")
+		t.Setenv("CLEANUP_INTERVAL", "30s")
 
 		cfg := LoadConfig()
 
@@ -40,10 +34,8 @@ func TestLoadConfig_Timeouts(t *testing.T) {
 		}
 	})
 
-	// Test invalid values (fallback to default)
 	t.Run("invalid_values", func(t *testing.T) {
-		os.Setenv("SESSION_TIMEOUT", "invalid")
-		defer os.Unsetenv("SESSION_TIMEOUT")
+		t.Setenv("SESSION_TIMEOUT", "invalid")
 
 		cfg := LoadConfig()
 
@@ -54,8 +46,7 @@ func TestLoadConfig_Timeouts(t *testing.T) {
 }
 
 func TestWildcardOriginDisablesCredentials(t *testing.T) {
-	os.Setenv("ALLOWED_ORIGINS", "*")
-	defer os.Unsetenv("ALLOWED_ORIGINS")
+	t.Setenv("ALLOWED_ORIGINS", "*")
 
 	cfg := LoadConfig()
 
@@ -68,8 +59,7 @@ func TestWildcardOriginDisablesCredentials(t *testing.T) {
 }
 
 func TestSpecificOriginsEnableCredentials(t *testing.T) {
-	os.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
-	defer os.Unsetenv("ALLOWED_ORIGINS")
+	t.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
 
 	cfg := LoadConfig()
 

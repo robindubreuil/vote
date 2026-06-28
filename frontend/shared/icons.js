@@ -72,11 +72,6 @@ export const users = (attrs = '') =>
       <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1zm-7.978-1L7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002-.014.002zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4m3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0M6.936 9.28a6 6 0 0 0-1.23-.247A7 7 0 0 0 5 9c-4 0-5 3-5 4q0 1 1 1h4.216A2.24 2.24 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816M4.92 10A5.5 5.5 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275ZM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0m3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4"/>
     </svg>`
 
-export const chevronDown = (attrs = '') =>
-  svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-caret-down" viewBox="0 0 16 16"${attrs}>
-      <path d="M3.204 5h9.592L8 10.481zm-.753.659 4.796 5.48a1 1 0 0 0 1.506 0l4.796-5.48c.566-.647.106-1.659-.753-1.659H3.204a1 1 0 0 0-.753 1.659"/>
-    </svg>`
-
 export const check = (attrs = '') =>
   svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="url(#gradient-success)" class="bi bi-check-lg icon-gradient-success" viewBox="0 0 16 16"${attrs}>
       ${GRADIENTS}
@@ -105,6 +100,39 @@ export const loader = (attrs = '') =>
       <path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3M3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9z"/>
     </svg>`
 
+export const qrCode = (attrs = '') =>
+  svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-qr-code-scan" viewBox="0 0 16 16"${attrs}>
+      <path d="M0 .5A.5.5 0 0 1 .5 0h3a.5.5 0 0 1 0 1H1v2.5a.5.5 0 0 1-1 0zm12 0a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0V1h-2.5a.5.5 0 0 1-.5-.5M.5 12a.5.5 0 0 1 .5.5V15h2.5a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5m15 0a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1H15v-2.5a.5.5 0 0 1 .5-.5M4 4h1v1H4z"/>
+      <path d="M7 2H2v5h5zM3 3h3v3H3zm2 8H4v1h1z"/>
+      <path d="M7 9H2v5h5zm-4 1h3v3H3zm8-6h1v1h-1z"/>
+      <path d="M9 2h5v5H9zm1 1v3h3V3zM8 8v2h1v1H8v1h2v-2h1v2h1v-1h2v-1h-3V8zm2 2H9V9h1zm4 2h-1v1h-2v1h3zm-4 2v-1H8v1z"/>
+      <path d="M12 9h2V8h-2z"/>
+    </svg>`
+
+export const bookmark = (attrs = '') =>
+  svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-bookmark-plus" viewBox="0 0 16 16"${attrs}>
+      <path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v13.5a.5.5 0 0 1-.777.416L8 13.101l-5.223 2.815A.5.5 0 0 1 2 15.5zm2-1a1 1 0 0 0-1 1v12.566l4.723-2.482a.5.5 0 0 1 .554 0L13 14.566V2a1 1 0 0 0-1-1z"/>
+      <path d="M8 4a.5.5 0 0 1 .5.5V6H10a.5.5 0 0 1 0 1H8.5v1.5a.5.5 0 0 1-1 0V7H6a.5.5 0 0 1 0-1h1.5V4.5A.5.5 0 0 1 8 4"/>
+    </svg>`
+
+export const download = (attrs = '') =>
+  svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-download" viewBox="0 0 16 16"${attrs}>
+      <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
+      <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>
+    </svg>`
+
+export const upload = (attrs = '') =>
+  svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-upload" viewBox="0 0 16 16"${attrs}>
+      <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
+      <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 5.854a.5.5 0 1 1-.708-.708z"/>
+    </svg>`
+
+export const gamepad = (attrs = '') =>
+  svg`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-controller" viewBox="0 0 16 16"${attrs}>
+      <path d="M11.5 6.027a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0M9.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1M4.5 6.027a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0M4 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1"/>
+      <path d="M15.472 9.96c.27.375.32.85.07 1.246l-.26.427a1.4 1.4 0 0 1-.27.32L13.5 12.5l-.082.067a.5.5 0 0 1-.694-.082l-.425-.525a1.4 1.4 0 0 0-.42-.34l-.462-.24a2 2 0 0 0-.562-.183L10 11h-.04q-.34.001-.66.083l-.45.123a2 2 0 0 0-.49.218l-.39.247a1.4 1.4 0 0 0-.32.32l-.27.39a.5.5 0 0 1-.7.13L6 11.83l-.4-.29a1.4 1.4 0 0 1-.27-.32l-.26-.427c-.25-.397-.2-.872.07-1.246A4 4 0 0 0 5.7 7.91C6.32 6.876 7.04 6 8 6h.043q.575 0 1.137.197c.49.184.93.476 1.34.81q.586.476 1.13.81A4 4 0 0 0 13.7 7.91a4 4 0 0 0 1.77 2.05"/>
+    </svg>`
+
 export const icons = {
   vote,
   timer,
@@ -117,7 +145,12 @@ export const icons = {
   hourglass,
   pencil,
   plus,
-  loader
+  loader,
+  qrCode,
+  bookmark,
+  download,
+  upload,
+  gamepad
 }
 
 // Helper template literal tag for SVG

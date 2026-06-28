@@ -17,13 +17,19 @@ var (
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
+	stats    *ProductStats
 }
 
 func NewManager() *Manager {
 	return &Manager{
 		sessions: make(map[string]*Session),
+		stats:    NewProductStats(),
 	}
 }
+
+// Stats returns the aggregate usage counters. The pointer is valid for the
+// Manager's lifetime and safe to read concurrently.
+func (m *Manager) Stats() *ProductStats { return m.stats }
 
 func (m *Manager) CreateSession(sessionID, trainerID string) (*Session, error) {
 	if !IsValidSessionCode(sessionID) {
@@ -35,6 +41,7 @@ func (m *Manager) CreateSession(sessionID, trainerID string) (*Session, error) {
 
 	session := NewSession(sessionID, trainerID)
 	m.sessions[sessionID] = session
+	m.stats.SessionsCreated.Inc()
 	return session, nil
 }
 
@@ -93,10 +100,11 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
 
 	session.Stagiaires[stagiaireID] = name
 	session.LastActivity = time.Now().Unix()
+	m.stats.TraineesJoined.Inc()
 	return nil
 }
 
-func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string) error {
+func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -116,9 +124,18 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 	session.ActiveColors = colors
 	session.ActiveLabels = labels
 	session.MultipleChoice = multipleChoice
+	session.GameEnabled = gameEnabled
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = time.Now().Unix()
 	session.LastActivity = time.Now().Unix()
+
+	m.stats.VotesStarted.Inc()
+	if gameEnabled {
+		m.stats.GameEnabledVotes.Inc()
+	}
+	if multipleChoice {
+		m.stats.MultipleChoiceVotes.Inc()
+	}
 
 	return nil
 }
@@ -161,6 +178,7 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 
 	session.Votes[stagiaireID] = colors
 	session.LastActivity = time.Now().Unix()
+	m.stats.VotesCast.Inc()
 
 	stagiaireName := session.Stagiaires[stagiaireID]
 	return stagiaireName, nil
@@ -187,7 +205,7 @@ func (m *Manager) CloseVote(sessionID, trainerID string) error {
 	return nil
 }
 
-func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string) error {
+func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool) error {
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -211,6 +229,7 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 	}
 	session.ActiveLabels = labels
 	session.MultipleChoice = multipleChoice
+	session.GameEnabled = gameEnabled
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = 0
 	session.LastActivity = time.Now().Unix()
@@ -263,6 +282,9 @@ func (m *Manager) CleanupExpiredSessions(timeout time.Duration, protected map[st
 		}
 		session.mu.RLock()
 		inactive := now-session.LastActivity > timeoutSec
+		if inactive {
+			m.stats.observeEndedSession(session.CreatedAt, len(session.Votes), len(session.Stagiaires))
+		}
 		session.mu.RUnlock()
 		if inactive {
 			delete(m.sessions, id)
@@ -273,6 +295,11 @@ func (m *Manager) CleanupExpiredSessions(timeout time.Duration, protected map[st
 func (m *Manager) RemoveSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if session, ok := m.sessions[sessionID]; ok {
+		session.mu.RLock()
+		m.stats.observeEndedSession(session.CreatedAt, len(session.Votes), len(session.Stagiaires))
+		session.mu.RUnlock()
+	}
 	delete(m.sessions, sessionID)
 }
 

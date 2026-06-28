@@ -1,4 +1,4 @@
-import { vote, hourglass, pencil, check, stop } from '@shared/icons.js'
+import { vote, hourglass, pencil, check, stop, gamepad } from '@shared/icons.js'
 import { COLORS, escapeHtml } from '@shared/colors.js'
 import { renderFooterHTML, renderSessionCodeButton } from '@shared/ui.js'
 import { t } from '@shared/i18n.js'
@@ -16,6 +16,62 @@ const { track: trackListener, cleanup: cleanupEventListeners } = createListenerT
 export function renderLayout(app) {
   app.innerHTML = `
     <div class="container" id="main-container"></div>
+    <div id="game-overlay" class="game-overlay" hidden>
+      <div class="game-frame">
+        <div class="game-hud">
+          <div class="game-hud-stat">
+            <span class="game-hud-label">${t.stagiaire?.gameBest || 'Record'}</span>
+            <span class="game-hud-value" id="gameBest">0</span>
+          </div>
+          <div class="game-hud-stat">
+            <span class="game-hud-label">${t.stagiaire?.gameAttempts || 'Coups restants'}</span>
+            <span class="game-hud-value" id="gameAttempts">8</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-small game-rules-btn" id="gameRulesBtn" aria-label="${t.stagiaire?.gameHowToPlay || 'Comment jouer'}">
+            ?
+          </button>
+          <button type="button" class="btn btn-secondary btn-small game-quit-btn" id="gameQuitBtn" aria-label="${t.stagiaire?.quitGame || 'Quitter'}">
+            ${t.stagiaire?.quitGame || 'Quitter'}
+          </button>
+        </div>
+        <div class="game-board-wrap">
+          <ol class="game-board" id="gameBoard" aria-label="Plateau de jeu"></ol>
+          <div class="game-palette" id="gamePalette" aria-label="Palette de couleurs"></div>
+          <div class="game-actions">
+            <button type="button" class="btn btn-secondary" id="gameClearBtn">${t.stagiaire?.gameClear || 'Effacer'}</button>
+            <button type="button" class="btn btn-primary btn-large" id="gameSubmitBtn">${t.stagiaire?.gameValidate || 'Valider'}</button>
+          </div>
+        </div>
+        <div class="game-overlay-screen" id="gamePauseScreen" hidden>
+          <div class="game-screen-title">${t.stagiaire?.gamePaused || 'Pause'}</div>
+          <button type="button" class="btn btn-primary" id="gameResumeBtn">${t.stagiaire?.gameResume || 'Reprendre'}</button>
+          <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromPauseBtn">${t.stagiaire?.quitGame || 'Quitter'}</button>
+        </div>
+        <div class="game-overlay-screen" id="gameOverScreen" hidden>
+          <div class="game-screen-title" id="gameOverTitle"></div>
+          <div class="game-screen-score" id="gameOverScore"></div>
+          <div class="game-screen-best" id="gameOverBest" hidden></div>
+          <div class="game-screen-secret" id="gameOverSecret"></div>
+          <button type="button" class="btn btn-primary btn-large" id="gameRestartBtn">${t.stagiaire?.gameNewGame || 'Nouvelle partie'}</button>
+          <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromOverBtn">${t.stagiaire?.quitGame || 'Quitter'}</button>
+        </div>
+        <div class="game-overlay-screen" id="gameRulesScreen" hidden>
+          <div class="game-screen-title">${t.stagiaire?.gameRulesTitle || 'Comment jouer'}</div>
+          <ul class="game-rules-list">
+            ${(t.stagiaire?.gameRules || []).map((r) => `<li>${r}</li>`).join('')}
+          </ul>
+          <div class="game-peg-example">
+            <span class="game-peg game-peg-black" aria-label="Pion noir"></span>
+            <span class="game-peg-label">bonne couleur, bonne position</span>
+          </div>
+          <div class="game-peg-example">
+            <span class="game-peg game-peg-white" aria-label="Pion blanc"></span>
+            <span class="game-peg-label">bonne couleur, mauvaise position</span>
+          </div>
+          <button type="button" class="btn btn-primary" id="gameRulesCloseBtn">OK</button>
+        </div>
+      </div>
+    </div>
     ${renderFooterHTML()}
   `
 }
@@ -115,9 +171,11 @@ function renderJoinHTML() {
             id="sessionCode"
             data-testid="session-code-input"
             class="session-input"
-            placeholder="0000"
-            maxlength="4"
-            inputmode="numeric"
+            placeholder="ABC"
+            maxlength="3"
+            inputmode="text"
+            autocapitalize="characters"
+            pattern="[A-HJ-NP-Ya-hj-np-y]{3}"
             value="${escapeHtml(state.sessionCode)}"
             autocomplete="off"
           />
@@ -150,6 +208,7 @@ function renderWaitingHTML() {
         <button type="button" class="btn btn-secondary btn-small" id="editNameBtn" data-testid="edit-name-btn" aria-label="${t.stagiaire.modifyName}">
           ${pencil(' class="icon icon-sm"')} ${t.stagiaire.modifyName}
         </button>
+        ${renderPlayGameButtonHTML()}
       </div>
     </div>
   `
@@ -218,7 +277,7 @@ function renderVotingHTML() {
 function renderSingleChoiceHTML(activeColors) {
   const isConnected = state.connected
   return `
-    <div class="vote-grid">
+    <div class="vote-grid" data-count="${activeColors.length}">
       ${activeColors
         .map((color) => {
           const label = state.colorLabels[color.id] || color.name
@@ -247,7 +306,7 @@ function renderSingleChoiceHTML(activeColors) {
 function renderMultipleChoiceHTML(activeColors) {
   const isConnected = state.connected
   return `
-    <div class="vote-grid">
+    <div class="vote-grid" data-count="${activeColors.length}">
       ${activeColors
         .map((color) => {
           const label = state.colorLabels[color.id] || color.name
@@ -303,6 +362,7 @@ function renderVotedHTML() {
         <button type="button" class="btn btn-secondary btn-small" id="changeVoteBtn" data-testid="change-vote-btn" style="margin-top: 1rem;">
           ${pencil(' class="icon icon-sm"')} ${t.stagiaire.modifyVote}
         </button>
+        ${renderPlayGameButtonHTML()}
       </div>
     </div>
   `
@@ -323,8 +383,22 @@ function renderClosedHTML() {
       <div class="vote-closed-state">
         <div class="closed-icon">${stop(' class="icon icon-xl"')}</div>
         <div class="waiting-text" data-testid="vote-closed-text">${t.stagiaire.voteClosed}</div>
+        ${renderPlayGameButtonHTML()}
       </div>
     </div>
+  `
+}
+
+/**
+ * The "play the mini-game" CTA. Only rendered when the trainer enabled
+ * the feature for this vote session.
+ */
+function renderPlayGameButtonHTML() {
+  if (!state.gameEnabled) return ''
+  return `
+    <button type="button" class="btn btn-game btn-small" id="playGameBtn" data-testid="play-game-btn">
+      ${gamepad(' class="icon icon-sm"')} ${t.stagiaire.playGame}
+    </button>
   `
 }
 
@@ -384,13 +458,6 @@ export function attachEventListeners() {
   // Boutons de vote (choix unique)
   document.querySelectorAll('.vote-button').forEach((btn) => {
     trackListener(btn, 'click', handleSingleChoiceVote)
-    // Accessibility: Activate on Enter/Space
-    trackListener(btn, 'keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        handleSingleChoiceVote(e)
-      }
-    })
   })
 
   // Checkboxes (choix multiple)
@@ -434,6 +501,12 @@ export function attachEventListeners() {
     trackListener(leaveSessionBtn, 'click', leaveSession)
   }
 
+  // Mini-jeu — bouton "Jouer" dans les écrans d'attente
+  const playGameBtn = document.getElementById('playGameBtn')
+  if (playGameBtn) {
+    trackListener(playGameBtn, 'click', () => handlePlayGame && handlePlayGame())
+  }
+
   // Keyboard shortcuts
   if (handleKeyPress) {
     trackListener(document, 'keydown', handleKeyPress)
@@ -442,7 +515,13 @@ export function attachEventListeners() {
 
 export { cleanupEventListeners }
 
-let handleJoin, handleEditName, handleSingleChoiceVote, handleCheckboxChange, handleSubmitVote, leaveSession
+let handleJoin,
+  handleEditName,
+  handleSingleChoiceVote,
+  handleCheckboxChange,
+  handleSubmitVote,
+  leaveSession,
+  handlePlayGame
 
 export function setHandlers(handlers) {
   ;({
@@ -452,6 +531,7 @@ export function setHandlers(handlers) {
     handleCheckboxChange,
     handleSubmitVote,
     leaveSession,
-    handleKeyPress
+    handleKeyPress,
+    handlePlayGame
   } = handlers)
 }

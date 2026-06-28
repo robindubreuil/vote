@@ -15,19 +15,23 @@ type Session struct {
 	ActiveColors   []string
 	ActiveLabels   map[string]string
 	MultipleChoice bool
+	GameEnabled    bool
 	Votes          map[string][]string
 	VoteStartTime  int64
+	CreatedAt      int64
 	LastActivity   int64
 }
 
 func NewSession(id, trainerID string) *Session {
+	now := time.Now().Unix()
 	return &Session{
 		ID:           id,
 		TrainerID:    trainerID,
 		Stagiaires:   make(map[string]string),
 		VoteState:    models.VoteStateIdle,
 		Votes:        make(map[string][]string),
-		LastActivity: time.Now().Unix(),
+		CreatedAt:    now,
+		LastActivity: now,
 	}
 }
 
@@ -86,4 +90,10 @@ func (s *Session) GetActiveLabels() map[string]string {
 		labels[k] = v
 	}
 	return labels
+}
+
+func (s *Session) GetGameEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.GameEnabled
 }

@@ -3,6 +3,7 @@ import { COLORS } from '@shared/colors.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { getColorCounts, getCombinations, sortStagiaires } from './utils.js'
 import { state } from './state.js'
+import { renderCombinationsHTML } from './renderers.js'
 
 function calculateBarWidth(count, maxCount) {
   if (maxCount === 0) return 0
@@ -235,9 +236,11 @@ describe('Formateur - Validation', () => {
   })
 
   it('should validate session codes', () => {
-    expect(validateSessionCode('1234')).toBeNull()
-    expect(validateSessionCode('abcd')).toBeTruthy()
-    expect(validateSessionCode('123')).toBeTruthy()
+    expect(validateSessionCode('ABC')).toBeNull()
+    expect(validateSessionCode('abc')).toBeNull() // lowercase accepted, normalized
+    expect(validateSessionCode('1234')).toBeTruthy()
+    expect(validateSessionCode('IBX')).toBeTruthy() // I excluded
+    expect(validateSessionCode('AB')).toBeTruthy()
     expect(validateSessionCode('')).toBeTruthy()
   })
 })
@@ -280,7 +283,7 @@ describe('Formateur - WebSocket messages', () => {
   it('should serialize start_vote message', () => {
     const message = {
       type: 'start_vote',
-      sessionCode: '1234',
+      sessionCode: 'ABC',
       colors: ['rouge', 'vert', 'bleu'],
       multipleChoice: false
     }
@@ -295,5 +298,53 @@ describe('Formateur - WebSocket messages', () => {
     expect(parsed.type).toBe('vote_received')
     expect(parsed.stagiaireId).toBe('s1')
     expect(parsed.colors).toEqual(['rouge'])
+  })
+})
+
+describe('Formateur - Combination bar proportional widths', () => {
+  beforeEach(() => {
+    state.stagiaires = []
+  })
+
+  it('renders one combo-segment per color in each combination', () => {
+    state.stagiaires = [
+      { id: 's1', vote: ['rouge', 'vert', 'bleu'] },
+      { id: 's2', vote: ['rouge', 'vert', 'bleu'] }
+    ]
+    const html = renderCombinationsHTML()
+    // Single combo with 3 segments
+    const match = html.match(/combo-segment/g) || []
+    expect(match.length).toBe(3)
+  })
+
+  it('renders proportional width: most popular = 100%, half = 50%', () => {
+    state.stagiaires = [
+      { id: 's1', vote: ['rouge'] },
+      { id: 's2', vote: ['rouge'] },
+      { id: 's3', vote: ['rouge'] },
+      { id: 's4', vote: ['vert'] },
+      { id: 's5', vote: ['bleu'] }
+    ]
+    const html = renderCombinationsHTML()
+    const widths = [...html.matchAll(/width:\s*([\d.]+)%/g)].map((m) => Number(m[1]))
+    expect(widths[0]).toBe(100)
+    expect(widths[1]).toBeCloseTo(33.33, 1)
+    expect(widths[2]).toBeCloseTo(33.33, 1)
+  })
+
+  it('shows empty state when no votes are cast', () => {
+    state.stagiaires = []
+    const html = renderCombinationsHTML()
+    expect(html).toContain('empty-state')
+  })
+
+  it('scales to many-color combinations without losing segments', () => {
+    // 8-color combination — every color must still appear as a segment,
+    // no matter how narrow the resulting bar becomes.
+    const allColors = COLORS.map((c) => c.id)
+    state.stagiaires = [{ id: 's1', vote: allColors }]
+    const html = renderCombinationsHTML()
+    const segmentCount = (html.match(/combo-segment/g) || []).length
+    expect(segmentCount).toBe(8)
   })
 })

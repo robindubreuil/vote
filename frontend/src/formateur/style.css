@@ -29,6 +29,39 @@
   position: relative;
 }
 
+/* Icon button in the header (e.g. "Aide à la connexion" trigger) */
+.header-action-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base),
+    color var(--transition-base);
+}
+
+.header-action-btn:hover {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+}
+
+.header-action-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.header-action-btn:active {
+  transform: scale(0.96);
+}
+
 /* Config section */
 .config-info {
   display: flex;
@@ -43,6 +76,229 @@
   color: var(--text-secondary);
 }
 
+/* ============================================
+   Presets (saved vote layouts)
+   ============================================ */
+.presets-section {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+}
+
+.presets-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.presets-header-label {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.presets-save-btn,
+.preset-save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--accent-color);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  padding: 0.3rem 0.7rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base);
+}
+
+.preset-save-btn:hover {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: var(--accent-color);
+}
+
+.preset-save-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.presets-chips {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.25rem 0.25rem 0.5rem;
+  scrollbar-width: thin;
+}
+
+.presets-chips::-webkit-scrollbar {
+  height: 6px;
+}
+
+.presets-chips::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  padding: 0.4rem 0.5rem 0.4rem 0.7rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base),
+    transform var(--transition-fast);
+  user-select: none;
+}
+
+.preset-chip:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.preset-chip:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.preset-chip:active {
+  transform: scale(0.97);
+}
+
+.preset-chip-swatches {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.preset-chip-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.preset-chip-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset-chip-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 0.25rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1;
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    color var(--transition-base);
+}
+
+.preset-chip-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger-color);
+}
+
+.presets-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.presets-empty {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.preset-save-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.preset-name-input {
+  flex: 1;
+  min-width: 160px;
+  padding: 0.5rem 0.75rem !important;
+  font-size: 0.9rem !important;
+}
+
+.preset-save-row .btn-sm {
+  padding: 0.5rem 0.85rem;
+}
+
+/* Import / Export buttons — subtle secondary actions at the bottom of the
+   presets section. Always visible (Export disabled when library is empty)
+   so trainers can restore a backup even on a fresh install. */
+.presets-io {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.preset-io-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  padding: 0.3rem 0.6rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--transition-base),
+    color var(--transition-base),
+    border-color var(--transition-base);
+}
+
+.preset-io-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.preset-io-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.preset-io-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .config-section {
   display: grid;
   gap: 1.5rem;
@@ -50,7 +306,7 @@
 
 .colors-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 0.75rem;
 }
 
@@ -136,6 +392,19 @@
   background: rgba(255, 255, 255, 0.03);
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.multiple-choice-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.toggle-hint {
+  font-size: 0.78rem;
+  opacity: 0.6;
+  font-weight: 400;
+  line-height: 1.3;
 }
 
 .toggle-switch {
@@ -264,12 +533,6 @@
   height: 100%;
   border-radius: 8px;
   transition: width var(--transition-slow) cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding-right: 0.75rem;
-  font-weight: 600;
-  font-size: 0.9rem;
   min-width: 0;
   contain: layout style paint;
   /* Glossy effect */
@@ -283,17 +546,16 @@
 }
 
 .color-bar-count {
-  position: absolute;
-  left: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.9rem;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: right;
+  font-size: 0.95rem;
   font-weight: 700;
-  z-index: 1;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
 }
 
-/* Combinaisons */
+/* Combinaisons : barres empilées proportionnelles */
 .combinations-list {
   display: flex;
   flex-direction: column;
@@ -303,7 +565,6 @@
 .combo-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.6rem 0.75rem;
   background: rgba(255, 255, 255, 0.03);
@@ -312,41 +573,51 @@
   border: 1px solid rgba(255, 255, 255, 0.02);
 }
 
-.combo-colors {
-  display: flex;
-  gap: 4px;
-  width: 156px; /* Fixed width for max 8 colors (8 × 16px + 7 × 4px gap) */
-  flex-shrink: 0;
-}
-
-.combo-swatch {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.combo-bar {
+/* Proportional track: full row width, thin pill */
+.combo-bar-track {
   flex: 1;
-  height: 8px;
+  height: 28px;
   background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  min-width: 0;
 }
 
+/* Fill = popularity relative to most-voted combo.
+   Acts as a flex container for the stacked colored segments. */
 .combo-bar-fill {
   height: 100%;
-  background: var(--accent-color);
-  border-radius: 4px;
-  transition: width var(--transition-slow) ease;
+  display: flex;
+  min-width: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: width var(--transition-slow) cubic-bezier(0.4, 0, 0.2, 1);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   contain: layout style paint;
+}
+
+/* Each color of the combination = one equal-width segment inside the fill.
+   Flex-grow: 1 ensures segments share the available width equally, regardless
+   of how many colors the combination contains. */
+.combo-segment {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
+  border-right: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.combo-segment:last-child {
+  border-right: none;
 }
 
 .combo-count {
   width: 28px;
   text-align: right;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 /* Stats en deux colonnes */
@@ -595,9 +866,17 @@
 }
 
 .landing-icon {
-  font-size: 3rem;
+  margin-bottom: 1.25rem;
   color: var(--accent-color);
-  margin-bottom: 1rem;
+}
+
+/* The hero icon on the landing page — bigger than .icon-xl because it's
+   the page's visual anchor. The vote() SVG ships with intrinsic 16x16;
+   we override via descendant selector so the gradient fill is preserved. */
+.landing-icon svg {
+  width: 4.5rem;
+  height: 4.5rem;
+  filter: drop-shadow(0 4px 24px rgba(59, 130, 246, 0.35));
 }
 
 .landing-title {
@@ -628,6 +907,14 @@
   margin: 1.5rem 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
+}
+
+.landing-hint {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  text-align: center;
 }
 
 .landing-divider::before,
@@ -702,4 +989,459 @@
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+/* Reconnection banner — shown when the WS drops mid-session. Uses the
+   warning-orange accent so it doesn't look like a hard error (red would
+   suggest the session is dead, which it isn't — we're auto-reconnecting). */
+.reconnect-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  margin-bottom: 1rem;
+  background: rgba(249, 115, 22, 0.15);
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  border-radius: 12px;
+  color: #fdba74;
+  font-size: 0.95rem;
+  font-weight: 500;
+  animation: reconnect-pulse 2s ease-in-out infinite;
+}
+
+.reconnect-banner[hidden] {
+  display: none;
+}
+
+.reconnect-banner-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(249, 115, 22, 0.3);
+  border-top-color: #fdba74;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+.reconnect-banner-text {
+  letter-spacing: 0.01em;
+}
+
+@keyframes reconnect-pulse {
+  0%,
+  100% {
+    background: rgba(249, 115, 22, 0.12);
+    border-color: rgba(249, 115, 22, 0.4);
+  }
+  50% {
+    background: rgba(249, 115, 22, 0.22);
+    border-color: rgba(249, 115, 22, 0.65);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reconnect-banner {
+    animation: none;
+  }
+}
+
+/* ============================================
+   Aide à la connexion — standalone high-contrast view
+   Designed for the videoprojector: same dark theme as the rest of the app
+   (visual consistency), with the QR code rendered dark-on-white inside a
+   white card so phone cameras read it reliably. Some scanners struggle
+   with inverted (light-on-dark) QR codes, so we keep the QR itself on a
+   white substrate while everything around it uses the app palette.
+   ============================================ */
+.aid-page {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-color);
+  background-image:
+    radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.18) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.15) 0px, transparent 50%);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  padding: clamp(1rem, 3vw, 2.5rem);
+  font-family:
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.aid-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.aid-title {
+  font-size: clamp(1.25rem, 2.5vw, 1.75rem);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.aid-title-icon {
+  color: var(--accent-color);
+}
+
+/* Fullscreen toggle — square bordered button */
+.aid-fullscreen-btn {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  cursor: pointer;
+  position: relative;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base);
+}
+
+.aid-fullscreen-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent-color);
+}
+
+/* The two corner brackets drawn with pseudo-elements */
+.aid-fullscreen-btn::before,
+.aid-fullscreen-btn::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--text-primary);
+}
+
+.aid-fullscreen-btn::before {
+  top: 8px;
+  left: 8px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.aid-fullscreen-btn::after {
+  bottom: 8px;
+  right: 8px;
+  border-left: none;
+  border-top: none;
+}
+
+.aid-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+/* Each column is itself a vertically-centered stack so that the content
+   inside the column behaves the same in portrait and landscape. */
+.aid-qr-column,
+.aid-info-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: 100%;
+}
+
+/* In landscape (typical projector aspect ratios 16:9, 16:10, 4:3) the
+   default vertical stack overflows the viewport. Switch to a 2-column grid:
+   QR dominates on the left, info on the right. This keeps everything visible
+   without scrolling on 1024x768 and up. */
+@media (min-aspect-ratio: 1/1) and (min-width: 640px) {
+  .aid-main {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(1.5rem, 4vw, 3.5rem);
+    text-align: left;
+    padding: 1rem 0;
+  }
+
+  /* Override the default width: 100% so columns size to their content
+     and respect flex-basis, otherwise both would try to be 100% wide. */
+  .aid-qr-column {
+    flex: 0 0 auto;
+    width: auto;
+    align-items: center;
+  }
+
+  .aid-info-column {
+    flex: 1 1 auto;
+    width: auto;
+    max-width: min(48vw, 520px);
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  /* Trim the QR so it coexists with the info column without overflowing */
+  .aid-qr {
+    width: min(60vh, 40vw, 360px);
+  }
+
+  .aid-divider {
+    width: 100%;
+    margin: 0.25rem 0;
+  }
+
+  .aid-url-row {
+    max-width: 100%;
+  }
+}
+
+.aid-headline {
+  font-size: clamp(1.1rem, 2vw, 1.4rem);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* The QR sits on a white card — the only light surface in the view,
+   kept this way for maximum scanner compatibility. */
+.aid-qr-wrap {
+  padding: clamp(0.75rem, 2vw, 1.25rem);
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.1),
+    0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* QR container — kept square, scales with viewport */
+.aid-qr {
+  width: min(48vh, 90vw, 420px);
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.aid-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.aid-qr-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.aid-qr-error {
+  color: var(--danger-color);
+  font-weight: 600;
+  padding: 1rem;
+}
+
+.aid-url-label,
+.aid-code-label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.aid-url-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 90vw;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.aid-url {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: clamp(0.85rem, 1.5vw, 1rem);
+  color: #60a5fa;
+  text-decoration: none;
+  word-break: break-all;
+  white-space: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
+  scrollbar-width: none;
+}
+
+.aid-url::-webkit-scrollbar {
+  display: none;
+}
+
+.aid-url:hover {
+  text-decoration: underline;
+  color: #93c5fd;
+}
+
+/* Copy button — clipboard icon via mask */
+.aid-copy-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base);
+}
+
+.aid-copy-btn::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  background-color: var(--text-primary);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a2 2 0 0 0 2 2h7a1 1 0 0 0 0-2H3a1 1 0 0 1-1-1V6a1 1 0 0 0-1-1'/></svg>")
+    center/contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a2 2 0 0 0 2 2h7a1 1 0 0 0 0-2H3a1 1 0 0 1-1-1V6a1 1 0 0 0-1-1'/></svg>")
+    center/contain no-repeat;
+}
+
+.aid-copy-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent-color);
+}
+
+.aid-copy-btn.success {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: var(--success-color);
+}
+
+.aid-copy-btn.success::before {
+  background-color: var(--success-color);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0'/></svg>")
+    center/contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0'/></svg>")
+    center/contain no-repeat;
+}
+
+.aid-copy-btn.error {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--danger-color);
+}
+
+.aid-divider {
+  width: min(60vw, 360px);
+  height: 1px;
+  background: var(--border-color);
+  margin: 0.5rem 0;
+}
+
+/* Huge session code — visual anchor for those who already have the app.
+   Subtle gradient + inset border, stays readable on the dark background. */
+.aid-code {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: clamp(3rem, 10vw, 6rem);
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  line-height: 1;
+  padding: 0.25rem 0.5rem 0.25rem 0.6rem;
+  color: var(--text-primary);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(236, 72, 153, 0.18));
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+
+.aid-count-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 0.5rem;
+}
+
+.aid-count-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.aid-count-dot.unknown {
+  background: var(--text-secondary);
+}
+
+.aid-count-dot.live {
+  background: var(--success-color);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.aid-count-dot.stale {
+  background: var(--color-orange);
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.2);
+}
+
+/* Footer inherits the shared dark-theme styling automatically */
+
+/* Landscape overrides for the huge session code — placed AFTER the default
+   .aid-code rule above so source order lets them win inside the media query.
+   The code is still the visual anchor but doesn't fight the QR for space. */
+@media (min-aspect-ratio: 1/1) and (min-width: 640px) {
+  .aid-code {
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    letter-spacing: 0.25em;
+  }
+}
+
+/* Print: switch to a light page so the QR prints cleanly on paper */
+@media print {
+  .aid-page {
+    background: #ffffff;
+    color: #0f172a;
+  }
+
+  .aid-fullscreen-btn,
+  .aid-copy-btn {
+    display: none;
+  }
+
+  .aid-page {
+    padding: 0;
+  }
+
+  .aid-qr-wrap {
+    box-shadow: 0 0 0 2px #0f172a;
+  }
+}
+
+/* Reduced-motion: stop the pulsing dot */
+@media (prefers-reduced-motion: reduce) {
+  .aid-count-dot.live {
+    animation: none;
+  }
+
+  .aid-qr-spinner {
+    animation-duration: 1.5s;
+  }
 }

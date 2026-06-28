@@ -229,6 +229,46 @@
   margin-bottom: var(--spacing-lg);
 }
 
+/* Adaptive column count based on number of voting options.
+   - Default (2 colors): 2 large squares
+   - 3 colors: 3 columns so all fit on one row
+   - 4 colors: 2x2 (default)
+   - 5-6 colors: 3 columns
+   - 7-8 colors: 4 columns to avoid scrolling
+   The aspect-ratio shrinks as N grows so every option stays visible
+   without scrolling on typical phone screens. */
+.vote-grid[data-count='3'] {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.vote-grid[data-count='5'],
+.vote-grid[data-count='6'] {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.vote-grid[data-count='7'],
+.vote-grid[data-count='8'] {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* Larger N -> shorter cells so all options fit on screen. */
+.vote-grid[data-count='5'] .vote-button,
+.vote-grid[data-count='5'] .vote-checkbox-label,
+.vote-grid[data-count='6'] .vote-button,
+.vote-grid[data-count='6'] .vote-checkbox-label {
+  aspect-ratio: 1.3;
+  font-size: 1.05rem;
+}
+
+.vote-grid[data-count='7'] .vote-button,
+.vote-grid[data-count='7'] .vote-checkbox-label,
+.vote-grid[data-count='8'] .vote-button,
+.vote-grid[data-count='8'] .vote-checkbox-label {
+  aspect-ratio: 1.4;
+  font-size: 0.95rem;
+  padding: 0.4rem;
+}
+
 /* Styles de base pour les options de vote */
 .vote-button,
 .vote-checkbox-label {
@@ -247,6 +287,13 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* Long custom labels (up to MaxLabelLength) must not get clipped when the
+     grid shrinks the button (high color count, narrow viewport). Allow
+     wrapping anywhere; tight line-height keeps 2-line labels readable. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.1;
+  padding: 0.4rem 0.35rem;
   box-shadow:
     0 4px 6px rgba(0, 0, 0, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
@@ -450,14 +497,41 @@
    Responsive
    ============================================ */
 @media (max-width: 480px) {
-  .vote-grid {
+  /* On small phones: low color counts (2, 4) stack to a single column with
+     comfortable rectangular buttons; higher counts (3, 5, 6, 7, 8) keep the
+     multi-column desktop grid so all options stay reachable without
+     scrolling. Each rule uses explicit data-count selectors instead of
+     :not() chains to keep the intent obvious and avoid accidental matches. */
+  .vote-grid[data-count='2'],
+  .vote-grid[data-count='4'] {
     grid-template-columns: 1fr;
   }
 
-  .vote-button,
-  .vote-checkbox-label {
+  .vote-grid[data-count='2'] .vote-button,
+  .vote-grid[data-count='2'] .vote-checkbox-label,
+  .vote-grid[data-count='4'] .vote-button,
+  .vote-grid[data-count='4'] .vote-checkbox-label {
     aspect-ratio: auto;
     padding: 1.2rem;
+  }
+
+  /* N=7,8 already shrink on desktop; on phones let the buttons grow to fit
+     long wrapped labels instead of clipping them. The grid's row baseline
+     stretches every button in a row to the tallest one, so a single long
+     label only costs extra height in its own row. */
+  .vote-grid[data-count='7'],
+  .vote-grid[data-count='8'] {
+    gap: 0.5rem;
+  }
+
+  .vote-grid[data-count='7'] .vote-button,
+  .vote-grid[data-count='7'] .vote-checkbox-label,
+  .vote-grid[data-count='8'] .vote-button,
+  .vote-grid[data-count='8'] .vote-checkbox-label {
+    font-size: 0.85rem;
+    aspect-ratio: auto;
+    min-height: 56px;
+    padding: 0.4rem 0.3rem;
   }
 
   .connection-status {
@@ -465,5 +539,398 @@
     right: 0.5rem;
     padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
+  }
+}
+
+/* =========================================================================
+   Mini-jeu "Le Code Couleur" (Mastermind)
+   Overlay plein écran au-dessus de l'écran d'attente. Le DOM vit à côté
+   du conteneur principal pour pouvoir couvrir tout le viewport.
+   ========================================================================= */
+
+.btn-game {
+  margin-top: 1.25rem;
+  background: linear-gradient(135deg, var(--accent-color, #3b82f6), var(--color-violet, #a855f7));
+  color: #fff;
+  border: none;
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+}
+
+.btn-game:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 4px 18px rgba(99, 102, 241, 0.5);
+}
+
+.game-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg-darkest, #0b0f19);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 0.5rem;
+  animation: game-fade-in 160ms ease-out;
+}
+
+.game-overlay[hidden] {
+  display: none;
+}
+
+@keyframes game-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.game-frame {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+}
+
+.game-hud {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.game-hud-stat {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.game-hud-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
+.game-hud-value {
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-rules-btn,
+.game-quit-btn {
+  margin-left: auto;
+}
+
+.game-rules-btn {
+  margin-left: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Board: vertical list of rows (most recent at top) */
+.game-board-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background:
+    radial-gradient(circle at 30% 0%, rgba(59, 130, 246, 0.06), transparent 60%),
+    radial-gradient(circle at 70% 100%, rgba(168, 85, 247, 0.06), transparent 60%), var(--bg-darker, #0f1424);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.game-board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.game-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  min-height: 44px;
+}
+
+.game-row-current {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.game-row-pegs {
+  display: grid;
+  grid-template-columns: repeat(2, 12px);
+  grid-auto-rows: 12px;
+  gap: 3px;
+  flex-shrink: 0;
+  width: 30px;
+}
+
+.game-peg {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.game-peg-empty {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.game-peg-black {
+  background: #1f2937;
+  border: 1px solid #4b5563;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.game-peg-white {
+  background: #f9fafb;
+  border: 1px solid #d1d5db;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.4);
+}
+
+.game-row-slots {
+  display: flex;
+  gap: 0.4rem;
+  flex: 1;
+}
+
+/* Slots: rounded squares that hold colors.
+   .game-slot only sets geometry + transition — no background. Filled
+   slots get their color from .bg-* classes (defined in base.css), so
+   the default background must NOT be set here or it would override
+   them (later rule wins at equal specificity). */
+.game-slot {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: inline-block;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: default;
+  transition: transform 100ms ease-out;
+}
+
+.game-slot-empty {
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.game-slot-empty:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.game-slot-filled {
+  border-color: transparent;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.game-row-current .game-slot {
+  width: 38px;
+  height: 38px;
+}
+
+.game-row-current .game-slot-filled {
+  cursor: pointer;
+}
+
+.game-row-current .game-slot-filled:hover {
+  transform: scale(1.05);
+}
+
+.game-slot-locked {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Color palette: tappable chips */
+.game-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: center;
+  padding: 0.25rem 0;
+}
+
+.game-color-chip {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition:
+    transform 100ms ease-out,
+    filter 100ms ease-out;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.game-color-chip:hover:not(:disabled) {
+  transform: scale(1.08);
+  filter: brightness(1.1);
+}
+
+.game-color-chip:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.game-color-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.game-color-chip:focus-visible {
+  outline: 2px solid var(--accent-color, #3b82f6);
+  outline-offset: 2px;
+}
+
+/* Actions */
+.game-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.game-actions .btn {
+  flex: 1;
+}
+
+/* Overlay screens (pause / game-over / rules) */
+.game-overlay-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  padding: 1.5rem 1rem;
+  background: rgba(11, 15, 25, 0.92);
+  backdrop-filter: blur(4px);
+  border-radius: 14px;
+  z-index: 5;
+}
+
+.game-overlay-screen[hidden] {
+  display: none;
+}
+
+.game-screen-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent-color, #3b82f6), var(--color-rose, #ec4899));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.game-screen-score {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.game-screen-best {
+  font-size: 0.95rem;
+  color: var(--color-jaune, #eab308);
+  font-weight: 600;
+}
+
+.game-screen-secret {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.game-screen-secret-label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.game-screen-secret-chips {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.game-screen-secret-chips .game-slot {
+  cursor: default;
+}
+
+/* Rules panel */
+.game-rules-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+  max-width: 36ch;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.game-rules-list li {
+  padding-left: 1rem;
+  position: relative;
+  opacity: 0.9;
+}
+
+.game-rules-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--accent-color, #3b82f6);
+}
+
+.game-peg-example {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.game-peg-example .game-peg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-overlay {
+    animation: none;
   }
 }

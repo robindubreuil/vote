@@ -4,7 +4,9 @@ import { initClient, connectToSession } from './websocket.js'
 import * as handlers from './handlers.js'
 import { state } from './state.js'
 import { validateSessionCode } from '@shared/validation.js'
+import { CONSTANTS } from '@shared/config.js'
 import { getSessionCodeFromURL } from '@shared/utils/url.js'
+import { safeLocalGet, safeSessionGet } from '@shared/utils/safe-storage.js'
 
 // Élément DOM principal
 const app = document.getElementById('app')
@@ -24,7 +26,8 @@ function init() {
     handleCheckboxChange: handlers.handleCheckboxChange,
     handleSubmitVote: handlers.handleSubmitVote,
     leaveSession: handlers.leaveSession,
-    handleKeyPress: handlers.handleKeyPress
+    handleKeyPress: handlers.handleKeyPress,
+    handlePlayGame: handlers.handlePlayGame
   })
 
   // Initialize the WebSocket client BEFORE rendering
@@ -32,24 +35,22 @@ function init() {
   initClient()
 
   // Récupérer l'ID du stagiaire (généré par le serveur)
-  const savedId = sessionStorage.getItem('vote_stagiaire_id')
+  const savedId = safeSessionGet('vote_stagiaire_id')
   if (savedId) {
     state.stagiaireId = savedId
   }
 
-  // Récupérer le prénom s'il existe
-  const savedPrenom = localStorage.getItem('vote_stagiaire_prenom')
+  const savedPrenom = safeLocalGet('vote_stagiaire_prenom')
   if (savedPrenom) {
     state.prenom = savedPrenom
   }
 
-  // Vérifier si on a déjà un code session enregistré
-  let savedCode = sessionStorage.getItem('vote_session_code')
+  let savedCode = safeSessionGet('vote_session_code')
 
   // Check URL params for session code (override saved code if present)
   const urlSession = getSessionCodeFromURL()
   if (urlSession && validateSessionCode(urlSession) === null) {
-    savedCode = urlSession
+    savedCode = CONSTANTS.SESSION_CODE_NORMALIZE(urlSession)
   }
 
   if (savedCode) {

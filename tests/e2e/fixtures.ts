@@ -1,5 +1,11 @@
+const SESSION_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXY';
+
 export function generateSessionCode(): string {
-  return Math.floor(1000 + Math.random() * 9000).toString();
+  let code = '';
+  for (let i = 0; i < 3; i++) {
+    code += SESSION_ALPHABET[Math.floor(Math.random() * SESSION_ALPHABET.length)];
+  }
+  return code;
 }
 
 export const TEST_COLORS = {

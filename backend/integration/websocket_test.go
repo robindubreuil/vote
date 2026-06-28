@@ -21,8 +21,8 @@ func TestWebSocketTrainerJoin(t *testing.T) {
 	// Should receive session_created
 	msg := client.WaitForType("session_created", 2*time.Second)
 	sessionCode, ok := msg["sessionCode"].(string)
-	if !ok || len(sessionCode) != 4 {
-		t.Errorf("Expected valid 4-digit sessionCode, got %v", msg["sessionCode"])
+	if !ok || len(sessionCode) != 3 {
+		t.Errorf("Expected valid 3-letter sessionCode, got %v", msg["sessionCode"])
 	}
 	// Verify server-generated trainerId is returned
 	if _, ok := msg["trainerId"].(string); !ok {
@@ -281,7 +281,7 @@ func TestWebSocketInvalidSession(t *testing.T) {
 	// Try to join non-existent session as stagiaire
 	stagiaire := NewWSClient(t, ts.WebSocketURL())
 	defer stagiaire.Close()
-	stagiaire.SendMessage(StagiaireJoin("0000", "", "Frank").Build())
+	stagiaire.SendMessage(StagiaireJoin("DEF", "", "Frank").Build())
 
 	// Should receive error
 	msg := stagiaire.WaitForType("error", 2*time.Second)
@@ -296,7 +296,7 @@ func TestWebSocketInvalidSession(t *testing.T) {
 	// Try to join as trainer with non-existent session (valid code but doesn't exist)
 	trainer := NewWSClient(t, ts.WebSocketURL())
 	defer trainer.Close()
-	trainer.SendMessage(TrainerJoin("0000").Build())
+	trainer.SendMessage(TrainerJoin("DEF").Build())
 
 	msg = trainer.WaitForType("error", 2*time.Second)
 	if errMsg, ok := msg["message"].(string); !ok || errMsg != "Session introuvable" {

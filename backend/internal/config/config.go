@@ -20,6 +20,15 @@ type Config struct {
 	ShutdownTimeout  time.Duration
 	CleanupInterval  time.Duration
 	ValidColors      []string
+	// DashboardSecret gates the /dashboard route via an HMAC-signed cookie.
+	// Empty => dashboard is disabled entirely (fail-closed).
+	DashboardSecret string
+	DashboardMaxAge time.Duration
+	// DataDir is the FHS location for persistent stats (default /var/lib/vote
+	// in prod, ./data for dev). Holds counters.json + stats.jsonl.
+	DataDir string
+	// StatsSampleInterval is how often the server flushes counters to disk.
+	StatsSampleInterval time.Duration
 }
 
 func LoadConfig() *Config {
@@ -45,18 +54,22 @@ func LoadConfig() *Config {
 	}
 
 	config := &Config{
-		Host:             getEnv("HOST", ""),
-		Port:             getEnv("PORT", "8080"),
-		AllowedOrigins:   origins,
-		AllowCredentials: allowCreds,
-		TrustedProxies:   trustedProxies,
-		PingInterval:     30 * time.Second,
-		SessionTimeout:   getEnvDuration("SESSION_TIMEOUT", 1*time.Hour),
-		ReadTimeout:      15 * time.Second,
-		WriteTimeout:     15 * time.Second,
-		IdleTimeout:      60 * time.Second,
-		ShutdownTimeout:  5 * time.Second,
-		CleanupInterval:  getEnvDuration("CLEANUP_INTERVAL", 10*time.Minute),
+		Host:                getEnv("HOST", ""),
+		Port:                getEnv("PORT", "8080"),
+		AllowedOrigins:      origins,
+		AllowCredentials:    allowCreds,
+		TrustedProxies:      trustedProxies,
+		PingInterval:        30 * time.Second,
+		SessionTimeout:      getEnvDuration("SESSION_TIMEOUT", 1*time.Hour),
+		ReadTimeout:         15 * time.Second,
+		WriteTimeout:        15 * time.Second,
+		IdleTimeout:         60 * time.Second,
+		ShutdownTimeout:     5 * time.Second,
+		CleanupInterval:     getEnvDuration("CLEANUP_INTERVAL", 10*time.Minute),
+		DashboardSecret:     os.Getenv("VOTE_DASHBOARD_SECRET"),
+		DashboardMaxAge:     getEnvDuration("VOTE_DASHBOARD_MAX_AGE", 7*24*time.Hour),
+		DataDir:             getEnv("VOTE_DATA_DIR", "./data"),
+		StatsSampleInterval: getEnvDuration("VOTE_STATS_INTERVAL", 5*time.Minute),
 		ValidColors: []string{
 			"rouge", "vert", "bleu", "jaune",
 			"orange", "violet", "rose", "gris",

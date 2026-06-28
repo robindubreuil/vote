@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
@@ -13,6 +12,11 @@ import (
 	"vote-backend/internal/models"
 	"vote-backend/internal/security"
 	"vote-backend/internal/vote"
+)
+
+const (
+	maxCodeRetries = 100
+	maxIDRetries   = 1000
 )
 
 type SessionConnections struct {
@@ -92,14 +96,24 @@ func (h *Hub) GenerateSessionCode() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	for i := 0; i < 100; i++ {
-		code := fmt.Sprintf("%04d", rand.IntN(10000)) //nolint:gosec // non-crypto random for short session codes
-		if _, exists := h.Connections[code]; !exists && !h.VoteManager.SessionExists(code) {
-			h.Connections[code] = &SessionConnections{Stagiaires: make(map[string]*Client)}
-			return code
+	alphabet := []byte(vote.SessionAlphabet)
+	codeLen := vote.SessionCodeLength
+
+	for i := 0; i < maxCodeRetries; i++ {
+		code := make([]byte, codeLen)
+		for j := 0; j < codeLen; j++ {
+			code[j] = alphabet[rand.IntN(len(alphabet))] //nolint:gosec // non-crypto random for short session codes
+		}
+		s := string(code)
+		if _, exists := h.Connections[s]; !exists && !h.VoteManager.SessionExists(s) {
+			h.Connections[s] = &SessionConnections{Stagiaires: make(map[string]*Client)}
+			return s
 		}
 	}
 
+	// Exhaustive fallback: walk the alphabet lexicographically and return the
+	// first free code. Covers the (extremely unlikely) case where randomness
+	// collides 100 times in a row.
 	used := make(map[string]bool, len(h.Connections)+10000)
 	for id := range h.Connections {
 		used[id] = true
@@ -108,19 +122,30 @@ func (h *Hub) GenerateSessionCode() string {
 		used[id] = true
 	}
 
-	for i := 0; i < 10000; i++ {
-		code := fmt.Sprintf("%04d", i)
-		if !used[code] {
-			h.Connections[code] = &SessionConnections{Stagiaires: make(map[string]*Client)}
-			return code
+	var walk func(prefix []byte) string
+	walk = func(prefix []byte) string {
+		if len(prefix) == codeLen {
+			s := string(prefix)
+			if !used[s] {
+				h.Connections[s] = &SessionConnections{Stagiaires: make(map[string]*Client)}
+				return s
+			}
+			return ""
 		}
+		for _, c := range alphabet {
+			next := append(append([]byte{}, prefix...), c)
+			if found := walk(next); found != "" {
+				return found
+			}
+		}
+		return ""
 	}
 
-	return ""
+	return walk(nil)
 }
 
 func (h *Hub) GenerateUniqueClientID() (string, bool) {
-	for i := 0; i < 1010; i++ {
+	for i := 0; i < maxIDRetries; i++ {
 		id := security.GenerateID()
 		if !h.ClientIDExists(id) {
 			return id, true
@@ -158,6 +183,9 @@ func (h *Hub) registerClient(client *Client) {
 			h.Connections[client.SessionID] = conns
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
+				delete(h.Connections, client.SessionID)
+				client.SendError("Failed to create session")
+				return
 			}
 		} else {
 			client.SendError("Session not found")
@@ -168,20 +196,22 @@ func (h *Hub) registerClient(client *Client) {
 	if client.Type == "trainer" {
 		if conns.Trainer != nil && conns.Trainer != client {
 			conns.Trainer.SendError("New trainer connection detected, closing this one.")
-			go func(oldClient *Client) {
-				time.Sleep(100 * time.Millisecond)
-				oldClient.Conn.Close()
-			}(conns.Trainer)
+			conns.Trainer.Conn.Close()
 		}
 
 		conns.Trainer = client
 		if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
+				conns.Trainer = nil
+				client.SendError("Failed to create session")
+				return
 			}
 		} else {
 			if err := h.VoteManager.UpdateTrainer(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to update trainer", "session", client.SessionID, "error", err)
+				client.SendError("Failed to join session")
+				return
 			}
 		}
 
@@ -196,6 +226,7 @@ func (h *Hub) registerClient(client *Client) {
 		if session, ok := h.VoteManager.GetSession(client.SessionID); ok {
 			state, colors, multipleChoice, voteStartTime := session.GetState()
 			labels := session.GetActiveLabels()
+			gameEnabled := session.GetGameEnabled()
 
 			if state == models.VoteStateActive || state == models.VoteStateClosed {
 				replayMsg := map[string]any{
@@ -203,6 +234,7 @@ func (h *Hub) registerClient(client *Client) {
 					"colors":         colors,
 					"multipleChoice": multipleChoice,
 					"voteStartTime":  voteStartTime,
+					"gameEnabled":    gameEnabled,
 				}
 				if labels != nil {
 					replayMsg["labels"] = labels
@@ -224,7 +256,11 @@ func (h *Hub) registerClient(client *Client) {
 				if state == models.VoteStateClosed {
 					client.SendJSON(map[string]any{"type": "vote_closed"})
 				}
-			} else {
+			} else if len(colors) > 0 {
+				// Only sync config when the session has been configured (a
+				// previous trainer picked colors). On a fresh session we have
+				// nothing useful to send — empty colors would clobber the
+				// client's autoloaded last-config.
 				client.SendJSON(map[string]any{
 					"type":           "config_updated",
 					"selectedColors": colors,
@@ -261,11 +297,13 @@ func (h *Hub) registerClient(client *Client) {
 		session, ok := h.VoteManager.GetSession(client.SessionID)
 		if ok {
 			state, colors, multipleChoice, _ := session.GetState()
+			gameEnabled := session.GetGameEnabled()
 			if state == models.VoteStateActive {
 				msg := map[string]any{
 					"type":           "vote_started",
 					"colors":         colors,
 					"multipleChoice": multipleChoice,
+					"gameEnabled":    gameEnabled,
 				}
 				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
 					msg["existingVote"] = existingVote
@@ -449,9 +487,9 @@ func (h *Hub) GetMetrics() Metrics {
 		ConnectedTrainers:   0,
 		ConnectedStagiaires: 0,
 		VoteStates: map[string]int{
-			"idle":   0,
-			"active": 0,
-			"closed": 0,
+			models.VoteStateIdle:   0,
+			models.VoteStateActive: 0,
+			models.VoteStateClosed: 0,
 		},
 	}
 
@@ -475,4 +513,11 @@ func (h *Hub) GetConnectionCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.Connections)
+}
+
+// ProductStats returns the aggregate usage counters (sessions, votes,
+// trainees, feature adoption) collected by the vote Manager. Exposed via the
+// /metrics endpoint for maintainer insights.
+func (h *Hub) ProductStats() vote.ProductStatsSnapshot {
+	return h.VoteManager.Stats().Snapshot()
 }

@@ -23,8 +23,8 @@ func TestScenarioCompleteVotingSession(t *testing.T) {
 
 	msg := trainer.WaitForType("session_created", 2*time.Second)
 	sessionCode, ok := msg["sessionCode"].(string)
-	if !ok || len(sessionCode) != 4 {
-		t.Errorf("Expected 4-digit sessionCode, got %v", msg["sessionCode"])
+	if !ok || len(sessionCode) != 3 {
+		t.Errorf("Expected 3-letter sessionCode, got %v", msg["sessionCode"])
 	}
 
 	// Verify initial connected_count
@@ -281,7 +281,7 @@ func TestScenarioErrorRecovery(t *testing.T) {
 	// Try to join non-existent session (use a 4-digit code that doesn't exist)
 	invalidClient := NewWSClient(t, ts.WebSocketURL())
 	defer invalidClient.Close()
-	invalidClient.SendMessage(StagiaireJoin("9999", "bad", "Bad").Build())
+	invalidClient.SendMessage(StagiaireJoin("KQR", "bad", "Bad").Build())
 
 	// Should get error
 	msg = invalidClient.WaitForType("error", 2*time.Second)

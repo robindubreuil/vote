@@ -52,20 +52,21 @@ func TestClientHandleMessage(t *testing.T) {
 	joinBytes, _ := json.Marshal(joinMsg)
 	trainer.handleMessage(joinBytes)
 
-	// Trainer receives 3 messages upon join:
+	// Trainer receives 2 messages upon joining a fresh session:
 	// 1. connected_count (from registerClient)
-	// 2. config_updated (from registerClient)
-	// 3. session_created (from handleTrainerJoin)
+	// 2. session_created (from handleTrainerJoin)
+	// config_updated is NOT sent on a fresh session — the backend only syncs
+	// config when the session has been configured (non-empty colors), to
+	// avoid clobbering the client's autoloaded last-config.
 	// We need to consume all of them to clear the channel for subsequent tests.
 
 	var sessionCode string
 	expectedTypes := map[string]bool{
 		"connected_count": true,
-		"config_updated":  true,
 		"session_created": true,
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		select {
 		case msg := <-trainer.Send:
 			var resp map[string]interface{}

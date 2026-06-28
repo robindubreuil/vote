@@ -25,7 +25,7 @@ test.describe('UI E2E', () => {
     const codeBtn = trainerPage.getByTestId('session-code-btn');
     await expect(codeBtn).toBeVisible({ timeout: 10000 });
     const code = await codeBtn.textContent();
-    expect(code).toMatch(/^\d{4}$/);
+    expect(code).toMatch(/^[A-HJ-NP-Y]{3}$/);
 
     await expect(trainerPage.getByTestId('start-vote-btn')).toBeVisible();
     await expect(trainerPage.getByTestId('start-vote-btn')).toBeDisabled();
