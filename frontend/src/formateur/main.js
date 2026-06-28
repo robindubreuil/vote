@@ -8,8 +8,7 @@ import {
 } from './renderers.js'
 import { initClient, closeClient, attachLandingListenersWithHandlers } from './websocket.js'
 import * as handlers from './handlers.js'
-import { state } from './state.js'
-import { COLORS } from '@shared/colors.js'
+import { state, resetTrainerState } from './state.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { CONSTANTS } from '@shared/config.js'
 import { initConnectionAid } from './connection-aid.js'
@@ -37,22 +36,7 @@ function leaveSession() {
   safeSessionRemove('vote_session_code')
   safeSessionRemove('vote_trainer_id')
   closeClient()
-  state.sessionCode = null
-  state.connected = false
-  state.everConnected = false
-  state.connecting = false
-  state.connectedCount = 0
-  state.stagiaires = []
-  state.voteState = 'idle'
-  state.voteStartTime = null
-  // Reset config so the next session starts from defaults (or from the
-  // autoloaded lastConfig). Without this, stale selections from the previous
-  // session would bleed into the new one and mask the autoload behavior.
-  state.selectedColors = new Set(COLORS.slice(0, 3).map((c) => c.id))
-  state.colorLabels = {}
-  state.multipleChoice = false
-  state.presetSaving = false
-  state.lastConfigApplied = false
+  resetTrainerState()
   cleanupAllListeners()
   renderLandingPage(document.getElementById('app'))
   attachLandingListenersWithHandlers()

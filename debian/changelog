@@ -1,3 +1,20 @@
+vote (1.3.1-1) unstable; urgency=medium
+
+  * Fix: RevealAnswers double-scoring on re-click (idempotency via LastVoteScores)
+  * Fix: Reconnecting trainee stuck in WAITING when vote is CLOSED
+  * Fix: Unify leaveSession paths — Esc shortcut now resets all competitive state
+  * Fix: Trainee Total score uses server game score instead of local high score
+  * Fix: Blank votes now score 0 instead of -500 in competitive mode
+  * Security: Add c.Type trainer guards on all trainer-only handlers
+  * Security: Validate reveal_answers colors against session active palette
+  * Security: Clamp report_game_score to [0, 100000], require session.GameEnabled
+  * Fix: Ranking now includes game scores (TotalScore = vote + game)
+  * Tests: Add competitive mode, reveal, scoring, blank vote, game score tests
+  * Docs: Sync CLAUDE.md with competitive mode, v3 presets, root hash URL
+  * Packaging: Align /var/lib/vote perms (0700), bump nodejs dependency to 22
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Sat, 28 Jun 2026 20:35:00 +0100
+
 vote (1.3.0-1) unstable; urgency=medium
 
   * Add competitive mode: server-side scoring, reveal UI, per-vote scoreboard
