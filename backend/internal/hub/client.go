@@ -310,6 +310,7 @@ func (c *Client) SendErrorWithBackoff(msg string) {
 
 func (c *Client) handleStartVote(msg models.Message) {
 	if c.Type != "trainer" {
+		c.SendError("Unauthorized")
 		return
 	}
 	// Validate colors
@@ -397,6 +398,7 @@ func (c *Client) handleVote(msg models.Message) {
 
 func (c *Client) handleCloseVote(_ models.Message) {
 	if c.Type != "trainer" {
+		c.SendError("Unauthorized")
 		return
 	}
 	err := c.Hub.VoteManager.CloseVote(c.SessionID, c.ID)
@@ -409,6 +411,7 @@ func (c *Client) handleCloseVote(_ models.Message) {
 
 func (c *Client) handleResetVote(msg models.Message) {
 	if c.Type != "trainer" {
+		c.SendError("Unauthorized")
 		return
 	}
 	// Validate colors if provided
@@ -440,6 +443,7 @@ func (c *Client) handleResetVote(msg models.Message) {
 
 func (c *Client) handleRevealAnswers(msg models.Message) {
 	if c.Type != "trainer" {
+		c.SendError("Unauthorized")
 		return
 	}
 
