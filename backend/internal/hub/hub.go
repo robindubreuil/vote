@@ -194,9 +194,11 @@ func (h *Hub) registerClient(client *Client) {
 	}
 
 	if client.Type == "trainer" {
-		if conns.Trainer != nil && conns.Trainer != client {
-			conns.Trainer.SendError("New trainer connection detected, closing this one.")
-			conns.Trainer.Conn.Close()
+		if old := conns.Trainer; old != nil && old != client {
+			old.SendError("New trainer connection detected, closing this one.")
+			time.AfterFunc(50*time.Millisecond, func() {
+				old.Conn.Close()
+			})
 		}
 
 		conns.Trainer = client
