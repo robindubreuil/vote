@@ -44,6 +44,7 @@ export const state = {
   allowBlank: false,
   voteScore: 0,
   totalScore: 0,
+  gameScore: 0,
   rank: 0,
   totalStagiaires: 0,
   revealed: false

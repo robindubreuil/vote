@@ -4,7 +4,7 @@ import { showError, hideError } from '@shared/ui.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { createSessionPublisher } from '@shared/session-sync.js'
 import { CONSTANTS } from '@shared/config.js'
-import { state } from './state.js'
+import { state, resetTrainerState } from './state.js'
 import {
   renderFullLayout,
   updateHeader,
@@ -20,7 +20,6 @@ import {
 } from './renderers.js'
 import { startTimer, stopTimer, updateVoteResults } from './utils.js'
 import { users } from '@shared/icons.js'
-import { COLORS } from '@shared/colors.js'
 import { showToast } from '@shared/ui.js'
 import { t } from '@shared/i18n.js'
 import { applyLastConfigIfAvailable } from './handlers.js'
@@ -274,25 +273,7 @@ function attachListeners() {
     stopTimer()
     safeSessionRemove('vote_session_code')
     safeSessionRemove('vote_trainer_id')
-    state.sessionCode = null
-    state.connected = false
-    state.everConnected = false
-    state.connecting = false
-    state.connectedCount = 0
-    state.stagiaires = []
-    state.voteState = 'idle'
-    state.voteStartTime = null
-    state.selectedColors = new Set(COLORS.slice(0, 3).map((c) => c.id))
-    state.colorLabels = {}
-    state.multipleChoice = false
-    state.gameEnabled = false
-    state.competitive = false
-    state.allowBlank = false
-    state.correctColors = new Set()
-    state.revealed = false
-    state.scoreboard = []
-    state.presetSaving = false
-    state.lastConfigApplied = false
+    resetTrainerState()
     cleanupAllListeners()
     renderLandingPage(document.getElementById('app'))
     attachLandingListenersWithHandlers()

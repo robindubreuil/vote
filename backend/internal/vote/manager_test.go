@@ -302,3 +302,255 @@ func TestUpdateTrainer(t *testing.T) {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
 	}
 }
+
+func TestRevealAnswersScoring(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, true, false)
+
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.SubmitVote("ABC", "s2abc1234567", []string{"bleu"})
+	m.CloseVote("ABC", "trainer1")
+
+	entries, err := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+	if err != nil {
+		t.Fatalf("RevealAnswers: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	var alice, bob ScoreEntry
+	for _, e := range entries {
+		switch e.Name {
+		case "Alice":
+			alice = e
+		case "Bob":
+			bob = e
+		}
+	}
+	if alice.VoteScore != PointsPerCorrect {
+		t.Errorf("Alice: expected %d, got %d", PointsPerCorrect, alice.VoteScore)
+	}
+	if bob.VoteScore != PointsPerWrong {
+		t.Errorf("Bob: expected %d, got %d", PointsPerWrong, bob.VoteScore)
+	}
+	if alice.Rank != 1 {
+		t.Errorf("Alice should be rank 1, got %d", alice.Rank)
+	}
+	if bob.Rank != 2 {
+		t.Errorf("Bob should be rank 2, got %d", bob.Rank)
+	}
+}
+
+func TestRevealAnswersIdempotent(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.CloseVote("ABC", "trainer1")
+
+	m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+	entries, _ := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+
+	if entries[0].TotalScore != PointsPerCorrect {
+		t.Errorf("double reveal should not double score: got %d, expected %d", entries[0].TotalScore, PointsPerCorrect)
+	}
+
+	session, _ := m.GetSession("ABC")
+	if session.Scores["s1abc1234567"] != PointsPerCorrect {
+		t.Errorf("cumulative score should be %d, got %d", PointsPerCorrect, session.Scores["s1abc1234567"])
+	}
+}
+
+func TestRevealAnswersCorrectsOnChange(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, true, false)
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.CloseVote("ABC", "trainer1")
+
+	m.RevealAnswers("ABC", "trainer1", []string{"bleu"})
+	entries, _ := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+
+	if entries[0].TotalScore != PointsPerCorrect {
+		t.Errorf("re-reveal with changed colors should reflect latest: got %d, expected %d", entries[0].TotalScore, PointsPerCorrect)
+	}
+}
+
+func TestRevealAnswersCumulativeAcrossVotes(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.CloseVote("ABC", "trainer1")
+	m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+
+	m.StartVote("ABC", "trainer1", []string{"bleu"}, false, nil, false, true, false)
+	m.SubmitVote("ABC", "s1abc1234567", []string{"bleu"})
+	m.CloseVote("ABC", "trainer1")
+	entries, _ := m.RevealAnswers("ABC", "trainer1", []string{"bleu"})
+
+	expected := PointsPerCorrect * 2
+	if entries[0].TotalScore != expected {
+		t.Errorf("cumulative after 2 votes should be %d, got %d", expected, entries[0].TotalScore)
+	}
+}
+
+func TestRevealAnswersNotClosed(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
+
+	_, err := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+	if err == nil {
+		t.Error("expected error when revealing on active vote")
+	}
+}
+
+func TestRevealAnswersUnauthorized(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
+	m.CloseVote("ABC", "trainer1")
+
+	_, err := m.RevealAnswers("ABC", "imposter", []string{"rouge"})
+	if err != ErrUnauthorized {
+		t.Errorf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestRevealAnswersWithGameScore(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true, true, false)
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+
+	m.UpdateGameScore("ABC", "s1abc1234567", 500)
+	m.CloseVote("ABC", "trainer1")
+	entries, _ := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+
+	expected := PointsPerCorrect + 500
+	if entries[0].TotalScore != expected {
+		t.Errorf("total should include game score: got %d, expected %d", entries[0].TotalScore, expected)
+	}
+}
+
+func TestSubmitVoteBlank(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, true)
+
+	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"blank"})
+	if err != nil {
+		t.Errorf("blank vote should succeed when allowed: %v", err)
+	}
+
+	session, _ := m.GetSession("ABC")
+	if session.Votes["s1abc1234567"][0] != "blank" {
+		t.Errorf("expected blank vote stored")
+	}
+}
+
+func TestSubmitVoteBlankNotAllowed(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
+
+	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"blank"})
+	if err == nil {
+		t.Error("blank vote should fail when not allowed")
+	}
+}
+
+func TestSubmitVoteBlankWithColors(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, true)
+
+	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"blank", "rouge"})
+	if err == nil {
+		t.Error("blank vote combined with colors should fail")
+	}
+}
+
+func TestUpdateGameScoreMonotonic(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+
+	m.UpdateGameScore("ABC", "s1abc1234567", 500)
+	m.UpdateGameScore("ABC", "s1abc1234567", 300)
+
+	session, _ := m.GetSession("ABC")
+	if session.GameScores["s1abc1234567"] != 500 {
+		t.Errorf("game score should be monotonic (keep 500), got %d", session.GameScores["s1abc1234567"])
+	}
+}
+
+func TestUpdateGameScoreNonexistentStagiaire(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+
+	err := m.UpdateGameScore("ABC", "ghost1234567", 100)
+	if err == nil {
+		t.Error("expected error for nonexistent stagiaire")
+	}
+}
+
+func TestRevealAnswersScoreWithBlank(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, true)
+
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.SubmitVote("ABC", "s2abc1234567", []string{"blank"})
+	m.CloseVote("ABC", "trainer1")
+
+	entries, err := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+	if err != nil {
+		t.Fatalf("RevealAnswers: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name == "Bob" {
+			if e.VoteScore != 0 {
+				t.Errorf("blank vote should score 0, got %d", e.VoteScore)
+			}
+		}
+	}
+}
+
+func TestStartVoteClearsRevealState(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.CloseVote("ABC", "trainer1")
+	m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+
+	session, _ := m.GetSession("ABC")
+	if !session.Revealed {
+		t.Fatal("expected Revealed=true after reveal")
+	}
+
+	m.StartVote("ABC", "trainer1", []string{"bleu"}, false, nil, false, true, false)
+	session, _ = m.GetSession("ABC")
+	if session.Revealed {
+		t.Error("StartVote should clear Revealed flag")
+	}
+	if len(session.LastVoteScores) != 0 {
+		t.Error("StartVote should clear LastVoteScores")
+	}
+}

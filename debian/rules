@@ -49,7 +49,7 @@ override_dh_auto_install:
 	install -D -m 0644 debian/Caddyfile.example debian/vote/usr/share/doc/vote/examples/Caddyfile
 
 	# Create state directory
-	install -d -m 0750 debian/vote/var/lib/vote
+	install -d -m 0700 debian/vote/var/lib/vote
 
 override_dh_auto_clean:
 	rm -f vote-server

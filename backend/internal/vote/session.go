@@ -22,6 +22,8 @@ type Session struct {
 	Votes          map[string][]string
 	CorrectColors  []string
 	Scores         map[string]int
+	LastVoteScores map[string]int
+	Revealed       bool
 	VoteStartTime  int64
 	CreatedAt      int64
 	LastActivity   int64
@@ -30,15 +32,16 @@ type Session struct {
 func NewSession(id, trainerID string) *Session {
 	now := time.Now().Unix()
 	return &Session{
-		ID:           id,
-		TrainerID:    trainerID,
-		Stagiaires:   make(map[string]string),
-		VoteState:    models.VoteStateIdle,
-		Votes:        make(map[string][]string),
-		Scores:       make(map[string]int),
-		GameScores:   make(map[string]int),
-		CreatedAt:    now,
-		LastActivity: now,
+		ID:             id,
+		TrainerID:      trainerID,
+		Stagiaires:     make(map[string]string),
+		VoteState:      models.VoteStateIdle,
+		Votes:          make(map[string][]string),
+		Scores:         make(map[string]int),
+		GameScores:     make(map[string]int),
+		LastVoteScores: make(map[string]int),
+		CreatedAt:      now,
+		LastActivity:   now,
 	}
 }
 
@@ -145,5 +148,19 @@ func (s *Session) GetGameScores() map[string]int {
 	for k, v := range s.GameScores {
 		out[k] = v
 	}
+	return out
+}
+
+func (s *Session) GetRevealed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Revealed
+}
+
+func (s *Session) GetActiveColorsRaw() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, len(s.ActiveColors))
+	copy(out, s.ActiveColors)
 	return out
 }

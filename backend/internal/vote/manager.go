@@ -134,6 +134,8 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 	session.Competitive = competitive
 	session.AllowBlank = allowBlank
 	session.CorrectColors = nil
+	session.Revealed = false
+	session.LastVoteScores = make(map[string]int)
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = time.Now().Unix()
 	session.LastActivity = time.Now().Unix()
@@ -259,6 +261,8 @@ func (m *Manager) ResetVote(sessionID, trainerID string, colors []string, multip
 	session.Competitive = competitive
 	session.AllowBlank = allowBlank
 	session.CorrectColors = nil
+	session.Revealed = false
+	session.LastVoteScores = make(map[string]int)
 	session.Votes = make(map[string][]string)
 	session.VoteStartTime = 0
 	session.LastActivity = time.Now().Unix()
@@ -307,6 +311,9 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 		if vote, hasVote := session.Votes[id]; hasVote {
 			entry.Vote = vote
 			for _, color := range vote {
+				if color == "blank" {
+					continue
+				}
 				if correctSet[color] {
 					entry.VoteScore += PointsPerCorrect
 				} else {
@@ -314,10 +321,16 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 				}
 			}
 		}
+		if session.Revealed {
+			session.Scores[id] -= session.LastVoteScores[id]
+		}
 		session.Scores[id] += entry.VoteScore
-		entry.TotalScore = session.Scores[id]
+		session.LastVoteScores[id] = entry.VoteScore
+		entry.TotalScore = session.Scores[id] + session.GameScores[id]
 		entries = append(entries, entry)
 	}
+
+	session.Revealed = true
 
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].TotalScore != entries[j].TotalScore {

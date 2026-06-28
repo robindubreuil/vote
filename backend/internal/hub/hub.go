@@ -265,15 +265,15 @@ func (h *Hub) registerClient(client *Client) {
 					client.SendJSON(map[string]any{"type": "vote_closed"})
 				}
 
-				if competitive {
-					if correctColors := session.GetCorrectColors(); len(correctColors) > 0 {
-						scores := session.GetScores()
-						client.SendJSON(map[string]any{
-							"type":          "answers_revealed",
-							"correctColors": correctColors,
-							"scores":        buildScoreboard(stagiaires, votes, scores),
-						})
-					}
+				if competitive && session.GetRevealed() {
+					scores := session.GetScores()
+					gameScores := session.GetGameScores()
+					correctColors := session.GetCorrectColors()
+					client.SendJSON(map[string]any{
+						"type":          "answers_revealed",
+						"correctColors": correctColors,
+						"scores":        buildScoreboard(stagiaires, votes, scores, gameScores),
+					})
 				}
 			} else if len(colors) > 0 {
 				// Only sync config when the session has been configured (a
@@ -332,14 +332,30 @@ func (h *Hub) registerClient(client *Client) {
 					msg["existingVote"] = existingVote
 				}
 				client.SendJSON(msg)
-			} else if state == models.VoteStateClosed && competitive {
-				if correctColors := session.GetCorrectColors(); len(correctColors) > 0 {
+			} else if state == models.VoteStateClosed {
+				msg := map[string]any{
+					"type":           "vote_started",
+					"colors":         colors,
+					"multipleChoice": multipleChoice,
+					"gameEnabled":    gameEnabled,
+					"competitive":    competitive,
+					"allowBlank":     allowBlank,
+				}
+				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
+					msg["existingVote"] = existingVote
+				}
+				client.SendJSON(msg)
+				client.SendJSON(map[string]any{"type": "vote_closed"})
+				if competitive && session.GetRevealed() {
+					correctColors := session.GetCorrectColors()
 					scores := session.GetScores()
-					rank, total := computeRank(scores, client.ID)
+					gameScores := session.GetGameScores()
+					rank, total := computeRank(scores, gameScores, client.ID)
 					client.SendJSON(map[string]any{
 						"type":            "answers_revealed",
 						"correctColors":   correctColors,
 						"totalScore":      scores[client.ID],
+						"gameScore":       gameScores[client.ID],
 						"rank":            rank,
 						"totalStagiaires": total,
 					})
@@ -427,6 +443,13 @@ func (h *Hub) SendScoreReveal(sessionID string, correctColors []string, entries 
 		return
 	}
 
+	session, ok := h.VoteManager.GetSession(sessionID)
+	if !ok {
+		h.mu.RUnlock()
+		return
+	}
+	gameScores := session.GetGameScores()
+
 	type target struct {
 		client *Client
 		entry  vote.ScoreEntry
@@ -444,11 +467,13 @@ func (h *Hub) SendScoreReveal(sessionID string, correctColors []string, entries 
 	h.mu.RUnlock()
 
 	for _, t := range targets {
+		gameScore := gameScores[t.entry.StagiaireID]
 		t.client.SendJSON(map[string]any{
 			"type":            "answers_revealed",
 			"correctColors":   correctColors,
 			"voteScore":       t.entry.VoteScore,
-			"totalScore":      t.entry.TotalScore,
+			"totalScore":      t.entry.TotalScore - gameScore,
+			"gameScore":       gameScore,
 			"rank":            t.entry.Rank,
 			"totalStagiaires": total,
 		})
@@ -551,13 +576,13 @@ func (h *Hub) cleanupLoop() {
 	}
 }
 
-func buildScoreboard(stagiaires map[string]string, votes map[string][]string, scores map[string]int) []vote.ScoreEntry {
+func buildScoreboard(stagiaires map[string]string, votes map[string][]string, scores map[string]int, gameScores map[string]int) []vote.ScoreEntry {
 	entries := make([]vote.ScoreEntry, 0, len(stagiaires))
 	for id, name := range stagiaires {
 		entry := vote.ScoreEntry{
 			StagiaireID: id,
 			Name:        name,
-			TotalScore:  scores[id],
+			TotalScore:  scores[id] + gameScores[id],
 		}
 		if v, ok := votes[id]; ok {
 			entry.Vote = v
@@ -576,18 +601,18 @@ func buildScoreboard(stagiaires map[string]string, votes map[string][]string, sc
 	return entries
 }
 
-func computeRank(scores map[string]int, id string) (int, int) {
-	total := len(scores)
+func computeRank(voteScores, gameScores map[string]int, id string) (int, int) {
+	total := len(voteScores)
 	if total == 0 {
 		return 0, 0
 	}
-	myScore := scores[id]
+	myScore := voteScores[id] + gameScores[id]
 	rank := 1
-	for otherID, otherScore := range scores {
+	for otherID := range voteScores {
 		if otherID == id {
 			continue
 		}
-		if otherScore > myScore {
+		if voteScores[otherID]+gameScores[otherID] > myScore {
 			rank++
 		}
 	}

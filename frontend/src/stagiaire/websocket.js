@@ -5,7 +5,7 @@ import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 import { pauseGameExternal, teardownGame } from './handlers.js'
 import { safeSessionSet } from '@shared/utils/safe-storage.js'
-import { loadHighScore, resetHighScore, saveStreak } from '@shared/game-storage.js'
+import { resetHighScore, saveStreak } from '@shared/game-storage.js'
 
 // Configuration de l'API WebSocket
 const WS_URL = getWebSocketURL()
@@ -147,7 +147,12 @@ function handleMessage(msg) {
     case 'answers_revealed':
       state.revealed = true
       if (typeof msg.voteScore === 'number') state.voteScore = msg.voteScore
-      if (typeof msg.totalScore === 'number') state.totalScore = msg.totalScore + loadHighScore()
+      if (typeof msg.gameScore === 'number') {
+        state.gameScore = msg.gameScore
+      }
+      if (typeof msg.totalScore === 'number') {
+        state.totalScore = msg.totalScore + (state.gameScore || 0)
+      }
       if (typeof msg.rank === 'number') state.rank = msg.rank
       if (typeof msg.totalStagiaires === 'number') state.totalStagiaires = msg.totalStagiaires
       if (msg.correctColors) state.availableColors = msg.correctColors

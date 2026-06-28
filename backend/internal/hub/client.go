@@ -13,6 +13,7 @@ import (
 const (
 	ClientSendBufferSize = 256
 	pongWait             = 70 * time.Second
+	MaxGameScore         = 100000
 )
 
 type Client struct {
@@ -308,6 +309,9 @@ func (c *Client) SendErrorWithBackoff(msg string) {
 }
 
 func (c *Client) handleStartVote(msg models.Message) {
+	if c.Type != "trainer" {
+		return
+	}
 	// Validate colors
 	if len(msg.Colors) == 0 {
 		c.SendError("At least one color is required")
@@ -392,6 +396,9 @@ func (c *Client) handleVote(msg models.Message) {
 }
 
 func (c *Client) handleCloseVote(_ models.Message) {
+	if c.Type != "trainer" {
+		return
+	}
 	err := c.Hub.VoteManager.CloseVote(c.SessionID, c.ID)
 	if err != nil {
 		c.SendError(err.Error())
@@ -401,6 +408,9 @@ func (c *Client) handleCloseVote(_ models.Message) {
 }
 
 func (c *Client) handleResetVote(msg models.Message) {
+	if c.Type != "trainer" {
+		return
+	}
 	// Validate colors if provided
 	if len(msg.Colors) > 0 {
 		if !vote.ValidateColors(msg.Colors, c.Hub.Config.ValidColors) {
@@ -429,12 +439,38 @@ func (c *Client) handleResetVote(msg models.Message) {
 }
 
 func (c *Client) handleRevealAnswers(msg models.Message) {
+	if c.Type != "trainer" {
+		return
+	}
+
+	session, ok := c.Hub.VoteManager.GetSession(c.SessionID)
+	if !ok {
+		c.SendError("Session introuvable")
+		return
+	}
+	activeColors := session.GetActiveColorsRaw()
+
 	for _, color := range msg.CorrectColors {
 		if color == "blank" {
+			if !session.GetAllowBlank() {
+				c.SendError("Blank votes are not allowed")
+				return
+			}
 			continue
 		}
 		if !vote.ValidateColors([]string{color}, c.Hub.Config.ValidColors) {
 			c.SendError("Invalid color(s)")
+			return
+		}
+		found := false
+		for _, ac := range activeColors {
+			if ac == color {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.SendError("Color not in active palette: " + color)
 			return
 		}
 	}
@@ -445,10 +481,6 @@ func (c *Client) handleRevealAnswers(msg models.Message) {
 		return
 	}
 
-	session, ok := c.Hub.VoteManager.GetSession(c.SessionID)
-	if !ok {
-		return
-	}
 	correctColors := session.GetCorrectColors()
 
 	c.Hub.SendToTrainer(c.SessionID, map[string]any{
@@ -464,6 +496,16 @@ func (c *Client) handleRevealAnswers(msg models.Message) {
 
 func (c *Client) handleReportGameScore(msg models.Message) {
 	if c.Type != "stagiaire" {
+		return
+	}
+	if msg.GameScore < 0 || msg.GameScore > MaxGameScore {
+		return
+	}
+	session, ok := c.Hub.VoteManager.GetSession(c.SessionID)
+	if !ok {
+		return
+	}
+	if !session.GetGameEnabled() {
 		return
 	}
 	err := c.Hub.VoteManager.UpdateGameScore(c.SessionID, c.ID, msg.GameScore)
