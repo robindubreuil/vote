@@ -20,7 +20,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--help", "-h":
-			fmt.Printf("vote-server %s (built %s)\n\nUsage: vote-server\n\nEnvironment variables:\n  PORT                   Listen port (default: 8080)\n  ALLOWED_ORIGINS        Comma-separated CORS origins (default: localhost origins)\n  TRUSTED_PROXIES        Comma-separated trusted proxy IPs\n  VALID_COLORS           Comma-separated allowed vote colors\n  VOTE_DASHBOARD_SECRET  Enables /dashboard when set (unset = disabled)\n  VOTE_DASHBOARD_MAX_AGE  Dashboard cookie lifetime (default: 168h)\n  VOTE_DATA_DIR          Persistent stats dir (default: ./data, Docker: /var/lib/vote)\n  VOTE_STATS_INTERVAL    Stats disk-flush interval (default: 5m)\n", version, buildTime)
+			fmt.Printf("vote-server %s (built %s)\n\nUsage: vote-server\n\nEnvironment variables:\n  PORT                       Listen port (default: 8080)\n  ALLOWED_ORIGINS            Comma-separated CORS origins (default: localhost origins)\n  TRUSTED_PROXIES            Comma-separated trusted proxy IPs\n  VALID_COLORS               Comma-separated allowed vote colors\n  VOTE_DASHBOARD_SECRET      Enables /dashboard when set (unset = disabled)\n  VOTE_DASHBOARD_MAX_AGE     Dashboard cookie lifetime (default: 168h)\n  VOTE_DATA_DIR              Persistent stats dir (default: ./data, Docker: /var/lib/vote)\n  VOTE_STATS_INTERVAL        Stats disk-flush interval (default: 5m)\n  VOTE_MAX_SESSIONS_PER_HOUR Per-IP session creation cap (default: 20)\n", version, buildTime)
 			return
 		case "--version", "-v":
 			fmt.Printf("vote-server %s (built %s)\n", version, buildTime)

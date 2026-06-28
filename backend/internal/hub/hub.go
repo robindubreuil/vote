@@ -42,7 +42,7 @@ func NewHub(cfg *config.Config) *Hub {
 	return &Hub{
 		Connections: make(map[string]*SessionConnections),
 		VoteManager: vote.NewManager(),
-		Security:    security.NewSecurity(ctx),
+		Security:    security.NewSecurity(ctx, cfg.MaxSessionCreations),
 		Register:    make(chan *Client),
 		Unregister:  make(chan *Client),
 		ctx:         ctx,

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,7 @@ type Config struct {
 	DataDir string
 	// StatsSampleInterval is how often the server flushes counters to disk.
 	StatsSampleInterval time.Duration
+	MaxSessionCreations int
 }
 
 func LoadConfig() *Config {
@@ -70,6 +72,7 @@ func LoadConfig() *Config {
 		DashboardMaxAge:     getEnvDuration("VOTE_DASHBOARD_MAX_AGE", 7*24*time.Hour),
 		DataDir:             getEnv("VOTE_DATA_DIR", "./data"),
 		StatsSampleInterval: getEnvDuration("VOTE_STATS_INTERVAL", 5*time.Minute),
+		MaxSessionCreations: getEnvInt("VOTE_MAX_SESSIONS_PER_HOUR", 20),
 		ValidColors: []string{
 			"rouge", "vert", "bleu", "jaune",
 			"orange", "violet", "rose", "gris",
@@ -112,6 +115,15 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if d, err := time.ParseDuration(value); err == nil {
 			return d
+		}
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			return n
 		}
 	}
 	return defaultValue
