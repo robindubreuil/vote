@@ -345,6 +345,7 @@ func (c *Client) handleStartVote(msg models.Message) {
 		"colors":         msg.Colors,
 		"multipleChoice": msg.MultipleChoice,
 		"voteStartTime":  voteStartTime,
+		"voteElapsed":    time.Now().Unix() - voteStartTime,
 		"gameEnabled":    msg.GameEnabled,
 	}
 	if len(msg.Labels) > 0 {
