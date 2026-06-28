@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math/rand/v2"
+	"sort"
 	"sync"
 	"time"
 
@@ -229,6 +230,8 @@ func (h *Hub) registerClient(client *Client) {
 			state, colors, multipleChoice, voteStartTime := session.GetState()
 			labels := session.GetActiveLabels()
 			gameEnabled := session.GetGameEnabled()
+			competitive := session.GetCompetitive()
+			allowBlank := session.GetAllowBlank()
 
 			if state == models.VoteStateActive || state == models.VoteStateClosed {
 				replayMsg := map[string]any{
@@ -238,6 +241,8 @@ func (h *Hub) registerClient(client *Client) {
 					"voteStartTime":  voteStartTime,
 					"voteElapsed":    time.Now().Unix() - voteStartTime,
 					"gameEnabled":    gameEnabled,
+					"competitive":    competitive,
+					"allowBlank":     allowBlank,
 				}
 				if labels != nil {
 					replayMsg["labels"] = labels
@@ -258,6 +263,17 @@ func (h *Hub) registerClient(client *Client) {
 
 				if state == models.VoteStateClosed {
 					client.SendJSON(map[string]any{"type": "vote_closed"})
+				}
+
+				if competitive {
+					if correctColors := session.GetCorrectColors(); len(correctColors) > 0 {
+						scores := session.GetScores()
+						client.SendJSON(map[string]any{
+							"type":          "answers_revealed",
+							"correctColors": correctColors,
+							"scores":        buildScoreboard(stagiaires, votes, scores),
+						})
+					}
 				}
 			} else if len(colors) > 0 {
 				// Only sync config when the session has been configured (a
@@ -301,17 +317,33 @@ func (h *Hub) registerClient(client *Client) {
 		if ok {
 			state, colors, multipleChoice, _ := session.GetState()
 			gameEnabled := session.GetGameEnabled()
+			competitive := session.GetCompetitive()
+			allowBlank := session.GetAllowBlank()
 			if state == models.VoteStateActive {
 				msg := map[string]any{
 					"type":           "vote_started",
 					"colors":         colors,
 					"multipleChoice": multipleChoice,
 					"gameEnabled":    gameEnabled,
+					"competitive":    competitive,
+					"allowBlank":     allowBlank,
 				}
 				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
 					msg["existingVote"] = existingVote
 				}
 				client.SendJSON(msg)
+			} else if state == models.VoteStateClosed && competitive {
+				if correctColors := session.GetCorrectColors(); len(correctColors) > 0 {
+					scores := session.GetScores()
+					rank, total := computeRank(scores, client.ID)
+					client.SendJSON(map[string]any{
+						"type":            "answers_revealed",
+						"correctColors":   correctColors,
+						"totalScore":      scores[client.ID],
+						"rank":            rank,
+						"totalStagiaires": total,
+					})
+				}
 			}
 		}
 	}
@@ -387,6 +419,42 @@ func (h *Hub) SendToTrainer(sessionID string, message any) {
 	}
 }
 
+func (h *Hub) SendScoreReveal(sessionID string, correctColors []string, entries []vote.ScoreEntry) {
+	h.mu.RLock()
+	conns, exists := h.Connections[sessionID]
+	if !exists {
+		h.mu.RUnlock()
+		return
+	}
+
+	type target struct {
+		client *Client
+		entry  vote.ScoreEntry
+	}
+	targets := make([]target, 0, len(conns.Stagiaires))
+	for id, client := range conns.Stagiaires {
+		for _, e := range entries {
+			if e.StagiaireID == id {
+				targets = append(targets, target{client, e})
+				break
+			}
+		}
+	}
+	total := len(entries)
+	h.mu.RUnlock()
+
+	for _, t := range targets {
+		t.client.SendJSON(map[string]any{
+			"type":            "answers_revealed",
+			"correctColors":   correctColors,
+			"voteScore":       t.entry.VoteScore,
+			"totalScore":      t.entry.TotalScore,
+			"rank":            t.entry.Rank,
+			"totalStagiaires": total,
+		})
+	}
+}
+
 func (h *Hub) NotifyTrainerStagiaireList(sessionID string, msgType string) {
 	h.mu.RLock()
 	conns, exists := h.Connections[sessionID]
@@ -410,12 +478,17 @@ func (h *Hub) notifyTrainerStagiaireListLocked(conns *SessionConnections, sessio
 
 	stagiaires := session.GetStagiaires()
 	votes := session.GetVotes()
+	scores := session.GetScores()
+	gameScores := session.GetGameScores()
+	competitive := session.GetCompetitive()
 
 	type StagiaireInfo struct {
 		ID        string   `json:"id"`
 		Name      string   `json:"name"`
 		Connected bool     `json:"connected"`
 		Vote      []string `json:"vote,omitempty"`
+		Score     int      `json:"score,omitempty"`
+		GameScore int      `json:"gameScore,omitempty"`
 	}
 
 	list := make([]StagiaireInfo, 0, len(stagiaires))
@@ -429,6 +502,10 @@ func (h *Hub) notifyTrainerStagiaireListLocked(conns *SessionConnections, sessio
 		}
 		if hasVoted {
 			info.Vote = vote
+		}
+		if competitive {
+			info.Score = scores[id]
+			info.GameScore = gameScores[id]
 		}
 		list = append(list, info)
 	}
@@ -472,6 +549,49 @@ func (h *Hub) cleanupLoop() {
 			return
 		}
 	}
+}
+
+func buildScoreboard(stagiaires map[string]string, votes map[string][]string, scores map[string]int) []vote.ScoreEntry {
+	entries := make([]vote.ScoreEntry, 0, len(stagiaires))
+	for id, name := range stagiaires {
+		entry := vote.ScoreEntry{
+			StagiaireID: id,
+			Name:        name,
+			TotalScore:  scores[id],
+		}
+		if v, ok := votes[id]; ok {
+			entry.Vote = v
+		}
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].TotalScore != entries[j].TotalScore {
+			return entries[i].TotalScore > entries[j].TotalScore
+		}
+		return entries[i].Name < entries[j].Name
+	})
+	for i := range entries {
+		entries[i].Rank = i + 1
+	}
+	return entries
+}
+
+func computeRank(scores map[string]int, id string) (int, int) {
+	total := len(scores)
+	if total == 0 {
+		return 0, 0
+	}
+	myScore := scores[id]
+	rank := 1
+	for otherID, otherScore := range scores {
+		if otherID == id {
+			continue
+		}
+		if otherScore > myScore {
+			rank++
+		}
+	}
+	return rank, total
 }
 
 type Metrics struct {

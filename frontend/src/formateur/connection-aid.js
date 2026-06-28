@@ -5,6 +5,7 @@ import { vote } from '@shared/icons.js'
 import { renderFooterHTML } from '@shared/ui.js'
 import { createSessionSubscriber } from '@shared/session-sync.js'
 import { buildJoinURL } from './connection-aid-url.js'
+import { escapeHtml } from '@shared/colors.js'
 
 const QR_DARK = '#0f172a'
 const QR_LIGHT = '#ffffff'
@@ -50,7 +51,7 @@ function renderSkeleton(sessionCode, joinURL) {
   return `
     <div class="aid-page">
       <header class="aid-header">
-        <h1 class="aid-title">${vote(' class="icon icon-lg aid-title-icon"')} ${t.formateur.connectionAid}</h1>
+        <h1 class="aid-title">${vote(' class="icon icon-lg aid-title-icon"')} ${t.formateur.classroomDisplay}</h1>
         <button type="button" class="aid-fullscreen-btn" id="aidFullscreenBtn" title="${t.formateur.fullscreen}" aria-label="${t.formateur.fullscreen}"></button>
       </header>
 
@@ -80,6 +81,11 @@ function renderSkeleton(sessionCode, joinURL) {
             <span class="aid-count-dot" id="aidCountDot" aria-hidden="true"></span>
             <span class="aid-count-text" id="aidCountText">${t.formateur.connectedUnknown}</span>
           </div>
+        </section>
+
+        <section class="aid-leaderboard" id="aidLeaderboard" hidden>
+          <div class="aid-leaderboard-title">${t.formateur.scoreboard}</div>
+          <ol class="aid-leaderboard-list" id="aidLeaderboardList"></ol>
         </section>
       </main>
 
@@ -134,6 +140,26 @@ function updateCountDisplay(state) {
   const s = state.count > 1 ? 's' : ''
   text.textContent = `${state.count} stagiaire${s} connecté${s}`
   dot.className = 'aid-count-dot ' + (state.connected ? 'live' : 'stale')
+}
+
+function updateLeaderboard(state) {
+  const section = document.getElementById('aidLeaderboard')
+  const list = document.getElementById('aidLeaderboardList')
+  if (!section || !list) return
+
+  if (!state?.competitive || !state?.leaderboard || state.leaderboard.length === 0) {
+    section.hidden = true
+    return
+  }
+
+  section.hidden = false
+  list.innerHTML = state.leaderboard.map((entry, i) => `
+    <li class="aid-leaderboard-row rank-${i + 1}">
+      <span class="aid-leaderboard-rank">${i + 1}</span>
+      <span class="aid-leaderboard-name">${escapeHtml(entry.name || 'Anonyme')}</span>
+      <span class="aid-leaderboard-score">${entry.score}</span>
+    </li>
+  `).join('')
 }
 
 /**
@@ -220,6 +246,7 @@ export function initConnectionAid(sessionCode) {
   const onUpdate = (state) => {
     lastUpdate = Date.now()
     updateCountDisplay(state)
+    updateLeaderboard(state)
   }
 
   const subscriber = createSessionSubscriber(sessionCode, onUpdate)

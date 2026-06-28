@@ -40,13 +40,15 @@ func NewClient(hub *Hub, conn *websocket.Conn, ip string) *Client {
 	}
 
 	c.handlers = map[string]func(models.Message){
-		"trainer_join":   c.handleTrainerJoin,
-		"stagiaire_join": c.handleStagiaireJoin,
-		"start_vote":     c.handleStartVote,
-		"vote":           c.handleVote,
-		"close_vote":     c.handleCloseVote,
-		"reset_vote":     c.handleResetVote,
-		"update_name":    c.handleUpdateName,
+		"trainer_join":      c.handleTrainerJoin,
+		"stagiaire_join":    c.handleStagiaireJoin,
+		"start_vote":        c.handleStartVote,
+		"vote":              c.handleVote,
+		"close_vote":        c.handleCloseVote,
+		"reset_vote":        c.handleResetVote,
+		"reveal_answers":    c.handleRevealAnswers,
+		"report_game_score": c.handleReportGameScore,
+		"update_name":       c.handleUpdateName,
 	}
 
 	return c
@@ -328,7 +330,7 @@ func (c *Client) handleStartVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels, msg.GameEnabled)
+	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels, msg.GameEnabled, msg.Competitive, msg.AllowBlank)
 
 	if err != nil {
 		c.SendError(err.Error())
@@ -347,6 +349,8 @@ func (c *Client) handleStartVote(msg models.Message) {
 		"voteStartTime":  voteStartTime,
 		"voteElapsed":    time.Now().Unix() - voteStartTime,
 		"gameEnabled":    msg.GameEnabled,
+		"competitive":    msg.Competitive,
+		"allowBlank":     msg.AllowBlank,
 	}
 	if len(msg.Labels) > 0 {
 		broadcastMsg["labels"] = msg.Labels
@@ -408,7 +412,7 @@ func (c *Client) handleResetVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, nil, msg.GameEnabled)
+	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, nil, msg.GameEnabled, msg.Competitive, msg.AllowBlank)
 	if err != nil {
 		c.SendError(err.Error())
 		return
@@ -416,9 +420,56 @@ func (c *Client) handleResetVote(msg models.Message) {
 	c.Hub.BroadcastSession(c.SessionID, map[string]any{
 		"type":        "vote_reset",
 		"gameEnabled": msg.GameEnabled,
+		"competitive": msg.Competitive,
+		"allowBlank":  msg.AllowBlank,
 	}, "")
 
 	// Send updated stagiaire list (votes are now cleared)
+	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
+}
+
+func (c *Client) handleRevealAnswers(msg models.Message) {
+	for _, color := range msg.CorrectColors {
+		if color == "blank" {
+			continue
+		}
+		if !vote.ValidateColors([]string{color}, c.Hub.Config.ValidColors) {
+			c.SendError("Invalid color(s)")
+			return
+		}
+	}
+
+	entries, err := c.Hub.VoteManager.RevealAnswers(c.SessionID, c.ID, msg.CorrectColors)
+	if err != nil {
+		c.SendError(err.Error())
+		return
+	}
+
+	session, ok := c.Hub.VoteManager.GetSession(c.SessionID)
+	if !ok {
+		return
+	}
+	correctColors := session.GetCorrectColors()
+
+	c.Hub.SendToTrainer(c.SessionID, map[string]any{
+		"type":          "answers_revealed",
+		"correctColors": correctColors,
+		"scores":        entries,
+	})
+
+	c.Hub.SendScoreReveal(c.SessionID, correctColors, entries)
+
+	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
+}
+
+func (c *Client) handleReportGameScore(msg models.Message) {
+	if c.Type != "stagiaire" {
+		return
+	}
+	err := c.Hub.VoteManager.UpdateGameScore(c.SessionID, c.ID, msg.GameScore)
+	if err != nil {
+		return
+	}
 	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")
 }
 

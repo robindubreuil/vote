@@ -35,12 +35,15 @@ export const t = {
     leaveSession: 'Voulez-vous vraiment quitter cette session ?',
     leaveSessionTitle: 'Quitter la session',
     leave: 'Quitter',
+    totalScoreLabel: 'Total',
     // Mini-jeu "Le Code Couleur" (Mastermind)
     playGame: 'Jouer en attendant',
     playGameHint: 'Trouvez le code secret en moins de 8 coups',
     quitGame: 'Quitter le jeu',
     gameScore: 'Score',
     gameBest: 'Record',
+    gameLevel: 'Niveau',
+    gameStreak: 'Série',
     gameAttempts: 'Coups restants',
     gameValidate: 'Valider',
     gameClear: 'Effacer',
@@ -51,13 +54,14 @@ export const t = {
     gameWon: 'Code trouvé !',
     gameLost: 'Code non trouvé',
     gameFinalScore: (n) => `Score : ${n}`,
+    gameBaseMultiplier: (base, mult) => `${base} × ${mult}`,
     gameNewBest: 'Nouveau record !',
     gameRulesTitle: 'Comment jouer',
     gameRules: [
       'Le code secret est composé de 4 couleurs (avec répétitions possibles).',
       'Touchez une couleur pour la placer dans la rangée courante.',
       'Validez pour recevoir un retour :',
-      'Pion noir = bonne couleur, bonne position.',
+      'Pion doré = bonne couleur, bonne position.',
       'Pion blanc = bonne couleur, mauvaise position.',
       'Moins vous utilisez de coups, plus vous marquez de points.'
     ],
@@ -136,6 +140,19 @@ export const t = {
     reconnected: 'Reconnecté',
     sessionLimitReached: 'Trop de sessions créées — réessayez dans quelques minutes',
     gameToggle: "Mini-jeu pendant l'attente",
-    gameToggleHint: 'Les stagiaires peuvent jouer en attendant le prochain vote'
+    gameToggleHint: 'Les stagiaires peuvent jouer en attendant le prochain vote',
+    competitiveToggle: 'Mode compétitif',
+    competitiveToggleHint: 'Marquer les bonnes couleurs après le vote — les stagiaires marquent des points',
+    markCorrect: 'Cocher les bonnes réponses',
+    revealAnswers: 'Révéler les réponses',
+    scoreboard: 'Classement',
+    score: 'Score',
+    totalScore: 'Total',
+    noScore: '—',
+    classroomDisplay: 'Affichage salle de classe',
+    openClassroomDisplay: 'Afficher la salle de classe',
+    openClassroomDisplayTitle: 'Ouvrir le tableau de classe dans un nouvel onglet (idéal pour le vidéoprojecteur)',
+    blankVoteToggle: 'Autoriser le vote blanc',
+    blankVote: 'Vote blanc'
   }
 }

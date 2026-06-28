@@ -17,10 +17,10 @@ import { COLORS } from './colors.js'
 const PRESETS_KEY = 'vote:presets'
 const LAST_CONFIG_KEY = 'vote:lastConfig'
 // v1: initial schema (selectedColors, colorLabels, multipleChoice).
-// v2: added gameEnabled. Reading v1 just defaults gameEnabled=false,
-// which is the right thing for legacy presets, so no migration code
-// is needed — `sanitizeConfig` already coerces missing fields.
-const SCHEMA_VERSION = 2
+// v2: added gameEnabled. Reading v1 just defaults gameEnabled=false.
+// v3: added competitive + correctColors. Same pattern — sanitizeConfig
+// coerces missing fields to defaults.
+const SCHEMA_VERSION = 3
 
 const MAX_PRESETS = 30
 
@@ -59,7 +59,12 @@ function sanitizeConfig(config) {
     selectedColors,
     colorLabels,
     multipleChoice: Boolean(config.multipleChoice),
-    gameEnabled: Boolean(config.gameEnabled)
+    gameEnabled: Boolean(config.gameEnabled),
+    competitive: Boolean(config.competitive),
+    allowBlank: Boolean(config.allowBlank),
+    correctColors: Array.isArray(config.correctColors)
+      ? config.correctColors.filter((id) => typeof id === 'string' && knownIds.has(id))
+      : []
   }
 }
 

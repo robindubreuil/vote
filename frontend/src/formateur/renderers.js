@@ -12,7 +12,9 @@ import {
   qrCode,
   bookmark,
   download,
-  upload
+  upload,
+  check,
+  checkPlain
 } from '@shared/icons.js'
 import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog } from '@shared/ui.js'
 import { t } from '@shared/i18n.js'
@@ -161,8 +163,8 @@ export function updateHeader(client) {
         id="openConnectionAidBtn"
         class="header-action-btn"
         data-testid="open-connection-aid-btn"
-        title="${t.formateur.openConnectionAidTitle}"
-        aria-label="${t.formateur.openConnectionAid}"
+        title="${t.formateur.openClassroomDisplayTitle}"
+        aria-label="${t.formateur.openClassroomDisplay}"
       >${qrCode(' class="icon icon-md"')}</button>
       ${renderSessionCodeButton(state.sessionCode, isConnected, `${t.formateur.leaveSessionTitle} — ${t.formateur.shortcutEsc}`)}
     </div>
@@ -267,6 +269,27 @@ export function attachConfigListeners(client) {
     })
   }
 
+  // Competitive mode toggle
+  const toggleCompetitive = document.querySelector('.multiple-choice-toggle[data-testid="competitive-toggle"]')
+  if (toggleCompetitive) {
+    trackListener(toggleCompetitive, 'click', () => {
+      state.competitive = !state.competitive
+      if (!state.competitive) state.allowBlank = false
+      renderMainContent()
+      attachConfigListeners(client)
+    })
+  }
+
+  // Blank vote toggle
+  const toggleBlank = document.querySelector('.multiple-choice-toggle[data-testid="blank-vote-toggle"]')
+  if (toggleBlank) {
+    trackListener(toggleBlank, 'click', () => {
+      state.allowBlank = !state.allowBlank
+      const switchEl = toggleBlank.querySelector('.toggle-switch')
+      switchEl.classList.toggle('active', state.allowBlank)
+    })
+  }
+
   const startBtn = document.getElementById('startVote')
   if (startBtn && _actionHandlers.startVote) {
     trackListener(startBtn, 'click', () => _actionHandlers.startVote(client))
@@ -364,6 +387,24 @@ export function attachVoteListeners(client) {
   if (newVoteBtn && _actionHandlers.resetVote) {
     trackListener(newVoteBtn, 'click', () => _actionHandlers.resetVote(client))
   }
+
+  const revealBtn = document.getElementById('revealBtn')
+  if (revealBtn && _actionHandlers.revealAnswers) {
+    trackListener(revealBtn, 'click', () => {
+      const correct = new Set(
+        Array.from(document.querySelectorAll('input[data-correct-color]:checked'))
+          .map((el) => el.dataset.correctColor)
+      )
+      _actionHandlers.revealAnswers(client, correct)
+    })
+  }
+
+  document.querySelectorAll('.reveal-color-chip input[data-correct-color]').forEach((checkbox) => {
+    trackListener(checkbox, 'change', () => {
+      const chip = checkbox.closest('.reveal-color-chip')
+      if (chip) chip.classList.toggle('selected', checkbox.checked)
+    })
+  })
 }
 
 /**
@@ -420,6 +461,20 @@ export function renderConfigHTML() {
             <span class="toggle-hint">${t.formateur.gameToggleHint}</span>
           </span>
         </label>
+
+        <label class="multiple-choice-toggle" data-testid="competitive-toggle">
+          <span class="toggle-switch ${state.competitive ? 'active' : ''}" data-action="toggle-competitive"></span>
+          <span>${t.formateur.competitiveToggle}
+            <span class="toggle-hint">${t.formateur.competitiveToggleHint}</span>
+          </span>
+        </label>
+
+        ${state.competitive ? `
+        <label class="multiple-choice-toggle" data-testid="blank-vote-toggle">
+          <span class="toggle-switch ${state.allowBlank ? 'active' : ''}" data-action="toggle-blank"></span>
+          <span>${t.formateur.blankVoteToggle}</span>
+        </label>
+        ` : ''}
       </div>
 
       <div class="button-row">
@@ -520,8 +575,7 @@ function renderPresetsSectionHTML() {
  * Render the vote HTML
  * @returns {string}
  */
-export function renderVoteHTML() {
-  const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))
+export function renderVoteHTML() {  const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))
 
   // Calculate initial stats
   const voteCount = state.stagiaires.filter((s) => s.vote && s.vote.length > 0).length
@@ -561,17 +615,90 @@ export function renderVoteHTML() {
         </div>
       </div>
 
+      ${renderCompetitiveSectionHTML(activeColors)}
+
       <div class="button-row">
         ${
           state.voteState === 'active'
             ? `
           <button class="btn btn-danger" id="closeVote" data-testid="close-vote-btn" ${!isConnected ? 'disabled' : ''}>${stop(' class="icon icon-md"')} ${t.formateur.closeVote}</button>
         `
-            : `
+            : state.competitive && !state.revealed
+              ? `
+          <button class="btn btn-primary" id="revealBtn" data-testid="reveal-btn">${checkPlain(' class="icon icon-md"')} ${t.formateur.revealAnswers}</button>
+          <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
+        `
+              : state.competitive && state.revealed
+                ? `
+          <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
+        `
+                : `
           <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
         `
         }
       </div>
+    </div>
+  `
+}
+
+function renderCompetitiveSectionHTML(activeColors) {
+  if (!state.competitive || state.voteState !== 'closed') return ''
+
+  if (!state.revealed) {
+    return `
+      <div class="reveal-section">
+        <div class="reveal-title">${t.formateur.markCorrect}</div>
+        <div class="reveal-colors">
+          ${activeColors.map((color) => {
+            const checked = state.correctColors.has(color.id) ? 'checked' : ''
+            const displayName = state.colorLabels[color.id] || color.name
+            return `
+            <label class="reveal-color-chip ${checked ? 'selected' : ''}" data-correct-color="${color.id}">
+              <input type="checkbox" data-correct-color="${color.id}" ${checked} />
+              <span class="color-swatch" style="background-color: ${color.color}"></span>
+              <span class="reveal-color-name">${escapeHtml(displayName)}</span>
+            </label>`
+          }).join('')}
+          ${state.allowBlank ? `
+          <label class="reveal-color-chip ${state.correctColors.has('blank') ? 'selected' : ''}" data-correct-color="blank">
+            <input type="checkbox" data-correct-color="blank" ${state.correctColors.has('blank') ? 'checked' : ''} />
+            <span class="reveal-color-name">${t.formateur.blankVote}</span>
+          </label>
+          ` : ''}
+        </div>
+      </div>
+    `
+  }
+
+  const sortedByVote = [...state.scoreboard].sort((a, b) => b.voteScore - a.voteScore)
+  const rows = sortedByVote.map((entry) => {
+    const voteColors = (entry.vote || []).filter((c) => c !== 'blank')
+    const isBlank = (entry.vote || []).includes('blank')
+    const colorsHTML = voteColors
+      .map((colorId) => {
+        const color = COLORS.find((c) => c.id === colorId)
+        const isCorrect = state.correctColors.has(colorId)
+        return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+      })
+      .join('')
+    const voteDisplay = isBlank
+      ? '<span class="scoreboard-blank">blanc</span>'
+      : colorsHTML || '—'
+    const voteScoreClass = entry.voteScore >= 0 ? 'positive' : 'negative'
+    const voteScoreText = entry.voteScore >= 0 ? `+${entry.voteScore}` : String(entry.voteScore)
+    return `
+      <li class="scoreboard-row">
+        <span class="scoreboard-name">${escapeHtml(entry.name || t.formateur.anonymous)}</span>
+        <span class="scoreboard-vote">${voteDisplay}</span>
+        <span class="scoreboard-votescore ${voteScoreClass}">${voteScoreText}</span>
+      </li>
+    `
+  }).join('')
+
+  return `
+    <div class="scoreboard-section">
+      <div class="scoreboard-title">${t.formateur.scoreboard}</div>
+      <ol class="scoreboard-list">${rows}</ol>
     </div>
   `
 }
@@ -673,9 +800,9 @@ export function renderStagiairesVotesHTML() {
     .map((s) => {
       const displayName = s.name || t.formateur.anonymous
       const hasVoted = s.vote && s.vote.length > 0
+      const isBlank = s.vote?.includes('blank')
       const isConnected = s.connected
 
-      // Online indicator dot
       const onlineDot = `<span class="online-dot ${isConnected ? 'connected' : 'disconnected'}" title="${isConnected ? t.formateur.online : t.formateur.offline}"></span>`
 
       if (!hasVoted) {
@@ -688,8 +815,17 @@ export function renderStagiairesVotesHTML() {
       `
       }
 
-      // Voter: show colors
+      if (isBlank) {
+        return `
+        <div class="stagiaire-vote-item">
+          <span class="stagiaire-vote-name">${onlineDot}<span class="name-text" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span></span>
+          <div class="stagiaire-vote-colors"><span class="stagiaire-vote-blank">${t.formateur.blankVote}</span></div>
+        </div>
+      `
+      }
+
       const colorsHTML = s.vote
+        .filter((colorId) => colorId !== 'blank')
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
           return `<span class="stagiaire-vote-swatch" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`

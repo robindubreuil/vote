@@ -71,7 +71,7 @@ func TestStartVote(t *testing.T) {
 	m.CreateSession("ABC", "trainer1")
 
 	colors := []string{"rouge", "bleu"}
-	err := m.StartVote("ABC", "trainer1", colors, true, nil, false)
+	err := m.StartVote("ABC", "trainer1", colors, true, nil, false, false, false)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -85,7 +85,7 @@ func TestStartVote(t *testing.T) {
 	}
 
 	// Unauthorized trainer
-	err = m.StartVote("ABC", "imposter", colors, true, nil, false)
+	err = m.StartVote("ABC", "imposter", colors, true, nil, false, false, false)
 	if err != ErrUnauthorized {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
@@ -95,7 +95,7 @@ func TestStartVoteGameEnabled(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 
-	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true); err != nil {
+	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true, false, false); err != nil {
 		t.Fatalf("StartVote: %v", err)
 	}
 	session, _ := m.GetSession("ABC")
@@ -107,7 +107,7 @@ func TestStartVoteGameEnabled(t *testing.T) {
 	}
 
 	// ResetVote must propagate the flag too.
-	if err := m.ResetVote("ABC", "trainer1", []string{"bleu"}, false, nil, true); err != nil {
+	if err := m.ResetVote("ABC", "trainer1", []string{"bleu"}, false, nil, true, false, false); err != nil {
 		t.Fatalf("ResetVote: %v", err)
 	}
 	session, _ = m.GetSession("ABC")
@@ -116,7 +116,7 @@ func TestStartVoteGameEnabled(t *testing.T) {
 	}
 
 	// Turning it off works.
-	if err := m.StartVote("ABC", "trainer1", []string{"vert"}, false, nil, false); err != nil {
+	if err := m.StartVote("ABC", "trainer1", []string{"vert"}, false, nil, false, false, false); err != nil {
 		t.Fatalf("StartVote: %v", err)
 	}
 	session, _ = m.GetSession("ABC")
@@ -129,7 +129,7 @@ func TestSubmitVote(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
-	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false)
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 
 	// Valid vote
 	name, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
@@ -163,7 +163,7 @@ func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
-	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false)
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "bleu"})
 	if err == nil {
@@ -178,7 +178,7 @@ func TestSubmitVoteMultipleChoiceAllowed(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
-	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, false)
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "bleu"})
 	if err != nil {
@@ -190,7 +190,7 @@ func TestSubmitVoteEmptyColors(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
-	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false)
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{})
 	if err == nil {
@@ -211,9 +211,9 @@ func TestUpdateStagiaireNameNonexistent(t *testing.T) {
 func TestResetVote(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false)
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 
-	err := m.ResetVote("ABC", "trainer1", []string{"bleu"}, true, nil, false)
+	err := m.ResetVote("ABC", "trainer1", []string{"bleu"}, true, nil, false, false, false)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -230,7 +230,7 @@ func TestResetVote(t *testing.T) {
 	}
 
 	// Unauthorized
-	err = m.ResetVote("ABC", "imposter", []string{}, false, nil, false)
+	err = m.ResetVote("ABC", "imposter", []string{}, false, nil, false, false, false)
 	if err != ErrUnauthorized {
 		t.Errorf("expected ErrUnauthorized")
 	}

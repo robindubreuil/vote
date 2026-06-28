@@ -63,7 +63,7 @@ func TestProductStatsWiredThroughManager(t *testing.T) {
 	const id2 = "stagiaire002"
 	m.JoinStagiaire("ABC", id1, "Alice")
 	m.JoinStagiaire("ABC", id2, "Bob")
-	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false); err != nil {
+	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	m.SubmitVote("ABC", id1, []string{"rouge"})
@@ -105,7 +105,7 @@ func TestProductStatsWiredThroughManager(t *testing.T) {
 func TestProductStatsFeatureFlags(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	if err := m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, true); err != nil {
+	if err := m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	snap := m.Stats().Snapshot()
@@ -120,7 +120,7 @@ func TestProductStatsFeatureFlags(t *testing.T) {
 func TestProductStatsFailedVoteDoesNotCount(t *testing.T) {
 	m := NewManager()
 	// No session created — StartVote must error and must NOT bump the counter.
-	_ = m.StartVote("NOPE", "trainer1", []string{"rouge"}, false, nil, false)
+	_ = m.StartVote("NOPE", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 	snap := m.Stats().Snapshot()
 	if snap.VotesStarted != 0 {
 		t.Errorf("VotesStarted should be 0 after failed start, got %d", snap.VotesStarted)

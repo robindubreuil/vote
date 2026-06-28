@@ -63,7 +63,7 @@ func TestHistoryReturnsPersistedSamples(t *testing.T) {
 	mgr := srv.hub.VoteManager
 	mgr.CreateSession("ABC", "t1")
 	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
-	mgr.StartVote("ABC", "t1", []string{"rouge"}, false, nil, false)
+	mgr.StartVote("ABC", "t1", []string{"rouge"}, false, nil, false, false, false)
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 
 	// Sampling goroutine ticks every 100ms; also force a synchronous flush.
@@ -126,7 +126,7 @@ func TestPersistenceRestoresCountersAcrossRestart(t *testing.T) {
 	}
 	h1.VoteManager.CreateSession("ABC", "t1")
 	h1.VoteManager.JoinStagiaire("ABC", "stagiaire001", "Alice")
-	h1.VoteManager.StartVote("ABC", "t1", []string{"rouge"}, false, nil, true)
+	h1.VoteManager.StartVote("ABC", "t1", []string{"rouge"}, false, nil, true, false, false)
 	h1.VoteManager.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 	h1.VoteManager.SubmitVote("ABC", "stagiaire002", []string{"rouge"})
 	srv1.FlushStats()

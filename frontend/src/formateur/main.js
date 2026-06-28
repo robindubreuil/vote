@@ -21,6 +21,7 @@ setActionHandlers({
   startVote: handlers.startVote,
   closeVote: handlers.closeVote,
   resetVote: handlers.resetVote,
+  revealAnswers: handlers.revealAnswers,
   resetConfig: handlers.resetConfig,
   beginSavePreset: handlers.beginSavePreset,
   cancelSavePreset: handlers.cancelSavePreset,

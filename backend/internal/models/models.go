@@ -7,8 +7,12 @@ type Message struct {
 	Name           string            `json:"name,omitempty"`
 	Colors         []string          `json:"colors,omitempty"`
 	MultipleChoice bool              `json:"multipleChoice,omitempty"`
-	Labels         map[string]string `json:"labels,omitempty"`      // Custom labels for colors
-	GameEnabled    bool              `json:"gameEnabled,omitempty"` // Mini-game enabled while trainees wait
+	Labels         map[string]string `json:"labels,omitempty"`
+	GameEnabled    bool              `json:"gameEnabled,omitempty"`
+	Competitive    bool              `json:"competitive,omitempty"`
+	CorrectColors  []string          `json:"correctColors,omitempty"`
+	AllowBlank     bool              `json:"allowBlank,omitempty"`
+	GameScore      int               `json:"gameScore,omitempty"`
 }
 
 const (

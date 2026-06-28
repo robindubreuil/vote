@@ -12,13 +12,46 @@
 // place / clear / submit / newGame methods.
 
 import { COLORS } from '@shared/colors.js'
-import { loadHighScore, saveHighScore } from '@shared/game-storage.js'
+import { loadHighScore, saveHighScore, loadStreak, saveStreak } from '@shared/game-storage.js'
 
 const DEFAULT_CODE_LENGTH = 4
 const DEFAULT_MAX_ATTEMPTS = 8
 const POINTS_PER_REMAINING_ATTEMPT = 100
 const TIME_BONUS_UNDER_30S = 80
 const TIME_BONUS_UNDER_60S = 40
+
+const DIFFICULTY_TIERS = [
+  { level: 1, paletteSize: 4, threshold: 0 },
+  { level: 2, paletteSize: 5, threshold: 700 },
+  { level: 3, paletteSize: 6, threshold: 1200 },
+  { level: 4, paletteSize: 7, threshold: 2000 },
+  { level: 5, paletteSize: 8, threshold: 2500 }
+]
+
+const STREAK_MULT_STEP = 0.25
+const STREAK_MULT_CAP = 3
+
+export function getDifficulty(highScore) {
+  for (let i = DIFFICULTY_TIERS.length - 1; i >= 0; i--) {
+    if (highScore >= DIFFICULTY_TIERS[i].threshold) return DIFFICULTY_TIERS[i]
+  }
+  return DIFFICULTY_TIERS[0]
+}
+
+export function getLevelProgress(highScore) {
+  const diff = getDifficulty(highScore)
+  if (diff.level >= DIFFICULTY_TIERS.length) return { pct: 100, toNext: 0 }
+  const next = DIFFICULTY_TIERS[diff.level]
+  const span = next.threshold - diff.threshold
+  return {
+    pct: Math.min(100, ((highScore - diff.threshold) / span) * 100),
+    toNext: next.threshold - highScore
+  }
+}
+
+export function streakMultiplier(streak) {
+  return Math.min(1 + streak * STREAK_MULT_STEP, STREAK_MULT_CAP)
+}
 
 function defaultPalette() {
   return COLORS.slice(0, 6).map((c) => ({ id: c.id, color: c.color, name: c.name }))
@@ -101,6 +134,7 @@ export class Mastermind {
     this.palette = sanitizePalette(opts.colors)
     this.codeLength = Math.max(2, Math.min(6, Number(opts.codeLength) || DEFAULT_CODE_LENGTH))
     this.maxAttempts = Math.max(4, Math.min(12, Number(opts.maxAttempts) || DEFAULT_MAX_ATTEMPTS))
+    this.level = Number(opts.level) || 1
     this._newRound()
   }
 
@@ -113,6 +147,10 @@ export class Mastermind {
     this.startedAt = Date.now()
     this.solvedAt = null
     this.score = null
+    this.baseScore = null
+    this.multiplier = 1
+    this.isRecord = false
+    this.leveledUp = false
   }
 
   /** Place a color in the first empty slot of the current row. No-op if row is full. */
@@ -159,24 +197,30 @@ export class Mastermind {
       this.status = 'won'
       this.solvedAt = Date.now()
       this.score = this._computeScore()
-      // Persist high score — only on win, only if it beats the previous best.
-      const isRecord = saveHighScore(this.score)
-      this.isRecord = isRecord
+      const prevBest = loadHighScore()
+      this.isRecord = saveHighScore(this.score)
+      this.leveledUp = this.isRecord && getDifficulty(this.score).level > getDifficulty(prevBest).level
+      saveStreak(loadStreak() + 1)
     } else if (this.guesses.length >= this.maxAttempts) {
       this.status = 'lost'
       this.score = 0
       this.isRecord = false
+      this.leveledUp = false
+      saveStreak(0)
     }
     return true
   }
 
   _computeScore() {
     const remaining = this.maxAttempts - this.guesses.length
-    let s = (remaining + 1) * POINTS_PER_REMAINING_ATTEMPT
+    let base = (remaining + 1) * POINTS_PER_REMAINING_ATTEMPT
     const elapsedSec = Math.max(0, (this.solvedAt - this.startedAt) / 1000)
-    if (elapsedSec < 30) s += TIME_BONUS_UNDER_30S
-    else if (elapsedSec < 60) s += TIME_BONUS_UNDER_60S
-    return s
+    if (elapsedSec < 30) base += TIME_BONUS_UNDER_30S
+    else if (elapsedSec < 60) base += TIME_BONUS_UNDER_60S
+    const mult = streakMultiplier(loadStreak())
+    this.baseScore = base
+    this.multiplier = mult
+    return Math.round(base * mult)
   }
 
   /** Reset for a new round with a new secret. */
@@ -195,13 +239,18 @@ export class Mastermind {
       currentRow: [...this.currentRow],
       status: this.status,
       score: this.score,
+      baseScore: this.baseScore,
+      multiplier: this.multiplier || 1,
       isRecord: Boolean(this.isRecord),
       best: loadHighScore(),
+      level: this.level,
       attemptsUsed: this.guesses.length,
       attemptsLeft: this.maxAttempts - this.guesses.length,
-      secret: this.status === 'lost' || this.status === 'won' ? [...this.secret] : null
+      secret: this.status === 'lost' || this.status === 'won' ? [...this.secret] : null,
+      streak: loadStreak(),
+      leveledUp: Boolean(this.leveledUp)
     }
   }
 }
 
-export const _test = { computePegs, sanitizePalette, defaultPalette, DEFAULT_CODE_LENGTH }
+export const _test = { computePegs, sanitizePalette, defaultPalette, DEFAULT_CODE_LENGTH, getDifficulty, getLevelProgress, streakMultiplier, DIFFICULTY_TIERS }

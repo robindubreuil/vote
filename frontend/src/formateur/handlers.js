@@ -20,6 +20,8 @@ export async function resetConfig() {
   state.colorLabels = {}
   state.multipleChoice = false
   state.gameEnabled = false
+  state.competitive = false
+  state.allowBlank = false
   state.presetSaving = false
   renderMainContent()
   const client = getClient()
@@ -52,7 +54,9 @@ export function confirmSavePreset(rawName) {
     selectedColors: Array.from(state.selectedColors),
     colorLabels: state.colorLabels,
     multipleChoice: state.multipleChoice,
-    gameEnabled: state.gameEnabled
+    gameEnabled: state.gameEnabled,
+    competitive: state.competitive,
+    allowBlank: state.allowBlank
   })
   if (!saved) {
     showToast(t.formateur.presetSaveFailed, { type: 'error' })
@@ -72,6 +76,8 @@ export function applyPreset(id) {
   state.colorLabels = { ...preset.config.colorLabels }
   state.multipleChoice = preset.config.multipleChoice
   state.gameEnabled = Boolean(preset.config.gameEnabled)
+  state.competitive = Boolean(preset.config.competitive)
+  state.allowBlank = Boolean(preset.config.allowBlank)
   renderMainContent()
   const client = getClient()
   if (client) attachConfigListeners(client)
@@ -172,6 +178,8 @@ export function applyLastConfigIfAvailable() {
   state.colorLabels = { ...last.colorLabels }
   state.multipleChoice = last.multipleChoice
   state.gameEnabled = Boolean(last.gameEnabled)
+  state.competitive = Boolean(last.competitive)
+  state.allowBlank = Boolean(last.allowBlank)
   renderMainContent()
   const client = getClient()
   if (client) attachConfigListeners(client)
@@ -188,7 +196,9 @@ export function startVote(client) {
     selectedColors: Array.from(state.selectedColors),
     colorLabels: state.colorLabels,
     multipleChoice: state.multipleChoice,
-    gameEnabled: state.gameEnabled
+    gameEnabled: state.gameEnabled,
+    competitive: state.competitive,
+    allowBlank: state.allowBlank
   })
 
   client.send({
@@ -197,7 +207,9 @@ export function startVote(client) {
     colors: Array.from(state.selectedColors),
     multipleChoice: state.multipleChoice,
     labels: state.colorLabels,
-    gameEnabled: state.gameEnabled
+    gameEnabled: state.gameEnabled,
+    competitive: state.competitive,
+    allowBlank: state.allowBlank
   })
 }
 
@@ -213,6 +225,19 @@ export function closeVote(client) {
   })
 }
 
+export function revealAnswers(client, correctColors) {
+  if (!client) {
+    showError('Erreur de connexion')
+    return
+  }
+
+  client.send({
+    type: 'reveal_answers',
+    sessionCode: state.sessionCode,
+    correctColors: Array.from(correctColors)
+  })
+}
+
 export function resetVote(client) {
   if (!client) {
     showError('Erreur de connexion')
@@ -224,7 +249,9 @@ export function resetVote(client) {
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
     multipleChoice: state.multipleChoice,
-    gameEnabled: state.gameEnabled
+    gameEnabled: state.gameEnabled,
+    competitive: state.competitive,
+    allowBlank: state.allowBlank
   })
 }
 
