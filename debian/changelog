@@ -1,4 +1,4 @@
-vote (1.1.0-1) unstable; urgency=medium
+vote (1.2.0-1) unstable; urgency=medium
 
   * Add maintainer dashboard with HMAC cookie auth (/dashboard)
   * Add server-side stats persistence (counters.json + stats.jsonl)
