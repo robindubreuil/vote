@@ -10,9 +10,8 @@ case "$1" in
                 vote || true
         fi
 
-        # Create and set permissions for runtime directories
-        install -d -o vote -g vote -m 0755 /var/lib/vote
-        install -d -o vote -g vote -m 0755 /var/log/vote
+        # Create and set permissions for the data directory
+        install -d -o vote -g vote -m 0750 /var/lib/vote
 
         # Enable the service but don't start it (admin will start it)
         if [ -d /run/systemd/system ]; then

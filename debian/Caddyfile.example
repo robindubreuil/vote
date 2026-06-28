@@ -1,0 +1,17 @@
+# Sample Caddyfile for Vote Coloré
+#
+# Caddy serves the frontend static assets and proxies API/WebSocket
+# routes to the Go backend. TLS is handled automatically by Caddy.
+#
+# Install: cp /usr/share/doc/vote/examples/Caddyfile /etc/caddy/Caddyfile
+# Adjust the domain name, then: systemctl reload caddy
+
+vote.example.com {
+	# Proxy API, WebSocket, and dashboard routes to the Go backend.
+	@api path /ws* /health /metrics /dashboard*
+	reverse_proxy @api localhost:8080
+
+	# Serve frontend static assets.
+	root * /usr/share/vote/www
+	file_server
+}

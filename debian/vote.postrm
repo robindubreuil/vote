@@ -3,10 +3,9 @@ set -e
 
 case "$1" in
     purge)
-        # Remove runtime directories (but preserve data if admin wants)
-        # Uncomment the following lines to remove data on purge
+        # Remove data directory on purge
+        # Uncomment to also remove persistent stats
         # rm -rf /var/lib/vote
-        # rm -rf /var/log/vote
 
         # Remove user and group
         if getent passwd vote > /dev/null 2>&1; then

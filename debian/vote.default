@@ -1,11 +1,39 @@
 # Configuration for Vote Coloré server
+# Loaded by the systemd service (vote.service).
+# Uncomment and set values as needed.
+
+# ── Network ──────────────────────────────────────────────
 
 # Port to listen on (default: 8080)
 PORT=8080
 
-# Allowed CORS origins (comma separated)
-# Default: localhost dev origins. Change to your production origins.
+# Host/interface to bind (default: all interfaces)
+# HOST=
+
+# Allowed CORS origins (comma separated).
+# IMPORTANT: for production behind a reverse proxy, set to your domain.
+# Default: localhost dev origins (will NOT work in production).
 # ALLOWED_ORIGINS=https://vote.example.com
 
-# Trusted proxy IPs (comma separated) for correct client IP behind reverse proxy
+# Trusted proxy IPs (comma separated) for correct client IP
+# detection behind Caddy/nginx. Without this, all clients
+# appear as the proxy's IP, which breaks per-IP rate limiting.
 # TRUSTED_PROXIES=127.0.0.1
+
+# ── Persistence ──────────────────────────────────────────
+
+# Directory for persistent usage stats (counters.json + stats.jsonl).
+# Must be writable by the vote user.
+VOTE_DATA_DIR=/var/lib/vote
+
+# How often to flush stats to disk (default: 5m).
+# VOTE_STATS_INTERVAL=5m
+
+# ── Dashboard (optional) ─────────────────────────────────
+
+# Set a secret to enable the /dashboard admin panel.
+# Leave unset/empty to disable the dashboard entirely.
+# VOTE_DASHBOARD_SECRET=change-me-to-a-long-random-string
+
+# Dashboard cookie lifetime (default: 168h = 7 days).
+# VOTE_DASHBOARD_MAX_AGE=168h

@@ -4,7 +4,7 @@ set -e
 case "$1" in
     remove|upgrade|deconfigure)
         if [ -d /run/systemd/system ]; then
-            if [ -f /lib/systemd/system/vote.service ]; then
+            if [ -f /usr/lib/systemd/system/vote.service ]; then
                 systemctl stop vote.service || true
             fi
         fi
