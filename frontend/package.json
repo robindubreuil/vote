@@ -9,6 +9,7 @@
     "build": "npm run version && npm run sw && vite build && node scripts/compress-assets.js dist",
     "preview": "vite preview",
     "test": "vitest run",
+    "pretest": "node scripts/gen-version.js",
     "test:watch": "vitest",
     "lint": "eslint src shared",
     "lint:fix": "eslint src shared --fix",
