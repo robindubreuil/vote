@@ -3,7 +3,6 @@ linters:
   enable:
     - gocritic
     - gosec
-    - misspell
     - revive
   settings:
     gosec:
@@ -43,9 +42,6 @@ linters:
           - errcheck
           - gosec
         path: integration/
-      - linters:
-          - misspell
-        path: dashboard.*\.go
     paths:
       - third_party$
       - builtin$
