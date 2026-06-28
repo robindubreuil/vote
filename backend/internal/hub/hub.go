@@ -319,7 +319,8 @@ func (h *Hub) registerClient(client *Client) {
 			gameEnabled := session.GetGameEnabled()
 			competitive := session.GetCompetitive()
 			allowBlank := session.GetAllowBlank()
-			if state == models.VoteStateActive {
+			switch state {
+			case models.VoteStateActive:
 				msg := map[string]any{
 					"type":           "vote_started",
 					"colors":         colors,
@@ -332,7 +333,7 @@ func (h *Hub) registerClient(client *Client) {
 					msg["existingVote"] = existingVote
 				}
 				client.SendJSON(msg)
-			} else if state == models.VoteStateClosed {
+			case models.VoteStateClosed:
 				msg := map[string]any{
 					"type":           "vote_started",
 					"colors":         colors,
