@@ -156,7 +156,9 @@ function handleMessage(msg) {
 
     case 'vote_started':
       state.voteState = 'active'
-      state.voteStartTime = msg.voteStartTime ? msg.voteStartTime * 1000 : Date.now()
+      state.voteStartTime = msg.voteElapsed != null
+        ? Date.now() - msg.voteElapsed * 1000
+        : Date.now()
       if (msg.colors) state.selectedColors = new Set(msg.colors)
       if (msg.multipleChoice !== undefined) state.multipleChoice = msg.multipleChoice
       if (msg.labels) state.colorLabels = msg.labels

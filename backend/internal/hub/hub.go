@@ -236,6 +236,7 @@ func (h *Hub) registerClient(client *Client) {
 					"colors":         colors,
 					"multipleChoice": multipleChoice,
 					"voteStartTime":  voteStartTime,
+					"voteElapsed":    time.Now().Unix() - voteStartTime,
 					"gameEnabled":    gameEnabled,
 				}
 				if labels != nil {
