@@ -7,7 +7,7 @@ import (
 )
 
 func TestCheckJoinRateLimit(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	testIP := "192.168.1.1"
 
@@ -37,7 +37,7 @@ func TestCheckJoinRateLimit(t *testing.T) {
 }
 
 func TestCheckMessageRate(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	clientID := "client1"
 
@@ -68,7 +68,7 @@ func TestGenerateID(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	// Inject stale data manually if possible, but map is private.
 	// We can't easily test private map cleanup from outside package
@@ -90,7 +90,7 @@ func TestCleanup(t *testing.T) {
 }
 
 func TestRemoveMessageRate(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	clientID := "client_rem"
 
@@ -117,7 +117,7 @@ func TestRemoveMessageRate(t *testing.T) {
 
 func TestShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	sec := NewSecurity(ctx)
+	sec := NewSecurity(ctx, 0)
 
 	// Wait a bit to ensure loop starts
 	time.Sleep(10 * time.Millisecond)
@@ -146,7 +146,7 @@ func TestGenerateTimestampID(t *testing.T) {
 }
 
 func TestSessionCreateRate(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	ip := "10.0.0.1"
 
@@ -172,7 +172,7 @@ func TestSessionCreateRate(t *testing.T) {
 }
 
 func TestSessionCreateRateRollback(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	ip := "10.0.0.1"
 
@@ -193,7 +193,7 @@ func TestSessionCreateRateRollback(t *testing.T) {
 }
 
 func TestSessionCreateRateWindowExpiry(t *testing.T) {
-	sec := NewSecurity(context.Background())
+	sec := NewSecurity(context.Background(), 0)
 	defer sec.Shutdown()
 	ip := "10.0.0.1"
 

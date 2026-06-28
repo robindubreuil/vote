@@ -100,6 +100,7 @@ jobs:
           echo $! > /tmp/vote-server.pid
         env:
           PORT: "8080"
+          VOTE_MAX_SESSIONS_PER_HOUR: "10000"
 
       - name: Wait for backend
         run: |

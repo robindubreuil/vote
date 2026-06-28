@@ -42,22 +42,27 @@ type MessageRateLimiter struct {
 }
 
 type Security struct {
-	failedJoins      map[string]*FailedJoinAttempt
-	messageRates     map[string]*MessageRateLimiter
-	sessionCreations map[string][]time.Time // per-IP creation timestamps (sliding window)
-	mu               sync.RWMutex
-	ctx              context.Context
-	cancel           context.CancelFunc
+	failedJoins         map[string]*FailedJoinAttempt
+	messageRates        map[string]*MessageRateLimiter
+	sessionCreations    map[string][]time.Time
+	maxSessionCreations int
+	mu                  sync.RWMutex
+	ctx                 context.Context
+	cancel              context.CancelFunc
 }
 
-func NewSecurity(parentCtx context.Context) *Security {
+func NewSecurity(parentCtx context.Context, maxSessionCreations int) *Security {
+	if maxSessionCreations <= 0 {
+		maxSessionCreations = MaxSessionCreationsPerHour
+	}
 	ctx, cancel := context.WithCancel(parentCtx)
 	s := &Security{
-		failedJoins:      make(map[string]*FailedJoinAttempt),
-		messageRates:     make(map[string]*MessageRateLimiter),
-		sessionCreations: make(map[string][]time.Time),
-		ctx:              ctx,
-		cancel:           cancel,
+		failedJoins:         make(map[string]*FailedJoinAttempt),
+		messageRates:        make(map[string]*MessageRateLimiter),
+		sessionCreations:    make(map[string][]time.Time),
+		maxSessionCreations: maxSessionCreations,
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 	go s.cleanupLoop()
 	return s
@@ -160,7 +165,7 @@ func (s *Security) CheckSessionCreateRate(ip string) bool {
 	}
 	s.sessionCreations[ip] = keep
 
-	return len(keep) < MaxSessionCreationsPerHour
+	return len(keep) < s.maxSessionCreations
 }
 
 // RecordSessionCreation notes a successful creation for rate-limiting

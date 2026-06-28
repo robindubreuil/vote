@@ -20,6 +20,10 @@ PORT=8080
 # appear as the proxy's IP, which breaks per-IP rate limiting.
 # TRUSTED_PROXIES=127.0.0.1
 
+# Per-IP session creation limit per hour (default: 20).
+# Generous enough for a building with multiple classrooms.
+# VOTE_MAX_SESSIONS_PER_HOUR=20
+
 # ── Persistence ──────────────────────────────────────────
 
 # Directory for persistent usage stats (counters.json + stats.jsonl).
