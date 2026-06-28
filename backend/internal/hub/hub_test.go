@@ -32,7 +32,7 @@ func TestHubSessionLifecycle(t *testing.T) {
 	// Fake trainer client - use 12-char lowercase alphanumeric ID matching GenerateID format
 	trainer := &Client{
 		ID:        "trainer1abcde",
-		SessionID: "1234",
+		SessionID: "ABC",
 		Type:      "trainer",
 		Send:      make(chan []byte, 10),
 		Hub:       h,
@@ -44,14 +44,14 @@ func TestHubSessionLifecycle(t *testing.T) {
 	// Wait for registration
 	time.Sleep(10 * time.Millisecond)
 
-	if !h.SessionExists("1234") {
+	if !h.SessionExists("ABC") {
 		t.Error("Session should exist")
 	}
 
 	// Fake stagiaire - use 12-char lowercase alphanumeric ID matching GenerateID format
 	stagiaire := &Client{
 		ID:        "s1abc1234567",
-		SessionID: "1234",
+		SessionID: "ABC",
 		Type:      "stagiaire",
 		Name:      "Bob",
 		Send:      make(chan []byte, 10),
@@ -63,7 +63,7 @@ func TestHubSessionLifecycle(t *testing.T) {
 
 	// Check connections
 	h.mu.RLock()
-	conns := h.Connections["1234"]
+	conns := h.Connections["ABC"]
 	h.mu.RUnlock()
 
 	if _, ok := conns.Stagiaires["s1abc1234567"]; !ok {
@@ -75,7 +75,7 @@ func TestHubSessionLifecycle(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	h.mu.RLock()
-	conns = h.Connections["1234"]
+	conns = h.Connections["ABC"]
 	h.mu.RUnlock()
 
 	if _, ok := conns.Stagiaires["s1abc1234567"]; ok {

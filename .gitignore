@@ -21,6 +21,8 @@ debian/files
 debian/*.substvars
 debian/vote/
 debian/*.debhelper
+.gocache/
+.gomodcache/
 
 # Node modules
 node_modules/
@@ -56,6 +58,7 @@ dist-ssr/
 
 # Generated files
 frontend/shared/version.js
+frontend/public/sw.js
 
 # AI tools
 CLAUDE.md

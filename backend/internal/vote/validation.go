@@ -9,15 +9,23 @@ import (
 
 const (
 	MaxNameLength  = 16
-	MaxLabelLength = 6 // Matches frontend maxlength for UI brevity
+	MaxLabelLength = 12 // Matches frontend maxlength for UI brevity
+
+	// Session codes are 3 uppercase letters drawn from a disambiguation-safe
+	// alphabet (no I/O/Z, which are easily confused with 1/0/2 on a phone
+	// screen or read aloud in a classroom).
+	SessionCodeLength = 3
+	SessionAlphabet   = "ABCDEFGHJKLMNPQRSTUVWXY"
 
 	// Server-generated identifiers
-	sessionCodePattern = `^\d{4}$`        // 4-digit codes
 	stagiaireIDPattern = `^[a-z0-9]{12}$` // 12-char crypto-random
 )
 
 var (
-	sessionCodeRegex = regexp.MustCompile(sessionCodePattern)
+	// sessionCodeRegex strictly enforces membership in SessionAlphabet so that
+	// typos involving excluded letters (I, O, Z) are rejected with a clear
+	// "invalid code" rather than producing a "session not found" downstream.
+	sessionCodeRegex = regexp.MustCompile(`^[ABCDEFGHJKLMNPQRSTUVWXY]{3}$`)
 	stagiaireIDRegex = regexp.MustCompile(stagiaireIDPattern)
 )
 

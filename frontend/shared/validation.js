@@ -33,6 +33,7 @@ export function validateName(name) {
 
 /**
  * Validates a session code.
+ * Accepts lowercase input (normalized to uppercase before matching).
  * @param {string} code - The session code to validate
  * @returns {string|null} - Error message or null if valid
  */
@@ -41,8 +42,9 @@ export function validateSessionCode(code) {
     return 'Le code session est requis'
   }
 
-  if (!CONSTANTS.SESSION_CODE_REGEX.test(code)) {
-    return `Le code doit contenir ${CONSTANTS.SESSION_CODE_LENGTH} chiffres`
+  const normalized = CONSTANTS.SESSION_CODE_NORMALIZE(code)
+  if (!CONSTANTS.SESSION_CODE_REGEX.test(normalized)) {
+    return `Le code doit contenir ${CONSTANTS.SESSION_CODE_LENGTH} lettres`
   }
 
   return null

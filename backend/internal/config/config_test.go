@@ -1,13 +1,11 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
 func TestLoadConfig(t *testing.T) {
-	os.Setenv("PORT", "9090")
-	defer os.Unsetenv("PORT")
+	t.Setenv("PORT", "9090")
 
 	cfg := LoadConfig()
 	if cfg.Port != "9090" {

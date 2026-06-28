@@ -3,6 +3,8 @@ import { getWebSocketURL } from '@shared/config.js'
 import { showError } from '@shared/ui.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
+import { pauseGameExternal } from './handlers.js'
+import { safeSessionSet } from '@shared/utils/safe-storage.js'
 
 // Configuration de l'API WebSocket
 const WS_URL = getWebSocketURL()
@@ -18,6 +20,11 @@ export function initClient() {
   client = new VoteClient(WS_URL, {
     onStatusChange: (connected) => {
       state.connected = connected
+      // Auto-pause the game on disconnect — the trainee shouldn't be
+      // mid-catch when the round could start without them knowing.
+      if (!connected) {
+        pauseGameExternal()
+      }
       // Re-render to update session code connection status
       if (state.appState !== AppState.JOINING) {
         render()
@@ -76,10 +83,10 @@ function handleMessage(msg) {
       // Store the server-generated stagiaireId
       if (msg.stagiaireId) {
         state.stagiaireId = msg.stagiaireId
-        sessionStorage.setItem('vote_stagiaire_id', msg.stagiaireId)
+        safeSessionSet('vote_stagiaire_id', msg.stagiaireId)
       }
       state.appState = AppState.WAITING
-      sessionStorage.setItem('vote_session_code', msg.sessionCode)
+      safeSessionSet('vote_session_code', msg.sessionCode)
       render()
       break
 
@@ -89,19 +96,19 @@ function handleMessage(msg) {
         errorMessage = 'Session introuvable'
       }
       showError(errorMessage)
-
-      // For duplicate name error, stay in JOINING state
-      if (errorMessage === 'Ce nom est déjà utilisé' && !state.prenomEdit) {
-        // Keep in JOINING state, error is shown via showError()
-      }
       break
     }
 
     case 'vote_started':
-      // Nouveau vote lancé
+      // Nouveau vote lancé — pause the mini-game if it was open and
+      // surface the vote UI. The trainee must vote before resuming.
+      pauseGameExternal()
       state.availableColors = msg.colors || []
       state.multipleChoice = msg.multipleChoice || false
       state.colorLabels = msg.labels || {}
+      if (typeof msg.gameEnabled === 'boolean') {
+        state.gameEnabled = msg.gameEnabled
+      }
       state.selectedColors.clear()
 
       // Restore existing vote if rejoining
@@ -124,13 +131,19 @@ function handleMessage(msg) {
       break
 
     case 'vote_closed':
-      // Vote terminé par le formateur
+      // Vote terminé par le formateur — pause the game too; the trainee
+      // shouldn't be mid-catch when the round result is shown.
+      pauseGameExternal()
       state.appState = AppState.CLOSED
       render()
       break
 
     case 'vote_reset':
       // Réinitialisation pour un nouveau vote
+      if (typeof msg.gameEnabled === 'boolean') {
+        state.gameEnabled = msg.gameEnabled
+      }
+      pauseGameExternal()
       state.appState = AppState.WAITING
       state.selectedColors.clear()
       state.hasVoted = false
@@ -144,8 +157,3 @@ function handleMessage(msg) {
       break
   }
 }
-
-/**
- * Export the handleMessage function for external use if needed
- */
-export { handleMessage }

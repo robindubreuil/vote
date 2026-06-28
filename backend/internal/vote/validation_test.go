@@ -9,15 +9,18 @@ func TestIsValidSessionCode(t *testing.T) {
 		code string
 		want bool
 	}{
-		{"1234", true},
-		{"0000", true},
-		{"9999", true},
+		{"ABC", true},
+		{"KQR", true},
+		{"XYZ", false}, // Z is excluded from the alphabet
+		{"IOA", false}, // I and O are excluded
 		{"", false},
-		{"123", false},
-		{"12345", false},
-		{"abcd", false},
-		{"12 4", false},
-		{"12.4", false},
+		{"AB", false},   // too short
+		{"ABCD", false}, // too long
+		{"ab", false},   // lowercase, too short
+		{"abc", false},  // lowercase
+		{"AB1", false},  // digit
+		{"A C", false},  // whitespace
+		{"A.C", false},  // punctuation
 	}
 
 	for _, tt := range tests {
@@ -159,8 +162,11 @@ func TestIsValidLabel(t *testing.T) {
 	if IsValidLabel("   ") {
 		t.Error("whitespace-only label should fail")
 	}
-	if IsValidLabel("1234567") {
-		t.Error("7-char label should fail (max 6)")
+	if IsValidLabel("1234567890123") {
+		t.Error("13-char label should fail (max 12)")
+	}
+	if !IsValidLabel("123456789012") {
+		t.Error("12-char label should pass")
 	}
 	if IsValidLabel("test!") {
 		t.Error("label with special char should fail")

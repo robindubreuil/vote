@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS backend-builder
+FROM golang:1.24-alpine AS backend-builder
 RUN apk add --no-cache git
 WORKDIR /build
 COPY backend/go.mod backend/go.sum ./
@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -s -w" \
     -o vote-server ./cmd/server
 
-FROM node:26-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -20,6 +20,13 @@ RUN npm run build
 FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata wget
 RUN adduser -D -H -u 10001 vote
+
+# FHS-compliant persistent state dir for stats counters/history.
+# Owned by the non-root vote user; declared as a volume so usage data
+# survives container recreation.
+RUN mkdir -p /var/lib/vote && chown -R vote:vote /var/lib/vote
+VOLUME /var/lib/vote
+ENV VOTE_DATA_DIR=/var/lib/vote
 
 COPY --from=backend-builder /build/vote-server /usr/bin/vote-server
 COPY --from=frontend-builder /build/frontend/dist /usr/share/vote/www

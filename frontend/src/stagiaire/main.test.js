@@ -14,32 +14,44 @@ function formatSelectedColorNames(selectedColors, colors) {
 }
 
 describe('Stagiaire - Validation du code de session', () => {
-  it('should accept valid 4-digit codes', () => {
-    expect(validateSessionCode('1234')).toBeNull()
-    expect(validateSessionCode('0000')).toBeNull()
-    expect(validateSessionCode('9999')).toBeNull()
+  it('should accept valid 3-letter codes from the safe alphabet', () => {
+    expect(validateSessionCode('ABC')).toBeNull()
+    expect(validateSessionCode('KQR')).toBeNull()
+    expect(validateSessionCode('DEF')).toBeNull()
   })
 
-  it('should reject codes with fewer than 4 digits', () => {
-    expect(validateSessionCode('123')).toBeTruthy()
-    expect(validateSessionCode('12')).toBeTruthy()
-    expect(validateSessionCode('1')).toBeTruthy()
+  it('should accept lowercase input (normalized to uppercase)', () => {
+    expect(validateSessionCode('abc')).toBeNull()
+    expect(validateSessionCode('kQr')).toBeNull()
+  })
+
+  it('should reject codes with fewer than 3 letters', () => {
+    expect(validateSessionCode('AB')).toBeTruthy()
+    expect(validateSessionCode('A')).toBeTruthy()
     expect(validateSessionCode('')).toBeTruthy()
   })
 
-  it('should reject codes with more than 4 digits', () => {
-    expect(validateSessionCode('12345')).toBeTruthy()
-    expect(validateSessionCode('123456')).toBeTruthy()
+  it('should reject codes with more than 3 letters', () => {
+    expect(validateSessionCode('ABCD')).toBeTruthy()
+    expect(validateSessionCode('ABCDE')).toBeTruthy()
   })
 
-  it('should reject codes with letters', () => {
-    expect(validateSessionCode('abcd')).toBeTruthy()
-    expect(validateSessionCode('1a2b')).toBeTruthy()
+  it('should reject excluded letters (I, O, Z)', () => {
+    expect(validateSessionCode('ABC')).toBeNull() // baseline
+    expect(validateSessionCode('IBC')).toBeTruthy()
+    expect(validateSessionCode('ABC')).toBeNull()
+    expect(validateSessionCode('OBC')).toBeTruthy()
+    expect(validateSessionCode('ZBC')).toBeTruthy()
+  })
+
+  it('should reject codes with digits', () => {
+    expect(validateSessionCode('AB1')).toBeTruthy()
+    expect(validateSessionCode('1A2')).toBeTruthy()
   })
 
   it('should reject codes with special characters', () => {
-    expect(validateSessionCode('12 4')).toBeTruthy()
-    expect(validateSessionCode('12-4')).toBeTruthy()
+    expect(validateSessionCode('AB C')).toBeTruthy()
+    expect(validateSessionCode('A-C')).toBeTruthy()
   })
 })
 
@@ -121,11 +133,11 @@ describe('Stagiaire - State transitions', () => {
 
   it('should transition to WAITING after successful join', () => {
     state.appState = AppState.WAITING
-    state.sessionCode = '1234'
+    state.sessionCode = 'ABC'
     state.connected = true
 
     expect(state.appState).toBe(AppState.WAITING)
-    expect(state.sessionCode).toBe('1234')
+    expect(state.sessionCode).toBe('ABC')
     expect(state.connected).toBe(true)
   })
 
@@ -214,13 +226,13 @@ describe('Stagiaire - WebSocket messages', () => {
   it('should serialize join message', () => {
     const message = {
       type: 'stagiaire_join',
-      sessionCode: '1234',
+      sessionCode: 'ABC',
       name: 'Marie',
       stagiaireId: 'abc123def456'
     }
     const parsed = JSON.parse(JSON.stringify(message))
     expect(parsed.type).toBe('stagiaire_join')
-    expect(parsed.sessionCode).toBe('1234')
+    expect(parsed.sessionCode).toBe('ABC')
     expect(parsed.stagiaireId).toBe('abc123def456')
   })
 
@@ -252,9 +264,9 @@ describe('Stagiaire - WebSocket messages', () => {
   })
 
   it('should parse session_joined with stagiaireId', () => {
-    const parsed = JSON.parse('{"type":"session_joined","sessionCode":"1234","stagiaireId":"abc123def456"}')
+    const parsed = JSON.parse('{"type":"session_joined","sessionCode":"ABC","stagiaireId":"abc123def456"}')
     expect(parsed.type).toBe('session_joined')
-    expect(parsed.sessionCode).toBe('1234')
+    expect(parsed.sessionCode).toBe('ABC')
     expect(parsed.stagiaireId).toBe('abc123def456')
   })
 })

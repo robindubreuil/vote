@@ -17,14 +17,14 @@ func TestCreateSession(t *testing.T) {
 	m := NewManager()
 
 	// Valid creation
-	session, err := m.CreateSession("1234", "trainer1")
+	session, err := m.CreateSession("ABC", "trainer1")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 	if session == nil {
 		t.Fatal("expected session to be returned")
 	}
-	if session.ID != "1234" {
+	if session.ID != "ABC" {
 		t.Errorf("expected session ID 1234, got %s", session.ID)
 	}
 	if session.TrainerID != "trainer1" {
@@ -40,27 +40,27 @@ func TestCreateSession(t *testing.T) {
 
 func TestJoinStagiaire(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
+	m.CreateSession("ABC", "trainer1")
 
 	// Valid join - use exactly 12-char lowercase alphanumeric ID matching GenerateID format
-	err := m.JoinStagiaire("1234", "stag1ab12cde", "Jean")
+	err := m.JoinStagiaire("ABC", "stag1ab12cde", "Jean")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	if session.Stagiaires["stag1ab12cde"] != "Jean" {
 		t.Errorf("expected name Jean, got %s", session.Stagiaires["stag1ab12cde"])
 	}
 
 	// Invalid session
-	err = m.JoinStagiaire("9999", "stag1ab12cde", "Jean")
+	err = m.JoinStagiaire("KQR", "stag1ab12cde", "Jean")
 	if err != ErrSessionNotFound {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
 	}
 
 	// Invalid Name
-	err = m.JoinStagiaire("1234", "stag1ab12cde", "<script>")
+	err = m.JoinStagiaire("ABC", "stag1ab12cde", "<script>")
 	if err != ErrInvalidInput {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -68,15 +68,15 @@ func TestJoinStagiaire(t *testing.T) {
 
 func TestStartVote(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
+	m.CreateSession("ABC", "trainer1")
 
 	colors := []string{"rouge", "bleu"}
-	err := m.StartVote("1234", "trainer1", colors, true, nil)
+	err := m.StartVote("ABC", "trainer1", colors, true, nil, false)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	if session.VoteState != models.VoteStateActive {
 		t.Errorf("expected active state, got %s", session.VoteState)
 	}
@@ -85,20 +85,54 @@ func TestStartVote(t *testing.T) {
 	}
 
 	// Unauthorized trainer
-	err = m.StartVote("1234", "imposter", colors, true, nil)
+	err = m.StartVote("ABC", "imposter", colors, true, nil, false)
 	if err != ErrUnauthorized {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
 }
 
+func TestStartVoteGameEnabled(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+
+	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true); err != nil {
+		t.Fatalf("StartVote: %v", err)
+	}
+	session, _ := m.GetSession("ABC")
+	if !session.GameEnabled {
+		t.Errorf("expected GameEnabled=true after StartVote")
+	}
+	if !session.GetGameEnabled() {
+		t.Errorf("expected GetGameEnabled()=true")
+	}
+
+	// ResetVote must propagate the flag too.
+	if err := m.ResetVote("ABC", "trainer1", []string{"bleu"}, false, nil, true); err != nil {
+		t.Fatalf("ResetVote: %v", err)
+	}
+	session, _ = m.GetSession("ABC")
+	if !session.GameEnabled {
+		t.Errorf("expected GameEnabled=true after ResetVote")
+	}
+
+	// Turning it off works.
+	if err := m.StartVote("ABC", "trainer1", []string{"vert"}, false, nil, false); err != nil {
+		t.Fatalf("StartVote: %v", err)
+	}
+	session, _ = m.GetSession("ABC")
+	if session.GameEnabled {
+		t.Errorf("expected GameEnabled=false after StartVote without flag")
+	}
+}
+
 func TestSubmitVote(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
-	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, false, nil)
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false)
 
 	// Valid vote
-	name, err := m.SubmitVote("1234", "s1abc1234567", []string{"rouge"})
+	name, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -106,20 +140,20 @@ func TestSubmitVote(t *testing.T) {
 		t.Errorf("expected name Jean, got %s", name)
 	}
 
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	if session.Votes["s1abc1234567"][0] != "rouge" {
 		t.Errorf("expected vote rouge")
 	}
 
 	// Invalid color
-	_, err = m.SubmitVote("1234", "s1abc1234567", []string{"vert"})
+	_, err = m.SubmitVote("ABC", "s1abc1234567", []string{"vert"})
 	if err == nil {
 		t.Error("expected error for invalid color")
 	}
 
 	// Vote when not active
-	m.CloseVote("1234", "trainer1")
-	_, err = m.SubmitVote("1234", "s1abc1234567", []string{"rouge"})
+	m.CloseVote("ABC", "trainer1")
+	_, err = m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	if err == nil {
 		t.Error("expected error when vote closed")
 	}
@@ -127,11 +161,11 @@ func TestSubmitVote(t *testing.T) {
 
 func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
-	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, false, nil)
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false)
 
-	_, err := m.SubmitVote("1234", "s1abc1234567", []string{"rouge", "bleu"})
+	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "bleu"})
 	if err == nil {
 		t.Error("expected error when submitting multiple colors in single-choice mode")
 	}
@@ -142,11 +176,11 @@ func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
 
 func TestSubmitVoteMultipleChoiceAllowed(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
-	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, true, nil)
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, false)
 
-	_, err := m.SubmitVote("1234", "s1abc1234567", []string{"rouge", "bleu"})
+	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "bleu"})
 	if err != nil {
 		t.Errorf("multiple colors should be allowed in multiple-choice mode, got: %v", err)
 	}
@@ -154,11 +188,11 @@ func TestSubmitVoteMultipleChoiceAllowed(t *testing.T) {
 
 func TestSubmitVoteEmptyColors(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
-	m.StartVote("1234", "trainer1", []string{"rouge", "bleu"}, false, nil)
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false)
 
-	_, err := m.SubmitVote("1234", "s1abc1234567", []string{})
+	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{})
 	if err == nil {
 		t.Error("expected error when submitting empty colors")
 	}
@@ -166,9 +200,9 @@ func TestSubmitVoteEmptyColors(t *testing.T) {
 
 func TestUpdateStagiaireNameNonexistent(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
+	m.CreateSession("ABC", "trainer1")
 
-	err := m.UpdateStagiaireName("1234", "nonexistent1234", "Paul")
+	err := m.UpdateStagiaireName("ABC", "nonexistent1234", "Paul")
 	if err == nil {
 		t.Error("expected error when updating name for non-existent stagiaire")
 	}
@@ -176,15 +210,15 @@ func TestUpdateStagiaireNameNonexistent(t *testing.T) {
 
 func TestResetVote(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.StartVote("1234", "trainer1", []string{"rouge"}, false, nil)
+	m.CreateSession("ABC", "trainer1")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false)
 
-	err := m.ResetVote("1234", "trainer1", []string{"bleu"}, true, nil)
+	err := m.ResetVote("ABC", "trainer1", []string{"bleu"}, true, nil, false)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	if session.VoteState != models.VoteStateIdle {
 		t.Errorf("expected idle state")
 	}
@@ -196,7 +230,7 @@ func TestResetVote(t *testing.T) {
 	}
 
 	// Unauthorized
-	err = m.ResetVote("1234", "imposter", []string{}, false, nil)
+	err = m.ResetVote("ABC", "imposter", []string{}, false, nil, false)
 	if err != ErrUnauthorized {
 		t.Errorf("expected ErrUnauthorized")
 	}
@@ -204,21 +238,21 @@ func TestResetVote(t *testing.T) {
 
 func TestUpdateStagiaireName(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.JoinStagiaire("1234", "s1abc1234567", "Jean")
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
 
-	err := m.UpdateStagiaireName("1234", "s1abc1234567", "Paul")
+	err := m.UpdateStagiaireName("ABC", "s1abc1234567", "Paul")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	if session.Stagiaires["s1abc1234567"] != "Paul" {
 		t.Errorf("expected name Paul")
 	}
 
 	// Invalid Name
-	err = m.UpdateStagiaireName("1234", "s1abc1234567", "")
+	err = m.UpdateStagiaireName("ABC", "s1abc1234567", "")
 	if err != ErrInvalidInput {
 		t.Errorf("expected ErrInvalidInput")
 	}
@@ -226,44 +260,44 @@ func TestUpdateStagiaireName(t *testing.T) {
 
 func TestCleanupExpiredSessions(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
+	m.CreateSession("ABC", "trainer1")
 
 	// Manually set last activity to past
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	session.LastActivity = time.Now().Add(-2 * time.Hour).Unix()
 
 	m.CleanupExpiredSessions(time.Hour, nil)
 
-	if _, ok := m.GetSession("1234"); ok {
+	if _, ok := m.GetSession("ABC"); ok {
 		t.Error("Session should have been cleaned up")
 	}
 }
 
 func TestRemoveSession(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
-	m.RemoveSession("1234")
-	if _, ok := m.GetSession("1234"); ok {
+	m.CreateSession("ABC", "trainer1")
+	m.RemoveSession("ABC")
+	if _, ok := m.GetSession("ABC"); ok {
 		t.Error("Session should be removed")
 	}
 }
 
 func TestUpdateTrainer(t *testing.T) {
 	m := NewManager()
-	m.CreateSession("1234", "trainer1")
+	m.CreateSession("ABC", "trainer1")
 
-	err := m.UpdateTrainer("1234", "trainer2")
+	err := m.UpdateTrainer("ABC", "trainer2")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
-	session, _ := m.GetSession("1234")
+	session, _ := m.GetSession("ABC")
 	if session.TrainerID != "trainer2" {
 		t.Errorf("expected trainer ID trainer2, got %s", session.TrainerID)
 	}
 
 	// Session not found
-	err = m.UpdateTrainer("9999", "trainer2")
+	err = m.UpdateTrainer("KQR", "trainer2")
 	if err != ErrSessionNotFound {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
 	}

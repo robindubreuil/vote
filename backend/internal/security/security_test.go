@@ -8,6 +8,7 @@ import (
 
 func TestCheckJoinRateLimit(t *testing.T) {
 	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
 	testIP := "192.168.1.1"
 
 	// First attempt allowed
@@ -37,19 +38,22 @@ func TestCheckJoinRateLimit(t *testing.T) {
 
 func TestCheckMessageRate(t *testing.T) {
 	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
 	clientID := "client1"
 
 	if !sec.CheckMessageRate(clientID) {
-		t.Error("First message should be allowed")
+		t.Fatal("First message should be allowed")
 	}
 
-	// Burst check
-	for i := 0; i < MaxBurstMessages+5; i++ {
-		sec.CheckMessageRate(clientID)
+	denied := 0
+	for i := 0; i < MaxBurstMessages+10; i++ {
+		if !sec.CheckMessageRate(clientID) {
+			denied++
+		}
 	}
-
-	// Eventually it should return false, but exact count depends on timing
-	// Just ensure the function runs without panic and logic holds
+	if denied == 0 {
+		t.Errorf("expected some messages to be denied after burst limit (%d), got 0 denials", MaxBurstMessages)
+	}
 }
 
 func TestGenerateID(t *testing.T) {
@@ -65,6 +69,7 @@ func TestGenerateID(t *testing.T) {
 
 func TestCleanup(t *testing.T) {
 	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
 	// Inject stale data manually if possible, but map is private.
 	// We can't easily test private map cleanup from outside package
 	// unless we export it or use reflection, or test behavior (e.g. removed restriction).
@@ -86,6 +91,7 @@ func TestCleanup(t *testing.T) {
 
 func TestRemoveMessageRate(t *testing.T) {
 	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
 	clientID := "client_rem"
 
 	// Trigger rate limiter creation
@@ -136,5 +142,74 @@ func TestGenerateTimestampID(t *testing.T) {
 	}
 	if len(id1) == 0 {
 		t.Error("ID should not be empty")
+	}
+}
+
+func TestSessionCreateRate(t *testing.T) {
+	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
+	ip := "10.0.0.1"
+
+	// First MaxSessionCreationsPerHour attempts must be allowed.
+	for i := 0; i < MaxSessionCreationsPerHour; i++ {
+		if !sec.CheckSessionCreateRate(ip) {
+			t.Fatalf("attempt %d should be allowed (limit=%d)", i+1, MaxSessionCreationsPerHour)
+		}
+		sec.RecordSessionCreation(ip)
+	}
+
+	// Next call must be blocked.
+	if sec.CheckSessionCreateRate(ip) {
+		t.Error("should be blocked after the cap is reached")
+	}
+
+	// Different IP is independent — the limit is per IP, which matters for
+	// the shared-NAT classroom scenario.
+	otherIP := "10.0.0.2"
+	if !sec.CheckSessionCreateRate(otherIP) {
+		t.Error("different IP should not be affected by another IP's quota")
+	}
+}
+
+func TestSessionCreateRateRollback(t *testing.T) {
+	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
+	ip := "10.0.0.1"
+
+	sec.RecordSessionCreation(ip)
+	before := sec.CountSessionCreations(ip)
+	sec.RemoveSessionCreation(ip)
+	after := sec.CountSessionCreations(ip)
+
+	if after != before-1 {
+		t.Errorf("rollback should decrement count: before=%d after=%d", before, after)
+	}
+
+	// Removing on empty is a no-op.
+	sec.RemoveSessionCreation(ip)
+	if sec.CountSessionCreations(ip) != 0 {
+		t.Error("remove on empty should be a no-op")
+	}
+}
+
+func TestSessionCreateRateWindowExpiry(t *testing.T) {
+	sec := NewSecurity(context.Background())
+	defer sec.Shutdown()
+	ip := "10.0.0.1"
+
+	// Inject an old stamp that should be aged out on the next check.
+	sec.mu.Lock()
+	sec.sessionCreations[ip] = []time.Time{
+		time.Now().Add(-SessionCreationWindow - time.Minute),
+		time.Now().Add(-SessionCreationWindow - time.Hour),
+	}
+	sec.mu.Unlock()
+
+	if !sec.CheckSessionCreateRate(ip) {
+		t.Error("stale stamps should not count against the limit")
+	}
+	// The check itself prunes stale entries.
+	if got := sec.CountSessionCreations(ip); got != 0 {
+		t.Errorf("expected 0 stamps after prune, got %d", got)
 	}
 }

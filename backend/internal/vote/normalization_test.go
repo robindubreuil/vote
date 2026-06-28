@@ -34,11 +34,11 @@ func TestNameNormalization(t *testing.T) {
 
 func TestGetStagiaireIDByName(t *testing.T) {
 	m := NewManager()
-	_, _ = m.CreateSession("1234", "trainer1")
+	_, _ = m.CreateSession("ABC", "trainer1")
 
 	validID := "123456789012"
 	// Add initial user
-	err := m.JoinStagiaire("1234", validID, "Jean-Pierre")
+	err := m.JoinStagiaire("ABC", validID, "Jean-Pierre")
 	if err != nil {
 		t.Fatalf("JoinStagiaire failed: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestGetStagiaireIDByName(t *testing.T) {
 	}
 
 	for _, name := range variations {
-		id, found := m.GetStagiaireIDByName("1234", name)
+		id, found := m.GetStagiaireIDByName("ABC", name)
 		if !found {
 			t.Errorf("Failed to find existing user 'Jean-Pierre' using variation '%s'", name)
 		}
@@ -62,7 +62,7 @@ func TestGetStagiaireIDByName(t *testing.T) {
 	}
 
 	// Test non-match
-	_, found := m.GetStagiaireIDByName("1234", "Jean-Paul")
+	_, found := m.GetStagiaireIDByName("ABC", "Jean-Paul")
 	if found {
 		t.Error("Should not find non-existent user 'Jean-Paul'")
 	}

@@ -155,7 +155,8 @@ func (c *Client) SendJSON(v any) {
 	select {
 	case c.Send <- data:
 	default:
-		slog.Warn("Send channel full", "client_id", c.ID)
+		slog.Warn("Send channel full: disconnecting slow client", "client_id", c.ID)
+		c.Conn.Close()
 	}
 }
 
@@ -173,11 +174,21 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 
 	// If no code provided or "new" is specified, generate a unique code
 	if msg.SessionCode == "" || msg.SessionCode == "new" {
+		// Per-IP session-creation cap. Prevents one client from exhausting
+		// the code space or server memory by spamming new sessions. Generous
+		// enough that multiple trainers behind the same NAT (a building
+		// with several classrooms) never hit it.
+		if !c.Hub.Security.CheckSessionCreateRate(c.IP) {
+			c.SendError("Trop de sessions créées — réessayez dans quelques minutes")
+			return
+		}
 		code = c.Hub.GenerateSessionCode()
 		if code == "" {
 			c.SendError("No session codes available")
 			return
 		}
+		// Optimistically record; if registration later fails we'll roll back.
+		c.Hub.Security.RecordSessionCreation(c.IP)
 	} else {
 		// Validate provided code
 		if !vote.IsValidSessionCode(msg.SessionCode) {
@@ -202,6 +213,11 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 	select {
 	case c.Hub.Register <- c:
 	case <-c.Hub.Context().Done():
+		// Roll back the creation counter so the failed attempt doesn't
+		// consume the trainer's quota.
+		if msg.SessionCode == "" || msg.SessionCode == "new" {
+			c.Hub.Security.RemoveSessionCreation(c.IP)
+		}
 		c.SendError("Server is shutting down")
 	}
 }
@@ -312,7 +328,7 @@ func (c *Client) handleStartVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels)
+	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels, msg.GameEnabled)
 
 	if err != nil {
 		c.SendError(err.Error())
@@ -329,6 +345,7 @@ func (c *Client) handleStartVote(msg models.Message) {
 		"colors":         msg.Colors,
 		"multipleChoice": msg.MultipleChoice,
 		"voteStartTime":  voteStartTime,
+		"gameEnabled":    msg.GameEnabled,
 	}
 	if len(msg.Labels) > 0 {
 		broadcastMsg["labels"] = msg.Labels
@@ -390,12 +407,15 @@ func (c *Client) handleResetVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, nil)
+	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, nil, msg.GameEnabled)
 	if err != nil {
 		c.SendError(err.Error())
 		return
 	}
-	c.Hub.BroadcastSession(c.SessionID, map[string]any{"type": "vote_reset"}, "")
+	c.Hub.BroadcastSession(c.SessionID, map[string]any{
+		"type":        "vote_reset",
+		"gameEnabled": msg.GameEnabled,
+	}, "")
 
 	// Send updated stagiaire list (votes are now cleared)
 	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "connected_count")

@@ -7,7 +7,8 @@ type Message struct {
 	Name           string            `json:"name,omitempty"`
 	Colors         []string          `json:"colors,omitempty"`
 	MultipleChoice bool              `json:"multipleChoice,omitempty"`
-	Labels         map[string]string `json:"labels,omitempty"` // Custom labels for colors
+	Labels         map[string]string `json:"labels,omitempty"`      // Custom labels for colors
+	GameEnabled    bool              `json:"gameEnabled,omitempty"` // Mini-game enabled while trainees wait
 }
 
 const (

@@ -143,9 +143,9 @@ export function updateColorBars(activeColors, colorCounts, maxCount) {
           <span class="color-bar-name">${escapeHtml(state.colorLabels[color.id] || color.name)}</span>
         </div>
         <div class="color-bar-track">
-          <span class="color-bar-count">${count}</span>
           <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${color.color}"></div>
         </div>
+        <span class="color-bar-count">${count}</span>
       `
       fragment.appendChild(row)
     }

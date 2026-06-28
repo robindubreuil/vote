@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run version && vite build && node scripts/compress-assets.js dist",
+    "predev": "node scripts/gen-version.js",
+    "build": "npm run version && npm run sw && vite build && node scripts/compress-assets.js dist",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -14,6 +15,7 @@
     "format": "prettier --check src shared",
     "format:fix": "prettier --write src shared",
     "version": "node scripts/gen-version.js",
+    "sw": "node scripts/gen-sw.js",
     "compress": "node scripts/compress-assets.js dist"
   },
   "devDependencies": {
@@ -23,5 +25,8 @@
     "prettier": "^3.8.4",
     "vite": "^8.0.16",
     "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }

@@ -37,5 +37,7 @@ export const state = {
   hasVoted: false,
   stagiaireId: null,
   prenom: '',
-  prenomEdit: false // Mode édition du nom
+  prenomEdit: false, // Mode édition du nom
+  gameEnabled: false, // Trainer has enabled the waiting mini-game
+  gamePlaying: false // Trainee is currently in the game overlay
 }

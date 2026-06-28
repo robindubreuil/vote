@@ -47,7 +47,7 @@ test.describe('WS Protocol', () => {
   test('trainer creates session', async () => {
     const trainer = await connectTrainer(null);
     const created = await trainer.waitForMessage('session_created');
-    expect(created.sessionCode).toMatch(/^\d{4}$/);
+    expect(created.sessionCode).toMatch(/^[A-HJ-NP-Y]{3}$/);
     expect(created.trainerId).toBeTruthy();
 
     const count = await trainer.waitForMessage('connected_count');
