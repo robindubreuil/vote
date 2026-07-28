@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"sort"
@@ -23,6 +24,36 @@ const (
 type SessionConnections struct {
 	Trainer    *Client
 	Stagiaires map[string]*Client
+}
+
+// pendingSend captures a (client, message) pair deferred until after the
+// hub write-lock is released (CC3). Marshalling and the channel send
+// happen outside the lock so a 30-stagiaire reconnect storm doesn't
+// serialise on per-message JSON work inside the critical section — the
+// lock is held only for cheap pointer/map snapshots.
+type pendingSend struct {
+	client *Client
+	msg    map[string]any
+}
+
+// flush marshals and delivers the message via a direct channel send.
+// The direct send bypasses the closing-flag check in SendJSON so that
+// messages captured during the critical section (e.g. the takeover
+// warning sent to the outgoing trainer just before it is marked
+// closing) are still delivered. The closing flag protects against
+// future sends from other goroutines, not against the deliberate
+// flush of this batch (CL1).
+func (p pendingSend) flush() {
+	data, err := json.Marshal(p.msg)
+	if err != nil {
+		slog.Error("Marshal error", "error", err)
+		return
+	}
+	select {
+	case p.client.Send <- data:
+	default:
+		slog.Warn("Pending send dropped (buffer full)", "client_id", p.client.ID)
+	}
 }
 
 type Hub struct {
@@ -172,8 +203,25 @@ func (h *Hub) ClientIDExists(id string) bool {
 }
 
 func (h *Hub) registerClient(client *Client) {
+	var pending []pendingSend
+
+	// Deferred flush runs AFTER the unlock defer (LIFO): all sends
+	// happen outside the hub write-lock (CC3).
+	defer func() {
+		for _, p := range pending {
+			p.flush()
+		}
+	}()
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	queue := func(c *Client, msg map[string]any) {
+		pending = append(pending, pendingSend{c, msg})
+	}
+	queueErr := func(c *Client, message string) {
+		queue(c, map[string]any{"type": "error", "message": message})
+	}
 
 	conns, exists := h.Connections[client.SessionID]
 	if !exists {
@@ -185,11 +233,11 @@ func (h *Hub) registerClient(client *Client) {
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
 				delete(h.Connections, client.SessionID)
-				client.SendError("Failed to create session")
+				queueErr(client, "Failed to create session")
 				return
 			}
 		} else {
-			client.SendError("Session not found")
+			queueErr(client, "Session not found")
 			return
 		}
 	}
@@ -201,10 +249,14 @@ func (h *Hub) registerClient(client *Client) {
 			// 3-char session code (shown in the QR to every stagiaire)
 			// could send trainer_join and kick the legitimate trainer.
 			if !h.VoteManager.ValidateTrainerToken(client.SessionID, client.TrainerToken) {
-				client.SendError("Session déjà active — reprenez votre onglet existant")
+				queueErr(client, "Session déjà active — reprenez votre onglet existant")
 				return
 			}
-			old.SendError("New trainer connection detected, closing this one.")
+			queueErr(old, "New trainer connection detected, closing this one.")
+			// CL1: flag the outgoing trainer so any in-flight broadcast
+			// captured before the swap drops silently instead of pushing
+			// onto the stale Send channel.
+			old.markClosing()
 			time.AfterFunc(50*time.Millisecond, func() {
 				if old.Conn != nil {
 					old.Conn.Close()
@@ -217,13 +269,13 @@ func (h *Hub) registerClient(client *Client) {
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
 				conns.Trainer = nil
-				client.SendError("Failed to create session")
+				queueErr(client, "Failed to create session")
 				return
 			}
 		} else {
 			if err := h.VoteManager.UpdateTrainer(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to update trainer", "session", client.SessionID, "error", err)
-				client.SendError("Failed to join session")
+				queueErr(client, "Failed to join session")
 				return
 			}
 		}
@@ -241,9 +293,11 @@ func (h *Hub) registerClient(client *Client) {
 				sessionCreated["trainerToken"] = token
 			}
 		}
-		client.SendJSON(sessionCreated)
+		queue(client, sessionCreated)
 
-		h.notifyTrainerStagiaireListLocked(conns, client.SessionID, "connected_count")
+		if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
+			pending = append(pending, *ps)
+		}
 
 		if session, ok := h.VoteManager.GetSession(client.SessionID); ok {
 			state, colors, multipleChoice, voteStartTime := session.GetState()
@@ -266,13 +320,13 @@ func (h *Hub) registerClient(client *Client) {
 				if labels != nil {
 					replayMsg["labels"] = labels
 				}
-				client.SendJSON(replayMsg)
+				queue(client, replayMsg)
 
 				votes := session.GetVotes()
 				stagiaires := session.GetStagiaires()
 				for sID, vColors := range votes {
 					sName := stagiaires[sID]
-					client.SendJSON(map[string]any{
+					queue(client, map[string]any{
 						"type":          "vote_received",
 						"stagiaireId":   sID,
 						"stagiaireName": sName,
@@ -281,14 +335,14 @@ func (h *Hub) registerClient(client *Client) {
 				}
 
 				if state == models.VoteStateClosed {
-					client.SendJSON(map[string]any{"type": "vote_closed"})
+					queue(client, map[string]any{"type": "vote_closed"})
 				}
 
 				if competitive && session.GetRevealed() {
 					scores := session.GetScores()
 					gameScores := session.GetGameScores()
 					correctColors := session.GetCorrectColors()
-					client.SendJSON(map[string]any{
+					queue(client, map[string]any{
 						"type":          "answers_revealed",
 						"correctColors": correctColors,
 						"scores":        buildScoreboard(stagiaires, votes, scores, gameScores),
@@ -299,7 +353,7 @@ func (h *Hub) registerClient(client *Client) {
 				// previous trainer picked colors). On a fresh session we have
 				// nothing useful to send — empty colors would clobber the
 				// client's autoloaded last-config.
-				client.SendJSON(map[string]any{
+				queue(client, map[string]any{
 					"type":           "config_updated",
 					"selectedColors": colors,
 					"multipleChoice": multipleChoice,
@@ -308,29 +362,43 @@ func (h *Hub) registerClient(client *Client) {
 		}
 	} else {
 		if conns.Trainer == nil {
-			client.SendError("Session not available (no trainer)")
+			queueErr(client, "Session not available (no trainer)")
 			return
 		}
 
 		if err := h.VoteManager.JoinStagiaire(client.SessionID, client.ID, client.Name); err != nil {
-			client.SendError("Failed to join session")
+			// CC2: JoinStagiaire is the authoritative name-uniqueness
+			// arbiter (under the session lock). The advisory check in
+			// handleStagiaireJoin handles the common case; this catches
+			// the TOCTOU race.
+			if errors.Is(err, vote.ErrNameInUse) {
+				queueErr(client, "Ce nom est déjà utilisé")
+			} else {
+				queueErr(client, "Failed to join session")
+			}
 			return
 		}
 
 		if old, ok := conns.Stagiaires[client.ID]; ok {
+			// CL1: flag the outgoing client so any in-flight broadcast
+			// captured before the swap drops silently instead of pushing
+			// onto the stale Send channel.
+			old.markClosing()
 			if old.Conn != nil {
 				old.Conn.Close()
 			}
 		}
 		conns.Stagiaires[client.ID] = client
 
-		client.SendJSON(map[string]any{
+		queue(client, map[string]any{
 			"type":        "session_joined",
 			"sessionCode": client.SessionID,
 			"stagiaireId": client.ID,
 		})
 
-		h.notifyTrainerStagiaireListLocked(conns, client.SessionID, "connected_count")
+		if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
+			pending = append(pending, *ps)
+		}
 
 		session, ok := h.VoteManager.GetSession(client.SessionID)
 		if ok {
@@ -351,7 +419,7 @@ func (h *Hub) registerClient(client *Client) {
 				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
 					msg["existingVote"] = existingVote
 				}
-				client.SendJSON(msg)
+				queue(client, msg)
 			case models.VoteStateClosed:
 				msg := map[string]any{
 					"type":           "vote_started",
@@ -364,14 +432,14 @@ func (h *Hub) registerClient(client *Client) {
 				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
 					msg["existingVote"] = existingVote
 				}
-				client.SendJSON(msg)
-				client.SendJSON(map[string]any{"type": "vote_closed"})
+				queue(client, msg)
+				queue(client, map[string]any{"type": "vote_closed"})
 				if competitive && session.GetRevealed() {
 					correctColors := session.GetCorrectColors()
 					scores := session.GetScores()
 					gameScores := session.GetGameScores()
 					rank, total := computeRank(scores, gameScores, client.ID)
-					client.SendJSON(map[string]any{
+					queue(client, map[string]any{
 						"type":            "answers_revealed",
 						"correctColors":   correctColors,
 						"totalScore":      scores[client.ID],
@@ -386,6 +454,16 @@ func (h *Hub) registerClient(client *Client) {
 }
 
 func (h *Hub) unregisterClient(client *Client) {
+	var pending []pendingSend
+
+	// Deferred flush runs AFTER the unlock defer (LIFO): sends happen
+	// outside the hub write-lock (CC3).
+	defer func() {
+		for _, p := range pending {
+			p.flush()
+		}
+	}()
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -401,7 +479,9 @@ func (h *Hub) unregisterClient(client *Client) {
 	} else {
 		if conns.Stagiaires[client.ID] == client {
 			delete(conns.Stagiaires, client.ID)
-			h.notifyTrainerStagiaireListLocked(conns, client.SessionID, "connected_count")
+			if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
+				pending = append(pending, *ps)
+			}
 		}
 	}
 }
@@ -432,12 +512,15 @@ func (h *Hub) BroadcastSession(sessionID string, message any, excludeID string) 
 	h.mu.RUnlock()
 
 	for _, c := range targets {
-		select {
-		case c.Send <- data:
-		default:
-			slog.Warn("Broadcast dropped: disconnecting slow client", "client_id", c.ID)
-			c.Conn.Close()
+		if c.closing.Load() {
+			continue
 		}
+		// trySend applies the role-aware buffer-full policy (CC1):
+		// stagiaires are evicted (and marked closing so the next
+		// broadcast in the same storm skips them instead of warn-
+		// spamming until pongWait — CM3); the trainer gets a dropped
+		// message rather than a torn-down control surface.
+		c.trySend(data)
 	}
 }
 
@@ -501,24 +584,36 @@ func (h *Hub) SendScoreReveal(sessionID string, correctColors []string, entries 
 }
 
 func (h *Hub) NotifyTrainerStagiaireList(sessionID string, msgType string) {
+	// CC3: build the message under the read-lock, release, then flush
+	// (marshal + channel send) outside the lock so a burst of these
+	// (one per stagiaire in a reconnect storm) doesn't serialise on
+	// per-call JSON work.
 	h.mu.RLock()
 	conns, exists := h.Connections[sessionID]
-	if !exists {
-		h.mu.RUnlock()
-		return
+	var ps *pendingSend
+	if exists {
+		ps = h.buildTrainerStagiaireListLocked(conns, sessionID, msgType)
 	}
-	h.notifyTrainerStagiaireListLocked(conns, sessionID, msgType)
 	h.mu.RUnlock()
+
+	if ps != nil {
+		ps.flush()
+	}
 }
 
-func (h *Hub) notifyTrainerStagiaireListLocked(conns *SessionConnections, sessionID string, msgType string) {
+// buildTrainerStagiaireListLocked constructs the connected_count /
+// stagiaire_names_updated payload. It snapshots session state (cheap
+// map copies under session.mu) but deliberately does NOT marshal or
+// send — the caller flushes the returned pendingSend after releasing
+// h.mu so the marshal work stays outside the hub lock (CC3).
+func (h *Hub) buildTrainerStagiaireListLocked(conns *SessionConnections, sessionID string, msgType string) *pendingSend {
 	if conns.Trainer == nil {
-		return
+		return nil
 	}
 
 	session, ok := h.VoteManager.GetSession(sessionID)
 	if !ok {
-		return
+		return nil
 	}
 
 	stagiaires := session.GetStagiaires()
@@ -555,11 +650,14 @@ func (h *Hub) notifyTrainerStagiaireListLocked(conns *SessionConnections, sessio
 		list = append(list, info)
 	}
 
-	conns.Trainer.SendJSON(map[string]any{
-		"type":       msgType,
-		"count":      len(conns.Stagiaires),
-		"stagiaires": list,
-	})
+	return &pendingSend{
+		client: conns.Trainer,
+		msg: map[string]any{
+			"type":       msgType,
+			"count":      len(conns.Stagiaires),
+			"stagiaires": list,
+		},
+	}
 }
 
 func (h *Hub) cleanupLoop() {
