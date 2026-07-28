@@ -18,7 +18,7 @@
 package store
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -260,40 +260,125 @@ func (s *Store) AppendSample(sample Sample) error {
 	return nil
 }
 
+// scannerBufferSize caps a bufio.Scanner's buffer growth so a single
+// pathological line (e.g. a corrupt line with no newline for many MB)
+// can't make ReadSamples allocate unboundedly. A normal sample is ~150 B;
+// samples that exceed this after a write-torn line are skipped, which is
+// the same recovery behaviour as the prior bytes.Split path.
+const scannerBufferSize = 1 << 20 // 1 MiB
+
 // ReadSamples returns up to limit most-recent samples (oldest→newest). When
 // limit <= 0 all available samples are returned. Malformed lines are skipped so
 // a torn write never poisons the whole history. Both the current log and its
 // rotated backup are read and merged in chronological order.
+//
+// B2: the previous implementation read both files (~100 MB worst case after
+// years of sampling) fully into memory with os.ReadFile and parsed under
+// s.mu — /dashboard/history was an OOM risk on small VMs and the sampling
+// goroutine stalled behind a slow read. This version snapshots the file
+// paths under s.mu (defending against a concurrent rotation that could
+// rename the live log away mid-read), releases the lock, then streams each
+// file line-by-line through a bufio.Scanner. When limit > 0 a fixed-size
+// ring buffer holds only the tail, bounding memory to O(limit) regardless
+// of file size.
 func (s *Store) ReadSamples(limit int) ([]Sample, error) {
+	// Snapshot the paths under the lock so a concurrent rotation can't
+	// rename the live log out from under us between picking the path and
+	// opening it. The actual read happens lock-free — reads use their
+	// own *os.File handle, not s.logFile, so they neither block writes
+	// nor race with the writer's fd.
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	paths := []string{s.logBackup, s.logPath}
+	s.mu.Unlock()
 
 	var out []Sample
-	for _, p := range []string{s.logBackup, s.logPath} {
-		data, err := os.ReadFile(p)
+	var ring *ringSample
+	if limit > 0 {
+		ring = newRingSample(limit)
+	} else {
+		out = make([]Sample, 0)
+	}
+
+	for _, p := range paths {
+		f, err := os.Open(p)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return nil, fmt.Errorf("store: read %s: %w", filepath.Base(p), err)
 		}
-		for _, line := range bytes.Split(data, []byte("\n")) {
-			if len(bytes.TrimSpace(line)) == 0 {
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), scannerBufferSize)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 {
 				continue
 			}
 			var sample Sample
 			if err := json.Unmarshal(line, &sample); err != nil {
 				continue
 			}
-			if valid(sample) {
+			if !valid(sample) {
+				continue
+			}
+			if ring != nil {
+				ring.push(sample)
+			} else {
 				out = append(out, sample)
 			}
 		}
+		// An I/O error mid-scan is non-fatal to history reads: return
+		// whatever we collected rather than failing the whole call.
+		// The append-only log is line-oriented and self-healing on the
+		// next successful write, so a transient read error shouldn't
+		// 500 the dashboard.
+		if err := scanner.Err(); err != nil {
+			slog.Warn("stats log scan error", "path", p, "error", err)
+		}
+		f.Close()
 	}
-	if limit > 0 && len(out) > limit {
-		out = out[len(out)-limit:]
+
+	if ring != nil {
+		return ring.snapshot(), nil
 	}
 	return out, nil
+}
+
+// ringSample is a fixed-capacity ring buffer of Sample values. push is
+// O(1); snapshot returns the contents in insertion order (oldest first)
+// in O(n). Used by ReadSamples when a limit is supplied so the call's
+// peak memory is bounded by limit rather than the on-disk log size.
+type ringSample struct {
+	buf   []Sample
+	i     int
+	full  bool
+	limit int
+}
+
+func newRingSample(limit int) *ringSample {
+	return &ringSample{buf: make([]Sample, limit), limit: limit}
+}
+
+func (r *ringSample) push(s Sample) {
+	r.buf[r.i] = s
+	r.i = (r.i + 1) % r.limit
+	if r.i == 0 {
+		r.full = true
+	}
+}
+
+func (r *ringSample) snapshot() []Sample {
+	if !r.full {
+		// Not yet wrapped: only positions [0, r.i) hold data.
+		out := make([]Sample, r.i)
+		copy(out, r.buf[:r.i])
+		return out
+	}
+	// Wrapped: oldest entry is at r.i, newest at r.i-1 (mod limit).
+	out := make([]Sample, r.limit)
+	n := copy(out, r.buf[r.i:])
+	copy(out[n:], r.buf[:r.i])
+	return out
 }
 
 // Close flushes and closes the log file. Safe to call multiple times.

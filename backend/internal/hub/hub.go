@@ -45,13 +45,13 @@ type pendingSend struct {
 func (p pendingSend) flush() {
 	data, err := json.Marshal(p.msg)
 	if err != nil {
-		slog.Error("Marshal error", "error", err)
+		slog.Error("Marshal error", append([]any{"error", err}, p.client.logAttrs()...)...)
 		return
 	}
 	select {
 	case p.client.Send <- data:
 	default:
-		slog.Warn("Pending send dropped (buffer full)", "client_id", p.client.ID)
+		slog.Warn("Pending send dropped (buffer full)", p.client.logAttrs()...)
 	}
 }
 
@@ -372,7 +372,8 @@ func (h *Hub) registerClient(client *Client) {
 			}
 			h.Connections[client.SessionID] = conns
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
-				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
+				slog.Error("Failed to create session",
+					append([]any{"error", err}, client.logAttrs()...)...)
 				delete(h.Connections, client.SessionID)
 				queueErr(client, "Impossible de créer la session")
 				return
@@ -408,14 +409,16 @@ func (h *Hub) registerClient(client *Client) {
 		conns.Trainer = client
 		if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
-				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
+				slog.Error("Failed to create session",
+					append([]any{"error", err}, client.logAttrs()...)...)
 				conns.Trainer = nil
 				queueErr(client, "Impossible de créer la session")
 				return
 			}
 		} else {
 			if err := h.VoteManager.UpdateTrainer(client.SessionID, client.ID); err != nil {
-				slog.Error("Failed to update trainer", "session", client.SessionID, "error", err)
+				slog.Error("Failed to update trainer",
+					append([]any{"error", err}, client.logAttrs()...)...)
 				queueErr(client, "Impossible de rejoindre la session")
 				return
 			}
@@ -700,7 +703,7 @@ func (h *Hub) BroadcastSession(sessionID string, message any, excludeID string) 
 
 	data, err := json.Marshal(message)
 	if err != nil {
-		slog.Error("Marshal error", "error", err)
+		slog.Error("Marshal error", "session", sessionID, "error", err)
 		return
 	}
 
@@ -939,9 +942,17 @@ type Metrics struct {
 }
 
 func (h *Hub) GetMetrics() Metrics {
+	// B8: the previous implementation held h.mu.RLock across the entire
+	// scrape, including up to MaxSessionsGlobal (default 1000)
+	// session.GetState() calls — each takes the per-session lock. A
+	// Prometheus scrape therefore blocked every register/unregister
+	// (and the per-vote BroadcastSession fanout, which needs RLock).
+	// Snapshot the Connections-derived counters and the session pointer
+	// slice under RLock, release, then iterate lock-free. The session
+	// slice comes from VoteManager.GetAllSessions, which already takes
+	// and releases the manager RLock internally; GetState takes only
+	// the per-session lock, so the lock-free iteration is safe.
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
 	metrics := Metrics{
 		ActiveSessions:      len(h.Connections),
 		ConnectedTrainers:   0,
@@ -959,6 +970,7 @@ func (h *Hub) GetMetrics() Metrics {
 		}
 		metrics.ConnectedStagiaires += len(conn.Stagiaires)
 	}
+	h.mu.RUnlock()
 
 	sessions := h.VoteManager.GetAllSessions()
 	for _, session := range sessions {

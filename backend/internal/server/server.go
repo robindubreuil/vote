@@ -34,7 +34,13 @@ type Server struct {
 func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// B7: middleware order matters. Recovery wraps everything so panics
+	// produce an access-log line + 500 instead of a dropped connection.
+	// Request ID comes before the access log so the access line carries
+	// the ID, and before the handlers so downstream code can read it.
 	r.Use(gin.Recovery())
+	r.Use(requestIDMiddleware())
+	r.Use(accessLogMiddleware())
 	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
 		slog.Warn("Failed to set trusted proxies", "error", err)
 	}
@@ -305,7 +311,8 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		slog.Error("WebSocket upgrade error", "error", err)
+		slog.Error("WebSocket upgrade error",
+			"ip", clientIP, "request_id", RequestIDFromContext(c), "error", err)
 		// Upgrade failed — release the slot we reserved so the cap
 		// doesn't slowly drain on handshake errors.
 		s.hub.ReleaseIPSlot(clientIP)
@@ -314,7 +321,8 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	clientID, ok := s.hub.GenerateUniqueClientID()
 	if !ok {
-		slog.Error("Failed to generate unique client ID")
+		slog.Error("Failed to generate unique client ID",
+			"ip", clientIP, "request_id", RequestIDFromContext(c))
 		conn.Close()
 		// readPump never started, so unregisterClient never runs —
 		// release manually.
@@ -324,6 +332,11 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	client := hub.NewClient(s.hub, conn, clientIP)
 	client.ID = clientID
+	// B7: propagate the per-request ID so hub log lines can be
+	// correlated with the HTTP access line that recorded the WS
+	// upgrade. Read from the gin context set by requestIDMiddleware;
+	// falls back to "" if the context value is absent.
+	client.RequestID = RequestIDFromContext(c)
 
 	client.Start()
 }

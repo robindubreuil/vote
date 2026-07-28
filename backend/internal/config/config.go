@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -51,19 +52,15 @@ func LoadConfig() *Config {
 		origins = []string{}
 		allowCreds = false
 	} else {
-		origins = strings.Split(allowedOrigins, ",")
-		for i := range origins {
-			origins[i] = strings.TrimSpace(origins[i])
-		}
+		// splitList filters empty elements so a trailing comma or a
+		// "a,,b" typo in the env var doesn't yield a phantom "" entry
+		// (B5). IsOriginAllowed("") would otherwise match nothing,
+		// but the empty element is still a footgun for any future
+		// consumer that iterates the slice directly.
+		origins = splitList(allowedOrigins)
 	}
 
-	trustedProxies := []string{}
-	if tp := os.Getenv("TRUSTED_PROXIES"); tp != "" {
-		trustedProxies = strings.Split(tp, ",")
-		for i := range trustedProxies {
-			trustedProxies[i] = strings.TrimSpace(trustedProxies[i])
-		}
-	}
+	trustedProxies := splitList(os.Getenv("TRUSTED_PROXIES"))
 
 	config := &Config{
 		Host:                getEnv("HOST", ""),
@@ -101,11 +98,7 @@ func LoadConfig() *Config {
 	}
 
 	if envColors := os.Getenv("VALID_COLORS"); envColors != "" {
-		colors := strings.Split(envColors, ",")
-		for i := range colors {
-			colors[i] = strings.TrimSpace(colors[i])
-		}
-		if len(colors) > 0 {
+		if colors := splitList(envColors); len(colors) > 0 {
 			config.ValidColors = colors
 		}
 	}
@@ -132,20 +125,56 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if d, err := time.ParseDuration(value); err == nil {
-			return d
+// splitList splits a comma-separated env value into trimmed, non-empty
+// elements. B5: the previous inline splits left empty elements from typos
+// like "a,,b" or a trailing comma, which silently produced phantom "" list
+// members (harmless today but a footgun for future consumers that iterate
+// the slice). Returns nil for an empty input so the caller's `if len > 0`
+// guard still works.
+func splitList(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
 		}
 	}
-	return defaultValue
+	return out
+}
+
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		// B5: a typo like "1h3" or "10 minutes" (ParseDuration wants
+		// "10m") previously fell back to the default silently. Surface
+		// it so an operator sees their override was rejected rather
+		// than debug a server that mysteriously ignored the env var.
+		slog.Warn("invalid duration env, using default",
+			"key", key, "value", value, "default", defaultValue.String(), "error", err)
+		return defaultValue
+	}
+	return d
 }
 
 func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if n, err := strconv.Atoi(value); err == nil {
-			return n
-		}
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
 	}
-	return defaultValue
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		// B5: same rationale as getEnvDuration — surface the bad value
+		// so an operator doesn't chase a phantom default silently.
+		slog.Warn("invalid int env, using default",
+			"key", key, "value", value, "default", defaultValue, "error", err)
+		return defaultValue
+	}
+	return n
 }
