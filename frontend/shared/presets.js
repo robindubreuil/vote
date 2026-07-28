@@ -13,6 +13,7 @@
 // Schema is versioned so future migrations can run on read.
 
 import { COLORS } from './colors.js'
+import { safeLocalGet, safeLocalRemove } from './utils/safe-storage.js'
 
 const PRESETS_KEY = 'vote:presets'
 const LAST_CONFIG_KEY = 'vote:lastConfig'
@@ -85,7 +86,7 @@ function withMeta(preset) {
 // ---------------------------------------------------------------------------
 
 export function getLastConfig() {
-  const raw = safeParse(localStorage.getItem(LAST_CONFIG_KEY), null)
+  const raw = safeParse(safeLocalGet(LAST_CONFIG_KEY), null)
   return sanitizeConfig(raw)
 }
 
@@ -104,7 +105,7 @@ export function setLastConfig(config) {
 // ---------------------------------------------------------------------------
 
 export function listPresets() {
-  const arr = safeParse(localStorage.getItem(PRESETS_KEY), [])
+  const arr = safeParse(safeLocalGet(PRESETS_KEY), [])
   if (!Array.isArray(arr)) return []
   return arr
     .map(withMeta)
@@ -254,8 +255,8 @@ export function deserializePresets(jsonText) {
 // Test-only: clear everything. Used by unit tests; not exported through
 // the public surface used by the UI.
 export function _resetForTests() {
-  localStorage.removeItem(PRESETS_KEY)
-  localStorage.removeItem(LAST_CONFIG_KEY)
+  safeLocalRemove(PRESETS_KEY)
+  safeLocalRemove(LAST_CONFIG_KEY)
 }
 
 export const _constants = { PRESETS_KEY, LAST_CONFIG_KEY, SCHEMA_VERSION, MAX_PRESETS }

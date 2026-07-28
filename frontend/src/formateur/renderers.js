@@ -383,10 +383,21 @@ function attachPresetListeners() {
     requestAnimationFrame(() => nameInput.focus())
     trackListener(nameInput, 'keydown', (e) => {
       if (e.key === 'Enter') {
+        // preventDefault stops the form from submitting; stopImmediatePropagation
+        // keeps the keystroke inside this input so it does not bubble to other
+        // keydown listeners (e.g. Enter-to-join on the landing page, were this
+        // ever reused elsewhere).
         e.preventDefault()
+        e.stopImmediatePropagation()
         if (_actionHandlers.confirmSavePreset) _actionHandlers.confirmSavePreset(nameInput.value)
       } else if (e.key === 'Escape') {
+        // preventDefault alone does NOT stop propagation. Without
+        // stopImmediatePropagation the event bubbles to the document-level
+        // app shortcut (attachAppKeyboardShortcuts), which sees
+        // `state.sessionCode` truthy and opens the "Quitter la session?"
+        // confirm on top of the just-closed preset form.
         e.preventDefault()
+        e.stopImmediatePropagation()
         if (_actionHandlers.cancelSavePreset) _actionHandlers.cancelSavePreset()
       }
     })
