@@ -141,7 +141,7 @@ describe('stagiaire renderers', () => {
       render()
       const vert = document.querySelector('[data-testid="vote-btn-vert"]')
       expect(vert.className).toContain('selected')
-      expect(vert.getAttribute('aria-pressed')).toBe('true')
+      expect(vert.getAttribute('aria-checked')).toBe('true')
     })
 
     it('disables buttons when disconnected', () => {
@@ -399,6 +399,145 @@ describe('stagiaire renderers', () => {
       // Re-render: focus should be restored by id.
       render()
       expect(document.activeElement?.id).toBe('prenom')
+    })
+  })
+
+  // ============================================
+  // Session 12 — accessibility (F6, F7, F8)
+  // ============================================
+  describe('F6: landmark structure', () => {
+    it('renderLayout emits exactly one <header> and one <main>', () => {
+      // renderLayout was called in beforeEach. Inspect the resulting DOM.
+      expect(document.querySelectorAll('header#app-header')).toHaveLength(1)
+      expect(document.querySelectorAll('main#main-container')).toHaveLength(1)
+    })
+
+    it('header is hidden during JOINING (no session code to show)', () => {
+      state.appState = AppState.JOINING
+      render()
+      const header = document.getElementById('app-header')
+      expect(header.hidden).toBe(true)
+      expect(header.innerHTML).toBe('')
+    })
+
+    it('header is populated and visible in WAITING', () => {
+      state.appState = AppState.WAITING
+      state.sessionCode = 'ABC'
+      render()
+      const header = document.getElementById('app-header')
+      expect(header.hidden).toBe(false)
+      expect(header.querySelector('h1')).not.toBeNull()
+      expect(header.querySelector('#leaveSessionBtn')).not.toBeNull()
+    })
+
+    it('header is populated and visible in VOTING, VOTED, CLOSED', () => {
+      for (const s of [AppState.VOTING, AppState.VOTED, AppState.CLOSED]) {
+        state.appState = s
+        state.sessionCode = 'ABC'
+        render()
+        const header = document.getElementById('app-header')
+        expect(header.hidden, `header visible for ${s}`).toBe(false)
+        expect(header.querySelector('#leaveSessionBtn'), `header content for ${s}`).not.toBeNull()
+      }
+    })
+
+    it('header is hidden while the edit-name modal is open', () => {
+      state.appState = AppState.WAITING
+      state.prenomEdit = true
+      state.sessionCode = 'ABC'
+      render()
+      expect(document.getElementById('app-header').hidden).toBe(true)
+    })
+
+    it('each per-state render contains no inline <header> (header is stable, not per-render)', () => {
+      for (const s of [AppState.WAITING, AppState.VOTING, AppState.VOTED, AppState.CLOSED]) {
+        state.appState = s
+        state.sessionCode = 'ABC'
+        render()
+        const nested = document.getElementById('main-container').querySelectorAll('header')
+        expect(nested.length, `no nested header in main-container for ${s}`).toBe(0)
+      }
+    })
+  })
+
+  describe('F7: vote grid grouping semantics', () => {
+    it('single-choice grid exposes role=radiogroup + aria-label', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert']
+      state.multipleChoice = false
+      render()
+      const grid = document.querySelector('.vote-grid')
+      expect(grid.getAttribute('role')).toBe('radiogroup')
+      expect(grid.getAttribute('aria-label')).toBeTruthy()
+    })
+
+    it('single-choice buttons expose role=radio + aria-checked', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert']
+      state.multipleChoice = false
+      state.selectedColors = new Set(['rouge'])
+      render()
+      const rouge = document.querySelector('[data-testid="vote-btn-rouge"]')
+      const vert = document.querySelector('[data-testid="vote-btn-vert"]')
+      expect(rouge.getAttribute('role')).toBe('radio')
+      expect(rouge.getAttribute('aria-checked')).toBe('true')
+      expect(vert.getAttribute('aria-checked')).toBe('false')
+    })
+
+    it('multiple-choice options are wrapped in a <fieldset>', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert']
+      state.multipleChoice = true
+      render()
+      const fieldset = document.querySelector('fieldset.vote-grid')
+      expect(fieldset).not.toBeNull()
+    })
+
+    it('multiple-choice fieldset carries a non-empty <legend>', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert']
+      state.multipleChoice = true
+      render()
+      const legend = document.querySelector('fieldset.vote-grid legend')
+      expect(legend).not.toBeNull()
+      expect(legend.textContent.trim()).not.toBe('')
+    })
+  })
+
+  describe('F8: form-validation aria wiring', () => {
+    it('join form inputs reference the error element via aria-describedby', () => {
+      state.appState = AppState.JOINING
+      render()
+      const error = document.getElementById('join-error')
+      expect(error).not.toBeNull()
+      expect(error.getAttribute('role')).toBe('alert')
+      expect(document.getElementById('prenom').getAttribute('aria-describedby')).toBe('join-error')
+      expect(document.getElementById('sessionCode').getAttribute('aria-describedby')).toBe('join-error')
+    })
+
+    it('join form inputs start with aria-invalid=false', () => {
+      state.appState = AppState.JOINING
+      render()
+      expect(document.getElementById('prenom').getAttribute('aria-invalid')).toBe('false')
+      expect(document.getElementById('sessionCode').getAttribute('aria-invalid')).toBe('false')
+    })
+
+    it('edit-name input references its own inline error element', () => {
+      state.appState = AppState.WAITING
+      state.prenomEdit = true
+      state.prenom = 'Marie'
+      state.sessionCode = 'ABC'
+      render()
+      const error = document.getElementById('edit-name-error')
+      expect(error).not.toBeNull()
+      expect(error.getAttribute('role')).toBe('alert')
+      const input = document.getElementById('editPrenom')
+      expect(input.getAttribute('aria-describedby')).toBe('edit-name-error')
+      expect(input.getAttribute('aria-invalid')).toBe('false')
     })
   })
 })

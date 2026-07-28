@@ -14,6 +14,7 @@ import { CONSTANTS } from '@shared/config.js'
 import { initPWA } from '@shared/pwa.js'
 import { safeSessionGet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 import { stopTimer } from './utils.js'
+import { installGlobalErrorHandlers } from '@shared/error-boundary.js'
 
 setActionHandlers({
   startVote: handlers.startVote,
@@ -86,4 +87,5 @@ async function init() {
 }
 
 init().catch((err) => console.error('Formateur init failed:', err))
+installGlobalErrorHandlers()
 initPWA()

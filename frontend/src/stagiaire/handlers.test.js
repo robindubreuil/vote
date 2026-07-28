@@ -372,6 +372,31 @@ describe('stagiaire handlers — submit / join / leave', () => {
       expect(connectSpy).not.toHaveBeenCalled()
     })
 
+    it('F8: marks the invalid input with aria-invalid and clears the other', () => {
+      const { p, c } = fillJoinForm({ prenom: '', code: 'ABC' })
+      const ev = submitEvent()
+      handleJoin(ev)
+      expect(p.getAttribute('aria-invalid')).toBe('true')
+      expect(c.getAttribute('aria-invalid')).toBe('false')
+    })
+
+    it('F8: marks code input aria-invalid when the code is bad', () => {
+      const { p, c } = fillJoinForm({ prenom: 'Marie', code: 'XYZ' })
+      const ev = submitEvent()
+      handleJoin(ev)
+      expect(c.getAttribute('aria-invalid')).toBe('true')
+      expect(p.getAttribute('aria-invalid')).toBe('false')
+    })
+
+    it('F8: clears aria-invalid on both inputs when validation passes', () => {
+      const { p, c } = fillJoinForm({ prenom: 'Marie', code: 'abc' })
+      const ev = submitEvent()
+      handleJoin(ev)
+      expect(p.getAttribute('aria-invalid')).toBe('false')
+      expect(c.getAttribute('aria-invalid')).toBe('false')
+      expect(connectSpy).toHaveBeenCalledTimes(1)
+    })
+
     it('rejects an invalid session code', () => {
       const { c } = fillJoinForm({ prenom: 'Marie', code: 'XYZ' })
       const ev = submitEvent()
@@ -419,6 +444,46 @@ describe('stagiaire handlers — submit / join / leave', () => {
       handleEditName(ev)
       expect(input.classList.contains('error')).toBe(true)
       expect(state.prenom).toBe('Old') // unchanged
+    })
+
+    it('F8: sets aria-invalid and surfaces the message in the inline error element', () => {
+      const { input } = fillEditForm('')
+      const ev = submitEvent()
+      handleEditName(ev)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      const inlineError = document.getElementById('edit-name-error')
+      expect(inlineError).not.toBeNull()
+      expect(inlineError.textContent).not.toBe('')
+      expect(inlineError.style.display).toBe('block')
+    })
+
+    it('F8: clears aria-invalid and hides the inline error on success', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { input } = fillEditForm('NewName')
+      // Capture the inline error reference *before* handleEditName runs,
+      // because a successful validation calls render() which destroys the
+      // modal (and #edit-name-error along with it). We can still assert
+      // the input was cleared by re-querying it just before the call.
+      expect(input.getAttribute('aria-invalid')).toBe('false') // sanity: starts clean
+      // Now mark it invalid manually, then call handleEditName to verify
+      // the success path resets the field-level state.
+      input.setAttribute('aria-invalid', 'true')
+      const inlineError = document.getElementById('edit-name-error')
+      inlineError.style.display = 'block'
+
+      const ev = submitEvent()
+      handleEditName(ev)
+
+      // After a successful edit, the modal is unmounted (state.prenomEdit=false)
+      // and the WAITING view replaces it. The success path therefore can't
+      // be inspected via the destroyed DOM nodes — we assert the contract
+      // via state instead.
+      expect(state.prenom).toBe('NewName')
+      expect(state.prenomEdit).toBe(false)
+      // The input element is gone after the re-render.
+      expect(document.getElementById('editPrenom')).toBeNull()
+      expect(document.getElementById('edit-name-error')).toBeNull()
     })
 
     it('updates state.prenom and sends update_name on the client', () => {

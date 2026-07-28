@@ -7,13 +7,17 @@ export const t = {
     disconnected: 'Déconnecté',
     cancel: 'Annuler',
     save: 'Enregistrer',
-    confirm: 'Confirmer'
+    confirm: 'Confirmer',
+    unexpectedError: 'Une erreur inattendue est survenue',
+    sessionError: 'Session interrompue — rechargez la page si le problème persiste'
   },
   stagiaire: {
     // From frontend-stagiaire main.js
     voteNow: 'Votez maintenant !',
     singleChoice: 'Choisissez une seule couleur',
     multipleChoice: 'Vous pouvez choisir plusieurs couleurs',
+    singleChoiceGroupLabel: 'Choix unique — sélectionnez une couleur',
+    multipleChoiceGroupLabel: 'Choix multiple — sélectionnez une ou plusieurs couleurs',
     validateVote: 'Valider mon vote',
     modifyVote: 'Modifier mon vote',
     voteRecorded: 'Vote enregistré !',

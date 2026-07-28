@@ -1,4 +1,4 @@
-import { COLORS, escapeHtml } from '@shared/colors.js'
+import { COLORS, escapeHtml, sanitizeColor } from '@shared/colors.js'
 import {
   vote,
   timer,
@@ -489,7 +489,7 @@ export function renderConfigHTML() {
                   value="${color.id}"
                   ${state.selectedColors.has(color.id) ? 'checked' : ''}
                 />
-                <span class="color-swatch" style="background-color: ${color.color}"></span>
+                <span class="color-swatch" style="background-color: ${sanitizeColor(color.color)}"></span>
                 <div class="color-label-wrapper">
                   <input
                     type="text"
@@ -564,7 +564,7 @@ function renderPresetsSectionHTML() {
         .slice(0, 5)
         .map((id) => {
           const c = COLORS.find((x) => x.id === id)
-          return c ? `<span class="preset-chip-swatch" style="background-color:${c.color}"></span>` : ''
+          return c ? `<span class="preset-chip-swatch" style="background-color:${sanitizeColor(c.color)}"></span>` : ''
         })
         .join('')
       const title = t.formateur.presetSwatchTitle(p.name, p.config.selectedColors.length)
@@ -717,7 +717,7 @@ function renderCompetitiveSectionHTML(activeColors) {
               return `
             <label class="reveal-color-chip ${checked ? 'selected' : ''}" data-correct-color="${color.id}">
               <input type="checkbox" data-correct-color="${color.id}" ${checked} />
-              <span class="color-swatch" style="background-color: ${color.color}"></span>
+              <span class="color-swatch" style="background-color: ${sanitizeColor(color.color)}"></span>
               <span class="reveal-color-name">${escapeHtml(displayName)}</span>
             </label>`
             })
@@ -746,7 +746,7 @@ function renderCompetitiveSectionHTML(activeColors) {
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
           const isCorrect = state.correctColors.has(colorId)
-          return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+          return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${sanitizeColor(color?.color)}" title="${color?.name || colorId}"></span>`
         })
         .join('')
       const voteDisplay = isBlank ? '<span class="scoreboard-blank">blanc</span>' : colorsHTML || '—'
@@ -789,11 +789,11 @@ export function renderColorBarsHTML(activeColors, colorCounts, maxCount) {
       return `
       <div class="color-bar-row" data-color="${color.id}">
         <div class="color-bar-label">
-          <span class="color-bar-swatch" style="background-color: ${color.color}"></span>
+          <span class="color-bar-swatch" style="background-color: ${sanitizeColor(color.color)}"></span>
           <span class="color-bar-name">${escapeHtml(displayName)}</span>
         </div>
         <div class="color-bar-track">
-          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${color.color}"></div>
+          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${sanitizeColor(color.color)}"></div>
         </div>
         <span class="color-bar-count">${count}</span>
       </div>
@@ -831,7 +831,7 @@ export function renderCombinationsHTML() {
       const segments = combo.colors
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
-          return `<span class="combo-segment" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+          return `<span class="combo-segment" style="background-color: ${sanitizeColor(color?.color)}" title="${color?.name || colorId}"></span>`
         })
         .join('')
 
@@ -895,7 +895,7 @@ export function renderStagiairesVotesHTML() {
         .filter((colorId) => colorId !== 'blank')
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
-          return `<span class="stagiaire-vote-swatch" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+          return `<span class="stagiaire-vote-swatch" style="background-color: ${sanitizeColor(color?.color)}" title="${color?.name || colorId}"></span>`
         })
         .join('')
 
