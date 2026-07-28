@@ -38,7 +38,6 @@ type Client struct {
 	Hub          *Hub
 	pingTick     *time.Ticker
 	IP           string
-	LastActivity int64
 	handlers     map[string]func(models.Message)
 	// closing is set when the connection is being torn down
 	// (slow-buffer eviction, reconnect-by-ID takeover, trainer
@@ -52,12 +51,11 @@ type Client struct {
 
 func NewClient(hub *Hub, conn *websocket.Conn, ip string) *Client {
 	c := &Client{
-		Hub:          hub,
-		Conn:         conn,
-		Send:         make(chan []byte, ClientSendBufferSize),
-		pingTick:     time.NewTicker(hub.Config.PingInterval),
-		IP:           ip,
-		LastActivity: time.Now().Unix(),
+		Hub:      hub,
+		Conn:     conn,
+		Send:     make(chan []byte, ClientSendBufferSize),
+		pingTick: time.NewTicker(hub.Config.PingInterval),
+		IP:       ip,
 	}
 
 	c.handlers = map[string]func(models.Message){
@@ -106,7 +104,6 @@ func (c *Client) readPump() {
 	}
 	c.Conn.SetPongHandler(func(string) error {
 		_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-		c.LastActivity = time.Now().Unix()
 		return nil
 	})
 
@@ -306,11 +303,11 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 
 func (c *Client) handleStagiaireJoin(msg models.Message) {
 	if !vote.IsValidSessionCode(msg.SessionCode) {
-		c.SendErrorWithBackoff("Invalid session code")
+		c.SendErrorWithBackoff("Code session invalide")
 		return
 	}
 	if msg.Name != "" && !vote.IsValidName(msg.Name) {
-		c.SendErrorWithBackoff("Invalid name")
+		c.SendErrorWithBackoff("Nom invalide")
 		return
 	}
 
@@ -384,21 +381,21 @@ func (c *Client) SendErrorWithBackoff(msg string) {
 
 func (c *Client) handleStartVote(msg models.Message) {
 	if c.Type != "trainer" {
-		c.SendError("unauthorized")
+		c.SendError(vote.ErrNotAuthorized.Error())
 		return
 	}
 	// Validate colors
 	if len(msg.Colors) == 0 {
-		c.SendError("At least one color is required")
+		c.SendError("Au moins une couleur est requise")
 		return
 	}
 	if !vote.ValidateColors(msg.Colors, c.Hub.Config.ValidColors) {
-		c.SendError("Invalid color(s)")
+		c.SendError("Couleur(s) invalide(s)")
 		return
 	}
 	// Check for duplicates
 	if vote.HasDuplicates(msg.Colors) {
-		c.SendError("Duplicate colors are not allowed")
+		c.SendError(vote.ErrDuplicateColors.Error())
 		return
 	}
 
@@ -408,14 +405,14 @@ func (c *Client) handleStartVote(msg models.Message) {
 	// even on the ballot.
 	if len(msg.Labels) > 0 {
 		if !vote.ValidateLabels(msg.Labels, msg.Colors) {
-			c.SendError("Invalid labels")
+			c.SendError("Étiquettes invalides")
 			return
 		}
 	}
 	err := c.Hub.VoteManager.StartVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels, msg.GameEnabled, msg.Competitive, msg.AllowBlank)
 
 	if err != nil {
-		c.SendError(err.Error())
+		c.SendError(vote.UserFacingError(err))
 		return
 	}
 
@@ -446,16 +443,16 @@ func (c *Client) handleStartVote(msg models.Message) {
 
 func (c *Client) handleVote(msg models.Message) {
 	if c.Type != "stagiaire" {
-		c.SendError("unauthorized")
+		c.SendError(vote.ErrNotAuthorized.Error())
 		return
 	}
 	if vote.HasDuplicates(msg.Colors) {
-		c.SendError("Duplicate colors are not allowed")
+		c.SendError(vote.ErrDuplicateColors.Error())
 		return
 	}
 	stagiaireName, err := c.Hub.VoteManager.SubmitVote(c.SessionID, c.ID, msg.Colors)
 	if err != nil {
-		c.SendError(err.Error())
+		c.SendError(vote.UserFacingError(err))
 		return
 	}
 
@@ -479,12 +476,12 @@ func (c *Client) handleVote(msg models.Message) {
 
 func (c *Client) handleCloseVote(_ models.Message) {
 	if c.Type != "trainer" {
-		c.SendError("unauthorized")
+		c.SendError(vote.ErrNotAuthorized.Error())
 		return
 	}
 	err := c.Hub.VoteManager.CloseVote(c.SessionID, c.ID)
 	if err != nil {
-		c.SendError(err.Error())
+		c.SendError(vote.UserFacingError(err))
 		return
 	}
 	c.Hub.BroadcastSession(c.SessionID, map[string]any{"type": "vote_closed"}, "")
@@ -492,17 +489,17 @@ func (c *Client) handleCloseVote(_ models.Message) {
 
 func (c *Client) handleResetVote(msg models.Message) {
 	if c.Type != "trainer" {
-		c.SendError("unauthorized")
+		c.SendError(vote.ErrNotAuthorized.Error())
 		return
 	}
 	// Validate colors if provided
 	if len(msg.Colors) > 0 {
 		if !vote.ValidateColors(msg.Colors, c.Hub.Config.ValidColors) {
-			c.SendError("Invalid color(s)")
+			c.SendError("Couleur(s) invalide(s)")
 			return
 		}
 		if vote.HasDuplicates(msg.Colors) {
-			c.SendError("Duplicate colors are not allowed")
+			c.SendError(vote.ErrDuplicateColors.Error())
 			return
 		}
 	}
@@ -513,13 +510,13 @@ func (c *Client) handleResetVote(msg models.Message) {
 	// labels — ResetVote clears ActiveLabels unconditionally.
 	if len(msg.Labels) > 0 && len(msg.Colors) > 0 {
 		if !vote.ValidateLabels(msg.Labels, msg.Colors) {
-			c.SendError("Invalid labels")
+			c.SendError("Étiquettes invalides")
 			return
 		}
 	}
 	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels, msg.GameEnabled, msg.Competitive, msg.AllowBlank)
 	if err != nil {
-		c.SendError(err.Error())
+		c.SendError(vote.UserFacingError(err))
 		return
 	}
 	c.Hub.BroadcastSession(c.SessionID, map[string]any{
@@ -535,7 +532,7 @@ func (c *Client) handleResetVote(msg models.Message) {
 
 func (c *Client) handleRevealAnswers(msg models.Message) {
 	if c.Type != "trainer" {
-		c.SendError("unauthorized")
+		c.SendError(vote.ErrNotAuthorized.Error())
 		return
 	}
 
@@ -549,13 +546,13 @@ func (c *Client) handleRevealAnswers(msg models.Message) {
 	for _, color := range msg.CorrectColors {
 		if color == "blank" {
 			if !session.GetAllowBlank() {
-				c.SendError("Blank votes are not allowed")
+				c.SendError(vote.ErrBlankNotAllowed.Error())
 				return
 			}
 			continue
 		}
 		if !vote.ValidateColors([]string{color}, c.Hub.Config.ValidColors) {
-			c.SendError("Invalid color(s)")
+			c.SendError("Couleur(s) invalide(s)")
 			return
 		}
 		found := false
@@ -566,14 +563,14 @@ func (c *Client) handleRevealAnswers(msg models.Message) {
 			}
 		}
 		if !found {
-			c.SendError("Color not in active palette")
+			c.SendError("Couleur absente de la palette active")
 			return
 		}
 	}
 
 	entries, err := c.Hub.VoteManager.RevealAnswers(c.SessionID, c.ID, msg.CorrectColors)
 	if err != nil {
-		c.SendError(err.Error())
+		c.SendError(vote.UserFacingError(err))
 		return
 	}
 
@@ -614,7 +611,7 @@ func (c *Client) handleReportGameScore(msg models.Message) {
 func (c *Client) handleUpdateName(msg models.Message) {
 	err := c.Hub.VoteManager.UpdateStagiaireName(c.SessionID, c.ID, msg.Name)
 	if err != nil {
-		c.SendError(err.Error())
+		c.SendError(vote.UserFacingError(err))
 		return
 	}
 	c.Name = msg.Name

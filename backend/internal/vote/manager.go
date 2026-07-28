@@ -18,8 +18,11 @@ const (
 
 var (
 	ErrSessionNotFound = errors.New("session not found")
-	ErrUnauthorized    = errors.New("unauthorized")
-	ErrInvalidInput    = errors.New("invalid input")
+	// ErrUnauthorized is the trainer-role gate sentinel. The string is
+	// internal-facing; callers that surface it to a client must map it
+	// through UserFacingError (B3) so the wire stays French.
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrInvalidInput = errors.New("invalid input")
 	// ErrNameInUse is returned by JoinStagiaire when a normalised name
 	// collides with another stagiaire. The advisory check in
 	// handleStagiaireJoin runs in the client goroutine while the actual
@@ -36,6 +39,24 @@ var (
 	// reclaim token is wrong or missing (S6/S12). The caller must drop
 	// the stale ID and rejoin with a fresh identity.
 	ErrReclaimUnauthorized = errors.New("reclaim token required")
+
+	// B3: French sentinels for leaf errors that previously reached
+	// clients as raw English (or leaked internal entity names like
+	// "stagiaire"). The hub's SendError path forwards err.Error()
+	// verbatim, so the sentinel string is what the UI toast shows.
+	// These are also matched by UserFacingError so handler-level
+	// mapping can stay terse: any error from the manager surface that
+	// isn't a known sentinel falls back to a generic French message.
+	ErrVoteNotActive     = errors.New("Aucun vote en cours")
+	ErrSingleChoiceOnly  = errors.New("Un seul choix est autorisé")
+	ErrDuplicateColors   = errors.New("Couleurs en double interdites")
+	ErrBlankNotAllowed   = errors.New("Le vote blanc n'est pas autorisé")
+	ErrBlankWithColors   = errors.New("Le vote blanc ne peut pas être combiné à d'autres couleurs")
+	ErrAtLeastOneColor   = errors.New("Au moins une couleur est requise")
+	ErrInvalidColor      = errors.New("Couleur invalide")
+	ErrVoteNotClosed     = errors.New("Le vote doit être clôturé avant la révélation")
+	ErrStagiaireNotFound = errors.New("Stagiaire introuvable")
+	ErrNotAuthorized     = errors.New("Action non autorisée")
 )
 
 type Manager struct {
@@ -262,11 +283,11 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	defer session.mu.Unlock()
 
 	if session.VoteState != models.VoteStateActive {
-		return "", errors.New("vote is not active")
+		return "", ErrVoteNotActive
 	}
 
 	if !session.MultipleChoice && len(colors) > 1 {
-		return "", errors.New("only one color allowed in single-choice mode")
+		return "", ErrSingleChoiceOnly
 	}
 
 	// BL6: duplicate-color check lives inside SubmitVote (under the
@@ -274,7 +295,7 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	// that skips the hub handler. The handler-side check is a useful
 	// fast-fail but is not authoritative.
 	if HasDuplicates(colors) {
-		return "", errors.New("duplicate colors are not allowed")
+		return "", ErrDuplicateColors
 	}
 
 	hasBlank := false
@@ -286,13 +307,13 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	}
 	if hasBlank {
 		if !session.AllowBlank {
-			return "", errors.New("blank votes are not allowed")
+			return "", ErrBlankNotAllowed
 		}
 		if len(colors) > 1 {
-			return "", errors.New("blank vote cannot be combined with other colors")
+			return "", ErrBlankWithColors
 		}
 	} else if len(colors) == 0 {
-		return "", errors.New("at least one color is required")
+		return "", ErrAtLeastOneColor
 	}
 
 	// Validate colors against active colors (O(N^2) but N is small)
@@ -306,7 +327,7 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 			continue
 		}
 		if !activeSet[c] {
-			return "", errors.New("invalid color")
+			return "", ErrInvalidColor
 		}
 	}
 
@@ -402,7 +423,7 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 	}
 
 	if session.VoteState != models.VoteStateClosed {
-		return nil, errors.New("vote must be closed before revealing answers")
+		return nil, ErrVoteNotClosed
 	}
 
 	correctSet := make(map[string]bool, len(correctColors))
@@ -500,14 +521,14 @@ func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error
 	defer session.mu.Unlock()
 
 	if _, exists := session.Stagiaires[stagiaireID]; !exists {
-		return errors.New("stagiaire not found in session")
+		return ErrStagiaireNotFound
 	}
 
 	// Check for name collision
 	normalizedNew := NormalizeName(name)
 	for id, n := range session.Stagiaires {
 		if id != stagiaireID && NormalizeName(n) == normalizedNew {
-			return errors.New("Ce nom est déjà utilisé") //nolint:staticcheck // user-facing French message
+			return ErrNameInUse
 		}
 	}
 
@@ -626,7 +647,7 @@ func (m *Manager) UpdateGameScore(sessionID, stagiaireID string, score int) erro
 	defer session.mu.Unlock()
 
 	if _, exists := session.Stagiaires[stagiaireID]; !exists {
-		return errors.New("stagiaire not found in session")
+		return ErrStagiaireNotFound
 	}
 
 	if score > session.GameScores[stagiaireID] {

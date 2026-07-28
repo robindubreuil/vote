@@ -3,33 +3,35 @@ package vote
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Counter is a monotonically increasing counter, safe for concurrent use.
 // Counters are restored from counters.json on boot via Restore so they read
 // as all-time monotonic across process restarts.
+//
+// B1: backed by atomic.Int64 rather than a sync.RWMutex. Inc/Add are called
+// on the hot path of every vote and every join; the write-lock they previously
+// took serialised those updates against each other and against every Value()
+// snapshot under -race. atomic.Int64 gives wait-free reads and lock-free
+// writes. Counter must not be copied after first use (atomic.Int64 contains
+// a noCopy guard); ProductStats embeds it by value and is itself only ever
+// handed out by pointer from NewManager/NewProductStats.
 type Counter struct {
-	value int64
-	mu    sync.RWMutex
+	value atomic.Int64
 }
 
 func (c *Counter) Inc() {
-	c.mu.Lock()
-	c.value++
-	c.mu.Unlock()
+	c.value.Add(1)
 }
 
 func (c *Counter) Add(n int64) {
-	c.mu.Lock()
-	c.value += n
-	c.mu.Unlock()
+	c.value.Add(n)
 }
 
 func (c *Counter) Value() int64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.value
+	return c.value.Load()
 }
 
 // Histogram tracks the distribution of observations across fixed buckets in

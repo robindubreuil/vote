@@ -110,8 +110,38 @@ func formatLE(v float64) string {
 	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
+// escapeLabelValue escapes a string for safe interpolation into a Prometheus
+// label value. The exposition format only allows `\`, `"`, and `\n` to be
+// backslash-escaped; any other byte is passed through verbatim. A bare `"`,
+// `\`, or newline in the value (which ldflags-derived build metadata can
+// carry if an operator passes a multi-line or quoted string) would otherwise
+// break the label syntax and cause Prometheus to reject the entire /metrics
+// scrape (B6). Inputs here are operator-set via -ldflags; they are trusted
+// not to be hostile, but they must still be well-formed.
+func escapeLabelValue(v string) string {
+	if !strings.ContainsAny(v, `\`+"\n"+`"`) {
+		return v
+	}
+	var b strings.Builder
+	b.Grow(len(v))
+	for _, r := range v {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func writeInfoMetric(b *strings.Builder, name, version, buildTime string) {
 	fmt.Fprintf(b, "# HELP %s Build information\n", name)
 	fmt.Fprintf(b, "# TYPE %s gauge\n", name)
-	fmt.Fprintf(b, `%s{version="%s",build_time="%s"} 1`+"\n", name, version, buildTime)
+	fmt.Fprintf(b, `%s{version="%s",build_time="%s"} 1`+"\n",
+		name, escapeLabelValue(version), escapeLabelValue(buildTime))
 }

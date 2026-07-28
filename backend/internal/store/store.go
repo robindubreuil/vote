@@ -174,9 +174,29 @@ func (s *Store) LoadCounters() (Counters, error) {
 	return c, nil
 }
 
+// reopenLocked reopens the append-only log under s.mu. Used after rotation
+// and as the self-heal path when a prior reopen failed and left s.logFile
+// nil (B9). Caller holds s.mu.
+func (s *Store) reopenLocked() error {
+	f, err := os.OpenFile(s.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	s.logFile = f
+	return nil
+}
+
 // AppendSample appends one sample to the append-only log, rotating to a single
 // backup if the file has grown past the cap. One JSON object per line; the
 // trailing newline makes partial lines safely skippable on read.
+//
+// B9: the rotation path previously set s.logFile to a fresh handle only on
+// reopen success; if reopen failed after rename, s.logFile kept pointing at
+// the renamed-away (closed) fd and every subsequent AppendSample failed
+// silently until the process restarted. We now nil the handle on every
+// rotation close, retry reopen on failure, and additionally self-heal from
+// the top of AppendSample so a transient FS error doesn't poison the
+// sampling goroutine for the lifetime of the process.
 func (s *Store) AppendSample(sample Sample) error {
 	if !valid(sample) {
 		return fmt.Errorf("store: invalid sample")
@@ -190,27 +210,51 @@ func (s *Store) AppendSample(sample Sample) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Self-heal: a prior rotation or Close may have left s.logFile nil. The
+	// graceful-shutdown path serialises AppendSample behind Close via the
+	// sampler's WaitGroup, so in normal operation this branch is cold; it
+	// exists to recover a Store that survived a transient FS fault instead
+	// of failing every subsequent AppendSample on a dead fd.
+	if s.logFile == nil {
+		if err := s.reopenLocked(); err != nil {
+			return fmt.Errorf("store: reopen log: %w", err)
+		}
+	}
+
 	if fi, statErr := os.Stat(s.logPath); statErr == nil && fi.Size() >= s.maxLogBytes {
 		if err := s.logFile.Close(); err != nil {
-			return fmt.Errorf("store: close log for rotation: %w", err)
+			// Close is best-effort on rotation: even if it fails the fd
+			// will be reaped by GC. Keep s.logFile nil so the reopen
+			// below establishes a fresh handle.
+			s.logFile = nil
+		} else {
+			s.logFile = nil
 		}
 		_ = os.Remove(s.logBackup)
 		if err := os.Rename(s.logPath, s.logBackup); err != nil {
-			slog.Warn("log rotation failed, reopening original path", "error", err)
-			f, reopenErr := os.OpenFile(s.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-			if reopenErr != nil {
-				return fmt.Errorf("store: reopen log after failed rotation: %w", reopenErr)
-			}
-			s.logFile = f
-		} else {
-			f, err := os.OpenFile(s.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-			if err != nil {
-				return fmt.Errorf("store: reopen log after rotation: %w", err)
-			}
-			s.logFile = f
+			// Rename failed: stats.jsonl is still on disk. Reopen it
+			// in-place — the next size check will rotate again on
+			// the following sample.
+			slog.Warn("log rotation rename failed; continuing with existing path", "error", err)
+		}
+		// Reopen regardless of rename outcome. If reopen fails, s.logFile
+		// stays nil and the next AppendSample will retry via the
+		// self-heal path at the top rather than fail forever on a
+		// closed fd.
+		if err := s.reopenLocked(); err != nil {
+			return fmt.Errorf("store: reopen log after rotation: %w", err)
 		}
 	}
 	if _, err := s.logFile.Write(line); err != nil {
+		// The fd may have been invalidated out-of-band (external log
+		// truncation, FS unmount, rotated by an admin script). Try one
+		// reopen + retry so the sampling goroutine survives a transient
+		// write error rather than poisoning every subsequent AppendSample.
+		if rErr := s.reopenLocked(); rErr == nil {
+			if _, wErr := s.logFile.Write(line); wErr == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("store: append sample: %w", err)
 	}
 	return nil
