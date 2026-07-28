@@ -20,6 +20,13 @@ var (
 	ErrSessionNotFound = errors.New("session not found")
 	ErrUnauthorized    = errors.New("unauthorized")
 	ErrInvalidInput    = errors.New("invalid input")
+	// ErrNameInUse is returned by JoinStagiaire when a normalised name
+	// collides with another stagiaire. The advisory check in
+	// handleStagiaireJoin runs in the client goroutine while the actual
+	// map write happens later in Hub.Run; without this authoritative
+	// re-check under the session lock, two clients racing for the same
+	// name both pass the advisory check and both register (CC2).
+	ErrNameInUse = errors.New("name already in use")
 )
 
 type Manager struct {
@@ -130,6 +137,15 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
+
+	if name != "" {
+		normalised := NormalizeName(name)
+		for id, n := range session.Stagiaires {
+			if id != stagiaireID && NormalizeName(n) == normalised {
+				return ErrNameInUse
+			}
+		}
+	}
 
 	session.Stagiaires[stagiaireID] = name
 	session.LastActivity = time.Now().Unix()

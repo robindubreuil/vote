@@ -1,6 +1,7 @@
 package vote
 
 import (
+	"errors"
 	"testing"
 	"time"
 	"vote-backend/internal/models"
@@ -109,6 +110,47 @@ func TestJoinStagiaire(t *testing.T) {
 	err = m.JoinStagiaire("ABC", "stag1ab12cde", "<script>")
 	if err != ErrInvalidInput {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+// TestJoinStagiaireNameUniquenessUnderLock covers CC2: the authoritative
+// name-collision check runs inside session.mu.Lock. Two distinct IDs
+// submitting the same normalised name cannot both register.
+func TestJoinStagiaireNameUniquenessUnderLock(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+
+	if err := m.JoinStagiaire("ABC", "s1abc1234567", "Jean"); err != nil {
+		t.Fatalf("first join: %v", err)
+	}
+
+	// Same normalised name, different ID → collision.
+	err := m.JoinStagiaire("ABC", "s2abc1234567", "jéan")
+	if !errors.Is(err, ErrNameInUse) {
+		t.Errorf("expected ErrNameInUse, got %v", err)
+	}
+
+	// Normalised-equal variants also collide.
+	if err := m.JoinStagiaire("ABC", "s3abc1234567", "JEAN"); !errors.Is(err, ErrNameInUse) {
+		t.Errorf("expected ErrNameInUse for case variant, got %v", err)
+	}
+
+	// Re-join with the SAME id and same name is a no-op reconnect, not a collision.
+	if err := m.JoinStagiaire("ABC", "s1abc1234567", "Jean"); err != nil {
+		t.Errorf("same-id rejoin should succeed, got %v", err)
+	}
+
+	// Empty names never collide (anonymous stagiaires).
+	if err := m.JoinStagiaire("ABC", "s4abc1234567", ""); err != nil {
+		t.Errorf("empty name join should succeed, got %v", err)
+	}
+	if err := m.JoinStagiaire("ABC", "s5abc1234567", ""); err != nil {
+		t.Errorf("second empty name join should succeed, got %v", err)
+	}
+
+	// A distinct name registers fine.
+	if err := m.JoinStagiaire("ABC", "s6abc1234567", "Marie"); err != nil {
+		t.Errorf("distinct name should succeed, got %v", err)
 	}
 }
 

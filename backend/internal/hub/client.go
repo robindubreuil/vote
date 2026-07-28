@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -11,7 +12,11 @@ import (
 )
 
 const (
-	ClientSendBufferSize = 256
+	// ClientSendBufferSize bounds the per-client outbound queue.
+	// Raised from 256 to 512 so a 30-stagiaire burst (≈60 trainer-bound
+	// messages: vote_received + connected_count per vote) fits with
+	// headroom even if the trainer's writePump briefly stalls (CC1).
+	ClientSendBufferSize = 512
 	pongWait             = 70 * time.Second
 	MaxGameScore         = 100000
 )
@@ -29,6 +34,14 @@ type Client struct {
 	IP           string
 	LastActivity int64
 	handlers     map[string]func(models.Message)
+	// closing is set when the connection is being torn down
+	// (slow-buffer eviction, reconnect-by-ID takeover, trainer
+	// takeover). Once set, SendJSON short-circuits so stale
+	// references — e.g. a BroadcastSession target snapshot captured
+	// just before the eviction — drop silently instead of piling
+	// messages onto a dead channel and spamming the log on every
+	// subsequent broadcast until pongWait evicts the entry (CL1, CM3).
+	closing atomic.Bool
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, ip string) *Client {
@@ -150,17 +163,49 @@ func (c *Client) handleMessage(data []byte) {
 	}
 }
 
+// markClosing flags the client as being torn down. Future SendJSON /
+// trySend calls become no-ops, so stale references captured before the
+// eviction (e.g. a BroadcastSession target list) drop silently instead
+// of pushing into a dead channel (CL1) or logging a warning on every
+// subsequent broadcast until pongWait reaps the entry (CM3).
+func (c *Client) markClosing() {
+	c.closing.Store(true)
+}
+
 func (c *Client) SendJSON(v any) {
+	if c.closing.Load() {
+		return
+	}
 	data, err := json.Marshal(v)
 	if err != nil {
 		slog.Error("Marshal error", "error", err)
 		return
 	}
+	c.trySend(data)
+}
+
+// trySend enqueues a pre-marshalled payload with buffer-full semantics
+// that depend on the client role (CC1). A stagiaire whose queue is full
+// is evicted — they will reconnect and the protocol is idempotent. The
+// trainer is never evicted for a transient burst: disconnecting the
+// trainer disrupts the entire class, so the message is dropped instead
+// and the next connected_count reconciles the view.
+func (c *Client) trySend(data []byte) {
+	if c.closing.Load() {
+		return
+	}
 	select {
 	case c.Send <- data:
 	default:
-		slog.Warn("Send channel full: disconnecting slow client", "client_id", c.ID)
-		c.Conn.Close()
+		if c.Type == "trainer" {
+			slog.Warn("Trainer send buffer full: dropping message", "client_id", c.ID)
+		} else {
+			slog.Warn("Send channel full: disconnecting slow client", "client_id", c.ID)
+			c.markClosing()
+			if c.Conn != nil {
+				c.Conn.Close()
+			}
+		}
 	}
 }
 
