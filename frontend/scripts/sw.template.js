@@ -51,11 +51,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys()
-      await Promise.all(
-        keys
-          .filter((key) => !key.endsWith(BUILD_VERSION))
-          .map((key) => caches.delete(key))
-      )
+      await Promise.all(keys.filter((key) => !key.endsWith(BUILD_VERSION)).map((key) => caches.delete(key)))
       await self.clients.claim()
     })()
   )
@@ -79,7 +75,20 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/@') || url.pathname.includes('/__vite')) return
 
   // HTML navigations: network-first, fall back to cached shell when offline.
+  //
+  // FH5: only intercept navigations under the formateur scope. Stagiaire
+  // is intentionally NOT a PWA (trainees join via QR — install prompts add
+  // friction), so a stagiaire reloading `/stagiaire/` offline should see
+  // the browser's native offline behaviour, not the cached formateur
+  // shell. Narrowing the registration scope would do the same for new
+  // users but break the upgrade story for users who already have the SW
+  // at scope `/` (calling register with a different scope is a rejected
+  // promise); gating in the fetch handler fixes old AND new clients on
+  // the next SW update.
+  const FORMATEUR_NAV_PREFIX = '/formateur/'
+
   if (req.mode === 'navigate') {
+    if (!url.pathname.startsWith(FORMATEUR_NAV_PREFIX)) return
     event.respondWith(networkFirstNavigation(req))
     return
   }

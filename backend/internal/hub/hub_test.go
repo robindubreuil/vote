@@ -26,7 +26,7 @@ func TestHubSessionLifecycle(t *testing.T) {
 		CleanupInterval: time.Hour,
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	// Fake trainer client - use 12-char lowercase alphanumeric ID matching GenerateID format
@@ -97,8 +97,9 @@ func TestHubCleanup(t *testing.T) {
 	// Create entry in Hub Connections
 	h.Connections["expired_session"] = &SessionConnections{}
 
-	// Start loop
-	go h.cleanupLoop()
+	// Start hub loops (dispatcher + cleanup). Both are tracked by the
+	// Hub's WaitGroup, so defer-Shutdown will block until both exit.
+	h.Run()
 	defer h.Shutdown()
 
 	// Wait for cleanup

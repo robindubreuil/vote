@@ -68,11 +68,11 @@ Three reinforcing issues that all trigger on a 30-student wifi flap and compound
 
 ## Session 6 — Persistence correctness + graceful shutdown
 
-- [ ] **BM1** Histogram Restore matches buckets by exact LE; future schema change leaves in-memory histogram non-monotonic → Prometheus rejects the scrape — `backend/internal/vote/stats.go:160-174`. Refuse-to-restore on mismatch.
-- [ ] **BM3** `Observe` mutates `count`/`sumBits`/buckets non-atomically; concurrent `Snapshot` can capture inconsistent state → checkpoint skipped — `backend/internal/vote/stats.go:41-72`. Single mutex around Observe+Snapshot, or read order so worst case is `bucket ≤ count`.
-- [ ] **CM1+CM2** `Hub.Shutdown` cancels contexts but doesn't wait for `Hub.Run` / `cleanupLoop` / `writePump` to return; hijacked WS conns aren't drained — `backend/cmd/server/main.go:71-80`, `backend/internal/hub/client.go:106-136`. Add `sync.WaitGroup` to Hub, `<-ctx.Done()` case in `writePump`, iterate+close `Connections` on shutdown.
-- [ ] **FH4** Trainer reconnect re-sends `trainer_join` but never requests fresh state; assumes local snapshot is canonical — `frontend/src/formateur/websocket.js:81-87`. Either verify server pushes full snapshot on trainer_join, or add explicit `request_sync`.
-- [ ] **FH5** Service worker registered at scope `/` but caches `/formateur/` as the offline shell; a stagiaire reloading `/stagiaire/` offline gets the formateur landing — `frontend/scripts/sw.template.js`, `frontend/shared/pwa.js`. Narrow scope or pre-cache `/stagiaire/` separately.
+- [x] **BM1** Histogram Restore matches buckets by exact LE; future schema change leaves in-memory histogram non-monotonic → Prometheus rejects the scrape — `backend/internal/vote/stats.go:160-174`. Refuse-to-restore on mismatch.
+- [x] **BM3** `Observe` mutates `count`/`sumBits`/buckets non-atomically; concurrent `Snapshot` can capture inconsistent state → checkpoint skipped — `backend/internal/vote/stats.go:41-72`. Single mutex around Observe+Snapshot, or read order so worst case is `bucket ≤ count`.
+- [x] **CM1+CM2** `Hub.Shutdown` cancels contexts but doesn't wait for `Hub.Run` / `cleanupLoop` / `writePump` to return; hijacked WS conns aren't drained — `backend/cmd/server/main.go:71-80`, `backend/internal/hub/client.go:106-136`. Add `sync.WaitGroup` to Hub, `<-ctx.Done()` case in `writePump`, iterate+close `Connections` on shutdown.
+- [x] **FH4** Trainer reconnect re-sends `trainer_join` but never requests fresh state; assumes local snapshot is canonical — `frontend/src/formateur/websocket.js:81-87`. Either verify server pushes full snapshot on trainer_join, or add explicit `request_sync`.
+- [x] **FH5** Service worker registered at scope `/` but caches `/formateur/` as the offline shell; a stagiaire reloading `/stagiaire/` offline gets the formateur landing — `frontend/scripts/sw.template.js`, `frontend/shared/pwa.js`. Narrow scope or pre-cache `/stagiaire/` separately.
 
 ## Session 7 — Resource caps + dashboard cookie hardening
 

@@ -63,7 +63,7 @@ func NewTestServer(t *testing.T) *TestServer {
 
 	// Create and start hub
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 
 	// Create server
 	srv := server.NewServer(cfg, h)

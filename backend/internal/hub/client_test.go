@@ -35,7 +35,7 @@ func TestClientHandleMessage(t *testing.T) {
 		},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	// 1. Test Trainer Join - use "new" to create a session
@@ -302,7 +302,7 @@ func TestClientHandleErrors(t *testing.T) {
 		},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	client := &Client{
@@ -374,7 +374,7 @@ func TestCompetitiveRevealFlow(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune", "orange", "violet", "rose", "gris"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -436,7 +436,7 @@ func TestTrainerGuards(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune", "orange", "violet", "rose", "gris"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -471,7 +471,7 @@ func TestGameScoreValidation(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune", "orange", "violet", "rose", "gris"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -517,7 +517,7 @@ func TestRevealRejectsColorsOutsidePalette(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune", "orange", "violet", "rose", "gris"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -557,7 +557,7 @@ func TestHandleVoteRejectsTrainer(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -607,7 +607,7 @@ func TestHandleResetVotePreservesLabels(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -656,7 +656,7 @@ func TestStartVoteRejectsLabelsOutsidePalette(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -703,7 +703,7 @@ func TestResetVoteRejectsLabelsOutsidePalette(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -741,7 +741,7 @@ func TestTrainerTakeoverRequiresToken(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	// 1. Legitimate trainer creates the session.
@@ -808,7 +808,7 @@ func TestTrainerRecoveryWithoutTokenAllowed(t *testing.T) {
 		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
 	}
 	h := NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
@@ -885,4 +885,105 @@ func drainOrTimeout(t *testing.T, c *Client) {
 	case <-c.Send:
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+// TestTrainerReconnectReceivesFullConfig is the FH4 regression test. When
+// a trainer reconnects to a session that is Idle but has been configured
+// (colors set, plus labels / feature flags), the server replays the full
+// config surface via config_updated. Before the fix it sent only
+// selectedColors + multipleChoice, so a trainer reconnecting on a
+// different device (or after another trainer reconfigured) lost every
+// other field and could silently re-start the vote with stale settings.
+func TestTrainerReconnectReceivesFullConfig(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune", "orange", "violet", "rose", "gris"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	trainer1 := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer1)
+	trainer1.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCode := drainUntil(t, trainer1, "session_created")["sessionCode"].(string)
+	drainUntil(t, trainer1, "connected_count")
+
+	// Configure via reset_vote — lands the session in state=Idle with
+	// ActiveColors populated, which is exactly the FH4 reconnect path.
+	labels := map[string]string{"rouge": "Pomme", "bleu": "Ciel"}
+	trainer1.handleMessage(mustMarshal(t, models.Message{
+		Type:           "reset_vote",
+		Colors:         []string{"rouge", "bleu"},
+		Labels:         labels,
+		MultipleChoice: true,
+		GameEnabled:    true,
+		Competitive:    true,
+		AllowBlank:     true,
+	}))
+	// reset_vote broadcasts vote_reset to every client (including the
+	// trainer that issued it), plus connected_count — drain them.
+	drainUntil(t, trainer1, "vote_reset")
+	drainUntil(t, trainer1, "connected_count")
+
+	// A second trainer joins with the token — simulates a reconnect
+	// from a different device. The server's Idle+colors branch fires.
+	trainer2 := &Client{ID: "trainer2fghijk", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer2)
+	// Pre-load the token so the takeover gate (S1) accepts trainer2.
+	if sess, ok := h.VoteManager.GetSession(sessionCode); !ok || sess.GetTrainerToken() == "" {
+		t.Fatal("missing trainer token on session")
+	} else {
+		trainer2.TrainerToken = sess.GetTrainerToken()
+	}
+	trainer2.handleMessage(mustMarshal(t, models.Message{
+		Type:        "trainer_join",
+		SessionCode: sessionCode,
+		TrainerToken: trainer2.TrainerToken,
+	}))
+
+	// Trainer2 should see: session_created, connected_count, then the
+	// config_updated replay. Drain until we find config_updated.
+	drainUntil(t, trainer2, "session_created")
+	drainUntil(t, trainer2, "connected_count")
+	cfgMsg := drainUntil(t, trainer2, "config_updated")
+
+	if got := cfgMsg["selectedColors"]; !sameStrings(got, []string{"rouge", "bleu"}) {
+		t.Errorf("selectedColors: got %v, want [rouge bleu]", got)
+	}
+	if mc, _ := cfgMsg["multipleChoice"].(bool); !mc {
+		t.Errorf("multipleChoice not replayed: %v", cfgMsg["multipleChoice"])
+	}
+	if ge, _ := cfgMsg["gameEnabled"].(bool); !ge {
+		t.Errorf("gameEnabled not replayed: %v", cfgMsg["gameEnabled"])
+	}
+	if comp, _ := cfgMsg["competitive"].(bool); !comp {
+		t.Errorf("competitive not replayed: %v", cfgMsg["competitive"])
+	}
+	if ab, _ := cfgMsg["allowBlank"].(bool); !ab {
+		t.Errorf("allowBlank not replayed: %v", cfgMsg["allowBlank"])
+	}
+	if lab, ok := cfgMsg["labels"].(map[string]any); !ok {
+		t.Errorf("labels not replayed: %v", cfgMsg["labels"])
+	} else {
+		if lab["rouge"] != "Pomme" || lab["bleu"] != "Ciel" {
+			t.Errorf("labels mismatch: %v", lab)
+		}
+	}
+}
+
+// sameStrings compares an `[]any` from JSON to a literal []string.
+func sameStrings(got any, want []string) bool {
+	arr, ok := got.([]any)
+	if !ok || len(arr) != len(want) {
+		return false
+	}
+	for i, w := range want {
+		if s, _ := arr[i].(string); s != w {
+			return false
+		}
+	}
+	return true
 }

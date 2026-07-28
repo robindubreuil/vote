@@ -34,7 +34,7 @@ func main() {
 	cfg := config.LoadConfig()
 
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 
 	srv := server.NewServer(cfg, h)
 	srv.SetBuildInfo(version, buildTime)

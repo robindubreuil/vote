@@ -109,7 +109,7 @@ func TestWebsocketConnection(t *testing.T) {
 		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	srv := NewServer(cfg, h)
@@ -133,7 +133,7 @@ func TestWebSocketSuccess(t *testing.T) {
 		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	srv := NewServer(cfg, h)
@@ -163,7 +163,7 @@ func TestWebSocketWithProxyHeader(t *testing.T) {
 		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	srv := NewServer(cfg, h)
@@ -203,7 +203,7 @@ func TestWebSocketRejectsEmptyOrigin(t *testing.T) {
 		CleanupInterval: time.Hour,
 	}
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	srv := NewServer(cfg, h)

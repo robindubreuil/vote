@@ -237,11 +237,27 @@ function handleMessage(msg) {
       break
 
     case 'config_updated':
+      // FH4: server pushes the full config surface on reconnect so the
+      // trainer's view matches canonical state across devices/trainers,
+      // not just their localStorage snapshot. Each field is gated so we
+      // don't clobber local state when an older server omits a field.
       if (msg.selectedColors && msg.selectedColors.length > 0) {
         state.selectedColors = new Set(msg.selectedColors)
       }
       if (msg.multipleChoice !== undefined) {
         state.multipleChoice = msg.multipleChoice
+      }
+      if (msg.labels !== undefined) {
+        state.colorLabels = msg.labels
+      }
+      if (msg.gameEnabled !== undefined) {
+        state.gameEnabled = msg.gameEnabled
+      }
+      if (msg.competitive !== undefined) {
+        state.competitive = msg.competitive
+      }
+      if (msg.allowBlank !== undefined) {
+        state.allowBlank = msg.allowBlank
       }
       if (state.voteState === 'idle') {
         renderMainContent()
