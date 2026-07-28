@@ -28,6 +28,12 @@ type Session struct {
 	VoteStartTime  int64
 	CreatedAt      int64
 	LastActivity   int64
+	// TotalVotes is the lifetime count of accepted SubmitVote calls for
+	// this session. The per-round Votes map is reset on every StartVote,
+	// so len(Votes) only reflects the current (or last) round; the
+	// VotesPerSession histogram needs the lifetime value to be meaningful
+	// (BM4).
+	TotalVotes int
 }
 
 func NewSession(id, trainerID string) *Session {

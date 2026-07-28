@@ -13,7 +13,11 @@ interface WSClient {
 
 function createClient(url: string): Promise<WSClient> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    // S3 hardened CheckOrigin to reject an absent Origin header (browsers
+    // always send one on cross-origin WS handshakes). The `ws` library
+    // does not set one by default, so tests must pass an allowed Origin
+    // explicitly to get past the gate.
+    const ws = new WebSocket(url, { headers: { Origin: 'http://localhost:5173' } });
     const pending: any[] = [];
     const waiterQueue: { type: string; resolve: (msg: any) => void }[] = [];
 

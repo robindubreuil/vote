@@ -58,13 +58,13 @@ Three reinforcing issues that all trigger on a 30-student wifi flap and compound
 
 ## Session 5 — Business-logic correctness
 
-- [ ] **BL2** Rank semantic mismatch: ordinal at reveal vs competition on reconnect → same student sees rank 2 then rank 1 for tied scores — `backend/internal/vote/manager.go:342-344` vs `backend/internal/hub/hub.go:605-621`.
-- [ ] **BL3** `RevealAnswers` scores regardless of `session.Competitive` flag (README scopes scoring to competitive mode) — `backend/internal/vote/manager.go:281-348`.
-- [ ] **BM2** `start_vote` while Active silently discards in-progress votes — `backend/internal/vote/manager.go:122-152`.
-- [ ] **BM5** Labels validated against global `ValidColors`, not the selected palette — `backend/internal/hub/client.go:332-337`.
-- [ ] **BM4** `VotesPerSession` histogram records `len(Votes)` at teardown (last round only), not lifetime — `backend/internal/vote/manager.go:397,411`.
-- [ ] **BL6** Move duplicate-vote check inside `SubmitVote` (defense in depth) — `backend/internal/vote/manager.go:154-213`.
-- [ ] Tests for each: scoring under non-competitive, double start_vote, rank-tie invariants.
+- [x] **BL2** Rank semantic mismatch: ordinal at reveal vs competition on reconnect → same student sees rank 2 then rank 1 for tied scores — `backend/internal/vote/manager.go:342-344` vs `backend/internal/hub/hub.go:605-621`. **Fix:** `RevealAnswers` now assigns competition ranks (tied `TotalScore`s share a rank, next lower score skips) via `assignCompetitionRanks`, matching the on-the-fly `computeRank` used on reconnect.
+- [x] **BL3** `RevealAnswers` scores regardless of `session.Competitive` flag (README scopes scoring to competitive mode) — `backend/internal/vote/manager.go:281-348`. **Fix:** cumulative `Scores`/`LastVoteScores`/`Revealed` mutation is gated on `session.Competitive`. Per-round `VoteScore` is still computed so the response carries correctness info.
+- [x] **BM2** `start_vote` while Active silently discards in-progress votes — `backend/internal/vote/manager.go:122-152`. **Fix:** `StartVote` returns the new sentinel `ErrVoteAlreadyActive` ("un vote est déjà en cours") when state is already Active; Closed → StartVote (the legitimate next-round path) is unchanged.
+- [x] **BM5** Labels validated against global `ValidColors`, not the selected palette — `backend/internal/hub/client.go:332-337`. **Fix:** `handleStartVote` and `handleResetVote` validate labels against `msg.Colors` (the ballot actually being configured).
+- [x] **BM4** `VotesPerSession` histogram records `len(Votes)` at teardown (last round only), not lifetime — `backend/internal/vote/manager.go:397,411`. **Fix:** `Session.TotalVotes` accumulates every accepted `SubmitVote` call across rounds; `CleanupExpiredSessions` and `RemoveSession` observe that lifetime value instead of `len(Votes)`.
+- [x] **BL6** Move duplicate-vote check inside `SubmitVote` (defense in depth) — `backend/internal/vote/manager.go:154-213`. **Fix:** `SubmitVote` rejects duplicates under the session lock; the handler-side check in `handleVote` stays as a fast-fail.
+- [x] Tests for each: scoring under non-competitive, double start_vote, rank-tie invariants (`manager_test.go`: `TestStartVoteRejectsActive`, `TestSubmitVoteRejectsDuplicates`, `TestRevealAnswersCompetitionRankTies`, `TestRevealAnswersNonCompetitiveDoesNotScore`, `TestVotesPerSessionLifetime`; `client_test.go`: `TestStartVoteRejectsLabelsOutsidePalette`, `TestResetVoteRejectsLabelsOutsidePalette`). Plus a fix to `tests/e2e/ws-helper.ts` so the e2e WS suite passes the S3 `CheckOrigin` gate (the helper was sending no `Origin`, leaving the entire suite broken on main).
 
 ## Session 6 — Persistence correctness + graceful shutdown
 
