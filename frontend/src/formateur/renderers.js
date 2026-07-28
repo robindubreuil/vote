@@ -21,15 +21,54 @@ import { createListenerTracker } from '@shared/dom/listeners.js'
 import { listPresets } from '@shared/presets.js'
 import { state } from './state.js'
 import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
-const { track: trackListener, cleanup: cleanupAllListeners } = createListenerTracker()
+
+// Three listenership lifetimes:
+//   appTracker     — page-lifetime (escape shortcut). Survives session
+//                    changes; only torn down on full page reload.
+//   sessionTracker — session-lifetime (header buttons). Wiped on session
+//                    leave, persists across renders within a session.
+//   renderTracker  — per-render (config, vote, landing). Wiped on every
+//                    #app-content re-render.
+// Splitting these is what lets the Escape-to-leave shortcut survive the
+// cleanupAllListeners() call that fires after every server message (C3),
+// and what lets attachConfigListeners be called repeatedly without growing
+// the listener Set unboundedly (M1).
+const appTracker = createListenerTracker()
+const sessionTracker = createListenerTracker()
+const renderTracker = createListenerTracker()
+
+const trackAppListener = appTracker.track
+const trackSessionListener = sessionTracker.track
+const trackListener = renderTracker.track
+
+/**
+ * Wipe session + render listeners. The app tracker (page-scoped keyboard
+ * shortcuts) is intentionally preserved so the Escape shortcut keeps
+ * working after the user leaves one session and joins another.
+ */
+export function cleanupAllListeners() {
+  sessionTracker.cleanup()
+  renderTracker.cleanup()
+}
+
+/**
+ * Debug helper for tests: returns the current size of each tracker so a
+ * test can assert that repeated attach calls don't grow the Sets
+ * unboundedly (M1 regression guard). Not used by production code.
+ */
+export function _trackerSizesForTests() {
+  return {
+    app: appTracker.size,
+    session: sessionTracker.size,
+    render: renderTracker.size
+  }
+}
 
 const _actionHandlers = {}
 
 export function setActionHandlers(handlers) {
   Object.assign(_actionHandlers, handlers)
 }
-
-export { cleanupAllListeners }
 
 /**
  * Open the "Aide à la connexion" view in a new browser tab so the formateur
@@ -178,7 +217,7 @@ export function updateHeader(client) {
 export function attachHeaderListeners(client, leaveSessionFn) {
   const leaveSessionBtn = document.getElementById('leaveSessionBtn')
   if (leaveSessionBtn) {
-    trackListener(leaveSessionBtn, 'click', async () => {
+    trackSessionListener(leaveSessionBtn, 'click', async () => {
       const ok = await showConfirmDialog({
         title: t.formateur.leaveSessionTitle,
         message: t.formateur.leaveSession,
@@ -190,7 +229,7 @@ export function attachHeaderListeners(client, leaveSessionFn) {
 
   const aidBtn = document.getElementById('openConnectionAidBtn')
   if (aidBtn && state.sessionCode) {
-    trackListener(aidBtn, 'click', () => openConnectionAid(state.sessionCode))
+    trackSessionListener(aidBtn, 'click', () => openConnectionAid(state.sessionCode))
   }
 }
 
@@ -213,6 +252,12 @@ export function renderMainContent() {
  * @param {Object} client
  */
 export function attachConfigListeners(client) {
+  // Self-cleaning: handlers.js calls this directly after renderMainContent()
+  // (preset apply / save / cancel / etc.) without an explicit cleanup, so
+  // without this the renderTracker Set would grow unboundedly (M1).
+  // Safe to call from attachListeners() too — the tracker is already empty
+  // there, so this is a no-op.
+  renderTracker.cleanup()
   // Color checkboxes
   document.querySelectorAll('.color-checkbox input[type="checkbox"]').forEach((checkbox) => {
     trackListener(checkbox, 'change', (e) => {
@@ -377,6 +422,8 @@ function attachPresetListeners() {
  * @param {Object} client
  */
 export function attachVoteListeners(client) {
+  // Self-cleaning — same reason as attachConfigListeners.
+  renderTracker.cleanup()
   const closeBtn = document.getElementById('closeVote')
   if (closeBtn && _actionHandlers.closeVote) {
     trackListener(closeBtn, 'click', () => _actionHandlers.closeVote(client))
@@ -391,8 +438,7 @@ export function attachVoteListeners(client) {
   if (revealBtn && _actionHandlers.revealAnswers) {
     trackListener(revealBtn, 'click', () => {
       const correct = new Set(
-        Array.from(document.querySelectorAll('input[data-correct-color]:checked'))
-          .map((el) => el.dataset.correctColor)
+        Array.from(document.querySelectorAll('input[data-correct-color]:checked')).map((el) => el.dataset.correctColor)
       )
       _actionHandlers.revealAnswers(client, correct)
     })
@@ -468,12 +514,16 @@ export function renderConfigHTML() {
           </span>
         </label>
 
-        ${state.competitive ? `
+        ${
+          state.competitive
+            ? `
         <label class="multiple-choice-toggle" data-testid="blank-vote-toggle">
           <span class="toggle-switch ${state.allowBlank ? 'active' : ''}" data-action="toggle-blank"></span>
           <span>${t.formateur.blankVoteToggle}</span>
         </label>
-        ` : ''}
+        `
+            : ''
+        }
       </div>
 
       <div class="button-row">
@@ -574,7 +624,8 @@ function renderPresetsSectionHTML() {
  * Render the vote HTML
  * @returns {string}
  */
-export function renderVoteHTML() {  const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))
+export function renderVoteHTML() {
+  const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))
 
   // Calculate initial stats
   const voteCount = state.stagiaires.filter((s) => s.vote && s.vote.length > 0).length
@@ -648,51 +699,57 @@ function renderCompetitiveSectionHTML(activeColors) {
       <div class="reveal-section">
         <div class="reveal-title">${t.formateur.markCorrect}</div>
         <div class="reveal-colors">
-          ${activeColors.map((color) => {
-            const checked = state.correctColors.has(color.id) ? 'checked' : ''
-            const displayName = state.colorLabels[color.id] || color.name
-            return `
+          ${activeColors
+            .map((color) => {
+              const checked = state.correctColors.has(color.id) ? 'checked' : ''
+              const displayName = state.colorLabels[color.id] || color.name
+              return `
             <label class="reveal-color-chip ${checked ? 'selected' : ''}" data-correct-color="${color.id}">
               <input type="checkbox" data-correct-color="${color.id}" ${checked} />
               <span class="color-swatch" style="background-color: ${color.color}"></span>
               <span class="reveal-color-name">${escapeHtml(displayName)}</span>
             </label>`
-          }).join('')}
-          ${state.allowBlank ? `
+            })
+            .join('')}
+          ${
+            state.allowBlank
+              ? `
           <label class="reveal-color-chip ${state.correctColors.has('blank') ? 'selected' : ''}" data-correct-color="blank">
             <input type="checkbox" data-correct-color="blank" ${state.correctColors.has('blank') ? 'checked' : ''} />
             <span class="reveal-color-name">${t.formateur.blankVote}</span>
           </label>
-          ` : ''}
+          `
+              : ''
+          }
         </div>
       </div>
     `
   }
 
   const sortedByVote = [...state.scoreboard].sort((a, b) => b.voteScore - a.voteScore)
-  const rows = sortedByVote.map((entry) => {
-    const voteColors = (entry.vote || []).filter((c) => c !== 'blank')
-    const isBlank = (entry.vote || []).includes('blank')
-    const colorsHTML = voteColors
-      .map((colorId) => {
-        const color = COLORS.find((c) => c.id === colorId)
-        const isCorrect = state.correctColors.has(colorId)
-        return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
-      })
-      .join('')
-    const voteDisplay = isBlank
-      ? '<span class="scoreboard-blank">blanc</span>'
-      : colorsHTML || '—'
-    const voteScoreClass = entry.voteScore >= 0 ? 'positive' : 'negative'
-    const voteScoreText = entry.voteScore >= 0 ? `+${entry.voteScore}` : String(entry.voteScore)
-    return `
+  const rows = sortedByVote
+    .map((entry) => {
+      const voteColors = (entry.vote || []).filter((c) => c !== 'blank')
+      const isBlank = (entry.vote || []).includes('blank')
+      const colorsHTML = voteColors
+        .map((colorId) => {
+          const color = COLORS.find((c) => c.id === colorId)
+          const isCorrect = state.correctColors.has(colorId)
+          return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${color?.color || '#666'}" title="${color?.name || colorId}"></span>`
+        })
+        .join('')
+      const voteDisplay = isBlank ? '<span class="scoreboard-blank">blanc</span>' : colorsHTML || '—'
+      const voteScoreClass = entry.voteScore >= 0 ? 'positive' : 'negative'
+      const voteScoreText = entry.voteScore >= 0 ? `+${entry.voteScore}` : String(entry.voteScore)
+      return `
       <li class="scoreboard-row">
         <span class="scoreboard-name">${escapeHtml(entry.name || t.formateur.anonymous)}</span>
         <span class="scoreboard-vote">${voteDisplay}</span>
         <span class="scoreboard-votescore ${voteScoreClass}">${voteScoreText}</span>
       </li>
     `
-  }).join('')
+    })
+    .join('')
 
   return `
     <div class="scoreboard-section">
@@ -878,7 +935,12 @@ export function attachLandingListeners(joinSessionFn, createSessionFn) {
 }
 
 /**
- * Attach keyboard shortcuts for the full app
+ * Attach keyboard shortcuts for the full app.
+ *
+ * Registered on the app tracker (not the render tracker) so the cleanup
+ * that runs after every server message does NOT kill the Escape-to-leave
+ * shortcut mid-session. The handler no-ops when `state.sessionCode` is
+ * falsy, so it's safe to keep attached on the landing page too.
  * @param {Function} leaveSessionFn
  */
 export function attachAppKeyboardShortcuts(leaveSessionFn) {
@@ -895,5 +957,5 @@ export function attachAppKeyboardShortcuts(leaveSessionFn) {
     }
   }
 
-  trackListener(document, 'keydown', keyHandler)
+  trackAppListener(document, 'keydown', keyHandler)
 }

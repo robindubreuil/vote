@@ -22,5 +22,14 @@ export function createListenerTracker() {
     listeners.clear()
   }
 
-  return { track, trackAll, cleanup }
+  return {
+    track,
+    trackAll,
+    cleanup,
+    // Exposed for diagnostics / tests. Production code should not branch
+    // on this — it's a debugging aid for spotting leaked listeners.
+    get size() {
+      return listeners.size
+    }
+  }
 }

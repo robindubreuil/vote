@@ -289,7 +289,7 @@ function handleSubmit() {
     if (game.status === 'won' || game.status === 'lost') {
       const client = getClient()
       if (client) {
-        client.send({ type: 'report_game_score', gameScore: loadHighScore() })
+        client.send({ type: 'report_game_score', gameScore: game.score })
       }
     }
   }
@@ -364,6 +364,7 @@ function bindOverlayButtons() {
 }
 
 export function handleQuitGame() {
+  cancelScoreAnimation()
   game = null
   const overlay = getOverlay()
   if (overlay) overlay.hidden = true
@@ -387,9 +388,17 @@ export function pauseGameExternal() {
  * closes the vote.
  */
 export function teardownGame() {
+  cancelScoreAnimation()
   const overlay = getOverlay()
   if (overlay) overlay.hidden = true
   state.gamePlaying = false
+}
+
+function cancelScoreAnimation() {
+  if (scoreAnimId) {
+    cancelAnimationFrame(scoreAnimId)
+    scoreAnimId = null
+  }
 }
 
 /**
