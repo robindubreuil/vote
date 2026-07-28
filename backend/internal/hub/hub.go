@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"sort"
@@ -375,11 +374,11 @@ func (h *Hub) registerClient(client *Client) {
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
 				delete(h.Connections, client.SessionID)
-				queueErr(client, "Failed to create session")
+				queueErr(client, "Impossible de créer la session")
 				return
 			}
 		} else {
-			queueErr(client, "Session not found")
+			queueErr(client, "Session introuvable")
 			return
 		}
 	}
@@ -411,13 +410,13 @@ func (h *Hub) registerClient(client *Client) {
 			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session", "session", client.SessionID, "error", err)
 				conns.Trainer = nil
-				queueErr(client, "Failed to create session")
+				queueErr(client, "Impossible de créer la session")
 				return
 			}
 		} else {
 			if err := h.VoteManager.UpdateTrainer(client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to update trainer", "session", client.SessionID, "error", err)
-				queueErr(client, "Failed to join session")
+				queueErr(client, "Impossible de rejoindre la session")
 				return
 			}
 		}
@@ -519,7 +518,7 @@ func (h *Hub) registerClient(client *Client) {
 		}
 	} else {
 		if conns.Trainer == nil {
-			queueErr(client, "Session not available (no trainer)")
+			queueErr(client, "Session indisponible (aucun formateur connecté)")
 			return
 		}
 
@@ -539,15 +538,10 @@ func (h *Hub) registerClient(client *Client) {
 			// arbiter (under the session lock). The advisory check in
 			// handleStagiaireJoin handles the common case; this catches
 			// the TOCTOU race. S6/S12: it is also the sole authority
-			// for reclaim-token validation.
-			switch {
-			case errors.Is(err, vote.ErrNameInUse):
-				queueErr(client, "Ce nom est déjà utilisé")
-			case errors.Is(err, vote.ErrReclaimUnauthorized):
-				queueErr(client, "Session expirée — veuillez recréer votre identité")
-			default:
-				queueErr(client, "Failed to join session")
-			}
+			// for reclaim-token validation. B3: every manager error
+			// routes through UserFacingError so the wire stays French
+			// and no internal entity name leaks into a classroom toast.
+			queueErr(client, vote.UserFacingError(err))
 			return
 		}
 
@@ -675,13 +669,13 @@ func (h *Hub) unregisterClient(client *Client) {
 	}
 }
 
+// BroadcastSession sends a message to every client in a session except the
+// one identified by excludeID (which may be ""). B11: the existence check
+// and target snapshot happen under RLock before the payload is marshalled,
+// so a broadcast aimed at a dead or never-existing session pays no marshal
+// cost — relevant for the per-vote connected_count fanout under reconnect
+// storms where the manager may have already reaped the session.
 func (h *Hub) BroadcastSession(sessionID string, message any, excludeID string) {
-	data, err := json.Marshal(message)
-	if err != nil {
-		slog.Error("Marshal error", "error", err)
-		return
-	}
-
 	h.mu.RLock()
 	conns, exists := h.Connections[sessionID]
 	if !exists {
@@ -699,6 +693,16 @@ func (h *Hub) BroadcastSession(sessionID string, message any, excludeID string) 
 		}
 	}
 	h.mu.RUnlock()
+
+	if len(targets) == 0 {
+		return
+	}
+
+	data, err := json.Marshal(message)
+	if err != nil {
+		slog.Error("Marshal error", "error", err)
+		return
+	}
 
 	for _, c := range targets {
 		if c.closing.Load() {

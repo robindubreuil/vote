@@ -719,7 +719,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'start_vote', colors: ['rouge', 'vert'], multipleChoice: false });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('unauthorized');
+    expect(error.message).toContain('autorise');
 
     trainer.dispose();
     stagiaire.dispose();
@@ -739,7 +739,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'close_vote' });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('unauthorized');
+    expect(error.message).toContain('autorise');
 
     trainer.dispose();
     stagiaire.dispose();

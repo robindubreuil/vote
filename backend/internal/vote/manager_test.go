@@ -259,8 +259,8 @@ func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when submitting multiple colors in single-choice mode")
 	}
-	if err.Error() != "only one color allowed in single-choice mode" {
-		t.Errorf("unexpected error message: %v", err)
+	if !errors.Is(err, ErrSingleChoiceOnly) {
+		t.Errorf("expected ErrSingleChoiceOnly, got %v", err)
 	}
 }
 
@@ -698,8 +698,8 @@ func TestSubmitVoteRejectsDuplicates(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate colors inside SubmitVote")
 	}
-	if err.Error() != "duplicate colors are not allowed" {
-		t.Errorf("unexpected error message: %v", err)
+	if !errors.Is(err, ErrDuplicateColors) {
+		t.Errorf("expected ErrDuplicateColors, got %v", err)
 	}
 
 	// State is unchanged — the rejected vote was not stored.

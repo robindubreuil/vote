@@ -355,3 +355,139 @@ func TestPlatformPathNote(t *testing.T) {
 		t.Skip("file-mode assertions are POSIX-only")
 	}
 }
+
+// TestAppendSampleReopensAfterClose covers the B9 self-heal path: if
+// Close() nils the handle (the graceful-shutdown path), a subsequent
+// AppendSample reopens the log instead of writing to a dead fd. In normal
+// operation Close is terminal and the sampler has stopped before Close
+// runs; this test exercises the defensive recovery that keeps the store
+// usable if a transient caller violates that contract.
+func TestAppendSampleReopensAfterClose(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	if err := s.AppendSample(sample(now, 1, 0, 0, 0, 0, 0)); err != nil {
+		t.Fatalf("first AppendSample: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// logFile is now nil. A subsequent AppendSample must self-heal.
+	if err := s.AppendSample(sample(now.Add(time.Second), 2, 0, 0, 0, 0, 0)); err != nil {
+		t.Fatalf("AppendSample after Close should self-heal: %v", err)
+	}
+	got, err := s.ReadSamples(0)
+	if err != nil {
+		t.Fatalf("ReadSamples: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 samples after reopen, got %d", len(got))
+	}
+}
+
+// TestRotationReopenFailureLeavesNilHandle covers the B9 regression
+// invariant: regardless of HOW s.logFile ends up nil (Close, a rotation
+// whose reopen failed, or any other path), the next AppendSample must
+// self-heal rather than operate on a stale handle. We force the nil state
+// directly because reliably making rotation-rename succeed while reopen
+// fails is not portable across filesystems — the invariant we care about
+// is the recovery, not the exact failure mode.
+//
+// We use file perms (not dir perms) to block reopen because O_CREATE on an
+// existing file in a read-only dir still succeeds on POSIX — only O_CREAT
+// that actually creates needs the dir write bit. A read-only FILE (0444)
+// reliably blocks O_WRONLY reopen.
+func TestRotationReopenFailureLeavesNilHandle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based test is POSIX-only")
+	}
+	s := newTestStore(t)
+	if err := s.AppendSample(sample(time.Unix(1700000000, 0), 1, 0, 0, 0, 0, 0)); err != nil {
+		t.Fatalf("seed AppendSample: %v", err)
+	}
+
+	// Simulate "rotation succeeded but reopen failed": the fd is closed,
+	// s.logFile is nil, but the on-disk file is untouched. AppendSample
+	// should reopen on the next call.
+	s.mu.Lock()
+	if s.logFile != nil {
+		_ = s.logFile.Close()
+	}
+	s.logFile = nil
+	s.mu.Unlock()
+
+	// Make the file read-only so the self-heal reopen FAILS (reopen uses
+	// O_WRONLY). AppendSample must surface the error and keep s.logFile
+	// nil (B9: NOT a stale handle that silently drops every subsequent
+	// sample).
+	if err := os.Chmod(s.logPath, 0o444); err != nil {
+		t.Fatalf("chmod file read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(s.logPath, 0o600) })
+
+	if err := s.AppendSample(sample(time.Unix(1700000001, 0), 2, 0, 0, 0, 0, 0)); err == nil {
+		t.Fatal("expected AppendSample to fail when reopen fails on a nil handle")
+	}
+	s.mu.Lock()
+	staleHandle := s.logFile
+	s.mu.Unlock()
+	if staleHandle != nil {
+		t.Errorf("s.logFile must remain nil after failed reopen (B9), got non-nil handle")
+	}
+
+	// Restore perms: next AppendSample must succeed via the self-heal
+	// path (s.logFile == nil → reopen → write).
+	if err := os.Chmod(s.logPath, 0o600); err != nil {
+		t.Fatalf("chmod restore: %v", err)
+	}
+	if err := s.AppendSample(sample(time.Unix(1700000002, 0), 3, 0, 0, 0, 0, 0)); err != nil {
+		t.Errorf("AppendSample should self-heal after perms restored: %v", err)
+	}
+
+	got, err := s.ReadSamples(0)
+	if err != nil {
+		t.Fatalf("ReadSamples: %v", err)
+	}
+	if len(got) < 2 {
+		t.Errorf("expected at least 2 samples after recovery, got %d", len(got))
+	}
+}
+
+// TestAppendSampleRecoversFromExternalLogTruncation covers the B9 write-
+// retry path: if an admin script (or FS unmount) truncates or removes the
+// log out-of-band, the next AppendSample's Write fails. The store should
+// reopen the log and retry the write rather than fail every subsequent
+// sample on a dead fd.
+func TestAppendSampleRecoversFromExternalLogTruncation(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.AppendSample(sample(time.Unix(1700000000, 0), 1, 0, 0, 0, 0, 0)); err != nil {
+		t.Fatalf("first AppendSample: %v", err)
+	}
+
+	// Simulate external tampering: close and remove the log file under
+	// the store's feet, leaving s.logFile pointing at a deleted inode.
+	s.mu.Lock()
+	if s.logFile != nil {
+		_ = s.logFile.Close()
+	}
+	s.mu.Unlock()
+	_ = os.Remove(s.logPath)
+
+	// The write fails on the closed fd; the store should reopen and
+	// retry, succeeding overall.
+	if err := s.AppendSample(sample(time.Unix(1700000001, 0), 2, 0, 0, 0, 0, 0)); err != nil {
+		t.Errorf("AppendSample should recover from external tampering: %v", err)
+	}
+
+	// The reopened log should contain only the recovered sample (the
+	// original was deleted).
+	got, err := s.ReadSamples(0)
+	if err != nil {
+		t.Fatalf("ReadSamples: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("expected 1 sample after recovery, got %d", len(got))
+	}
+	if got[0].SessionsCreated != 2 {
+		t.Errorf("recovered sample value mismatch: got %d, want 2", got[0].SessionsCreated)
+	}
+}

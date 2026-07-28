@@ -386,8 +386,8 @@ func TestHistogramBucketsMatchLocked(t *testing.T) {
 	}
 }
 
-// TestCounterConcurrentAdd exercises the new mutex-guarded Counter to make
-// sure -race is happy under concurrent mutation.
+// TestCounterConcurrentAdd exercises the atomic-backed Counter (B1) to
+// confirm -race is happy and the count is exact under contention.
 func TestCounterConcurrentAdd(t *testing.T) {
 	const goroutines = 16
 	const perG = 1000
