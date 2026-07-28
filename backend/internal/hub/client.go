@@ -22,10 +22,21 @@ const (
 )
 
 type Client struct {
-	ID           string
-	Name         string
-	SessionID    string
-	Type         string
+	ID        string
+	Name      string
+	SessionID string
+	Type      string
+	// RequestID is the HTTP X-Request-ID captured at the WS handshake
+	// (B7). It tags every log line emitted on behalf of this client so
+	// an operator can correlate a classroom flap end-to-end: HTTP
+	// access line → hub log line → /metrics scrape. Empty when the
+	// dial carried no X-Request-ID and the server-generated one was
+	// also empty (only happens on CSPRNG failure).
+	RequestID string
+	// TrainerToken is the per-session secret presented by a trainer to
+	// take over an active trainer connection (S1). Captured from the
+	// trainer_join message and validated under the hub lock before any
+	// takeover is allowed.
 	TrainerToken string
 	// ReclaimToken is the per-stagiaire secret presented on reconnect
 	// to prove ownership of an existing identity (S6/S12). Captured
@@ -83,6 +94,31 @@ func (c *Client) Start() {
 	go c.writePump()
 }
 
+// logAttrs returns the slog attributes that identify this client on a log
+// line (B7). Used by hub/client and hub/hub error paths so an operator
+// reading a server log can correlate a hub-side error with the HTTP access
+// line that recorded the WS upgrade (via request_id) and with the
+// classroom flap (via session + remote IP). Returns nil for an anonymous
+// client (pre-join) so call sites can splat ...c.logAttrs() without
+// polluting early-readPump lines.
+func (c *Client) logAttrs() []any {
+	if c == nil {
+		return nil
+	}
+	attrs := []any{
+		slog.String("client_id", c.ID),
+		slog.String("session", c.SessionID),
+		slog.String("ip", c.IP),
+	}
+	if c.RequestID != "" {
+		attrs = append(attrs, slog.String("request_id", c.RequestID))
+	}
+	if c.Type != "" {
+		attrs = append(attrs, slog.String("role", c.Type))
+	}
+	return attrs
+}
+
 func (c *Client) readPump() {
 	defer c.Hub.wg.Done()
 	defer func() {
@@ -99,7 +135,7 @@ func (c *Client) readPump() {
 
 	c.Conn.SetReadLimit(4096)
 	if err := c.Conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
-		slog.Error("Failed to set read deadline", "error", err)
+		slog.Error("Failed to set read deadline", append([]any{"error", err}, c.logAttrs()...)...)
 		return
 	}
 	c.Conn.SetPongHandler(func(string) error {
@@ -111,13 +147,13 @@ func (c *Client) readPump() {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				slog.Error("WebSocket error", "error", err)
+				slog.Error("WebSocket error", append([]any{"error", err}, c.logAttrs()...)...)
 			}
 			break
 		}
 
 		if !c.Hub.Security.CheckMessageRate(c.ID) {
-			slog.Warn("Rate limit exceeded", "client_id", c.ID)
+			slog.Warn("Rate limit exceeded", c.logAttrs()...)
 			c.SendError("Trop de messages, veuillez ralentir")
 			continue
 		}
@@ -147,7 +183,7 @@ func (c *Client) writePump() {
 				return
 			}
 			if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				slog.Error("Write error", "error", err)
+				slog.Error("Write error", append([]any{"error", err}, c.logAttrs()...)...)
 				return
 			}
 		case <-c.pingTick.C:
@@ -166,14 +202,14 @@ func (c *Client) writePump() {
 func (c *Client) handleMessage(data []byte) {
 	var msg models.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
-		slog.Error("JSON unmarshal error", "error", err)
+		slog.Error("JSON unmarshal error", append([]any{"error", err}, c.logAttrs()...)...)
 		return
 	}
 
 	if handler, ok := c.handlers[msg.Type]; ok {
 		handler(msg)
 	} else {
-		slog.Warn("Unknown message type", "type", msg.Type)
+		slog.Warn("Unknown message type", append([]any{"type", msg.Type}, c.logAttrs()...)...)
 	}
 }
 
@@ -192,7 +228,7 @@ func (c *Client) SendJSON(v any) {
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
-		slog.Error("Marshal error", "error", err)
+		slog.Error("Marshal error", append([]any{"error", err}, c.logAttrs()...)...)
 		return
 	}
 	c.trySend(data)
@@ -212,9 +248,9 @@ func (c *Client) trySend(data []byte) {
 	case c.Send <- data:
 	default:
 		if c.Type == "trainer" {
-			slog.Warn("Trainer send buffer full: dropping message", "client_id", c.ID)
+			slog.Warn("Trainer send buffer full: dropping message", c.logAttrs()...)
 		} else {
-			slog.Warn("Send channel full: disconnecting slow client", "client_id", c.ID)
+			slog.Warn("Send channel full: disconnecting slow client", c.logAttrs()...)
 			c.markClosing()
 			if c.Conn != nil {
 				c.Conn.Close()

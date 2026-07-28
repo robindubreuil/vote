@@ -341,19 +341,66 @@ func (s *Security) cleanup() {
 	}
 }
 
+// GenerateID returns a clientIDLength-character identifier drawn uniformly
+// from clientIDCharset. The charset length (36) does not divide 256, so a
+// naive byte%36 mapping introduces a tiny modulo bias toward the first
+// (256 mod 36) = 4 characters. We use rejection sampling: each byte is
+// drawn from the unbiased range [0, charsetBiasBound) where
+// charsetBiasBound = 256 - (256 mod len(charset)) = 252. Any byte ≥
+// charsetBiasBound is rejected and we keep consuming from a single
+// batched rand.Read; if the batch is exhausted (extremely unlikely —
+// expected rejects ≈ 1.6% per byte, so 12 chars need ≈ 12.2 bytes on
+// average) we top up with one more read. IDs are public, non-secret
+// correlation tokens; uniformity matters only enough to keep the
+// collision space at the documented 36^12 ≈ 4.7e18.
+//
+// B4: the previous implementation called rand.Int(rand.Reader, big.NewInt(36))
+// once per character — 12 syscalls + 12 big.Int allocations on every
+// WebSocket connection. rand.Read batches those into ~1 syscall.
 func GenerateID() string {
-	b := make([]byte, clientIDLength)
-	charsetLen := big.NewInt(int64(len(clientIDCharset)))
+	// len(clientIDCharset) is 36 here; we spell the numeric invariants
+	// out as literals so the const declarations stay untyped and the
+	// byte comparison below compiles (constants declared inside a
+	// function body via len(const-string) are typed int, which would
+	// force every comparison back through int(b)).
+	const charsetLen = 36
+	// Largest multiple of charsetLen that fits in a byte — bytes below
+	// this bound map uniformly onto charset indices via %charsetLen.
+	// 256 - 256%36 = 252.
+	const charsetBiasBound byte = 256 - 256%charsetLen
 
-	for i := range b {
-		n, err := rand.Int(rand.Reader, charsetLen)
-		if err != nil {
-			slog.Error("Error generating random ID", "error", err)
-			return generateTimestampID()
-		}
-		b[i] = clientIDCharset[n.Int64()]
+	// Read a few extra bytes up front to cover expected rejections so
+	// the common path is a single syscall (12 chars, ~1.6% reject rate
+	// per char → ~12.2 bytes needed → 16 is comfortable headroom).
+	buf := make([]byte, clientIDLength+4)
+	if _, err := rand.Read(buf); err != nil {
+		slog.Error("Error generating random ID", "error", err)
+		return generateTimestampID()
 	}
-	return string(b)
+
+	out := make([]byte, clientIDLength)
+	bi := 0
+	for i := 0; i < clientIDLength; i++ {
+		for {
+			if bi >= len(buf) {
+				// Batched buffer exhausted (vanishingly rare). Top up
+				// one byte at a time until we draw an unbiased value.
+				topup := make([]byte, 1)
+				if _, err := rand.Read(topup); err != nil {
+					slog.Error("Error generating random ID", "error", err)
+					return generateTimestampID()
+				}
+				buf = append(buf, topup[0])
+			}
+			b := buf[bi]
+			bi++
+			if b < charsetBiasBound {
+				out[i] = clientIDCharset[int(b)%charsetLen]
+				break
+			}
+		}
+	}
+	return string(out)
 }
 
 func generateTimestampID() string {
