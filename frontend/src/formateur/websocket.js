@@ -41,13 +41,14 @@ export function getClient() {
  */
 function publishState() {
   if (!publisher) return
-  const leaderboard = state.competitive && state.stagiaires.length > 0
-    ? state.stagiaires
-        .filter((s) => s.connected)
-        .map((s) => ({ name: s.name || 'Anonyme', score: (s.score || 0) + (s.gameScore || 0) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3)
-    : null
+  const leaderboard =
+    state.competitive && state.stagiaires.length > 0
+      ? state.stagiaires
+          .filter((s) => s.connected)
+          .map((s) => ({ name: s.name || 'Anonyme', score: (s.score || 0) + (s.gameScore || 0) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3)
+      : null
   publisher.publish({
     count: state.connectedCount,
     voteState: state.voteState,
@@ -116,6 +117,11 @@ function handleMessage(msg) {
 
         if (!document.getElementById('app-content')) {
           renderFullLayout(app)
+          // Header is rendered once per session by renderFullLayout —
+          // attach its listeners here (session-scoped tracker) instead of
+          // in attachListeners(), which fires on every render and would
+          // otherwise leak duplicate handlers into the sessionTracker.
+          attachHeaderListeners(client, leaveSessionFromHeader)
         }
 
         // Start publishing state for any "Aide à la connexion" tab as soon as
@@ -164,9 +170,7 @@ function handleMessage(msg) {
 
     case 'vote_started':
       state.voteState = 'active'
-      state.voteStartTime = msg.voteElapsed != null
-        ? Date.now() - msg.voteElapsed * 1000
-        : Date.now()
+      state.voteStartTime = msg.voteElapsed != null ? Date.now() - msg.voteElapsed * 1000 : Date.now()
       if (msg.colors) state.selectedColors = new Set(msg.colors)
       if (msg.multipleChoice !== undefined) state.multipleChoice = msg.multipleChoice
       if (msg.labels) state.colorLabels = msg.labels
@@ -255,29 +259,31 @@ function handleMessage(msg) {
   }
 }
 
+function leaveSessionFromHeader() {
+  closeClient()
+  stopTimer()
+  safeSessionRemove('vote_session_code')
+  safeSessionRemove('vote_trainer_id')
+  resetTrainerState()
+  cleanupAllListeners()
+  renderLandingPage(document.getElementById('app'))
+  attachLandingListenersWithHandlers()
+}
+
 function attachListeners() {
   if (!document.getElementById('app-content')) {
     return
   }
 
-  cleanupAllListeners()
-
+  // attachConfigListeners / attachVoteListeners each clean the render
+  // tracker on entry, so an explicit cleanup here is unnecessary. The
+  // session-scoped header listeners are attached once at session_created
+  // and intentionally preserved across renders.
   if (state.voteState === 'idle') {
     attachConfigListeners(client)
   } else {
     attachVoteListeners(client)
   }
-
-  attachHeaderListeners(client, () => {
-    closeClient()
-    stopTimer()
-    safeSessionRemove('vote_session_code')
-    safeSessionRemove('vote_trainer_id')
-    resetTrainerState()
-    cleanupAllListeners()
-    renderLandingPage(document.getElementById('app'))
-    attachLandingListenersWithHandlers()
-  })
 }
 
 export function attachLandingListenersWithHandlers() {

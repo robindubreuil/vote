@@ -9,6 +9,11 @@ export class VoteClient {
       onStatusChange: () => {}, // (connected: boolean) => void
       initialReconnectDelay: 2000,
       maxReconnectDelay: 30000,
+      // Ceiling on reconnect attempts before the client gives up. Default
+      // ~50 attempts ≈ 16h at the default 2s→30s exponential backoff, which
+      // is well beyond any plausible transient outage and bounds memory/CPU
+      // use if the server is gone for good.
+      maxReconnectAttempts: 50,
       ...options
     }
 
@@ -16,8 +21,62 @@ export class VoteClient {
     this.reconnectTimeoutId = null
     this.reconnectAttempts = 0
     this.isExplicitlyClosed = false
+    this.isPermanentlyClosed = false
     this.isConnecting = false
     this.connectionId = 0 // Track connection attempts to prevent race conditions
+
+    // navigator.onLine is `undefined` in non-browser environments (SSR,
+    // test runs without a DOM). Treat that as "always online" so we don't
+    // pause reconnects indefinitely in environments that never fire the
+    // online event.
+    this.online = typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' ? navigator.onLine : true
+
+    this._bindOnlineEvents()
+  }
+
+  /**
+   * Listen for browser online/offline events so reconnects pause while the
+   * OS reports no network (no point burning attempts against a dead NIC)
+   * and resume immediately when connectivity returns.
+   */
+  _bindOnlineEvents() {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+      return
+    }
+    this._onOnline = () => {
+      this.online = true
+      // Fast-retry on connectivity return. Covers two cases:
+      //   1. A reconnect was pending — cancel it and reconnect now.
+      //   2. scheduleReconnect skipped because we were offline (this.online
+      //      was false) so no timer was ever set — reconnect now.
+      if (this.isExplicitlyClosed || this.isPermanentlyClosed) return
+      if (this.isConnected() || this.isConnecting) return
+      if (this.reconnectTimeoutId) {
+        clearTimeout(this.reconnectTimeoutId)
+        this.reconnectTimeoutId = null
+      }
+      this.isConnecting = false
+      this._doConnect()
+    }
+    this._onOffline = () => {
+      this.online = false
+      // Pause any pending reconnect — it'll either fire on the online
+      // event or be rescheduled when _doConnect runs again.
+      if (this.reconnectTimeoutId) {
+        clearTimeout(this.reconnectTimeoutId)
+        this.reconnectTimeoutId = null
+      }
+    }
+    window.addEventListener('online', this._onOnline)
+    window.addEventListener('offline', this._onOffline)
+  }
+
+  _unbindOnlineEvents() {
+    if (typeof window === 'undefined' || typeof window.removeEventListener !== 'function') {
+      return
+    }
+    if (this._onOnline) window.removeEventListener('online', this._onOnline)
+    if (this._onOffline) window.removeEventListener('offline', this._onOffline)
   }
 
   connect() {
@@ -26,6 +85,7 @@ export class VoteClient {
     }
 
     this.isExplicitlyClosed = false
+    this.isPermanentlyClosed = false
     this.reconnectAttempts = 0
     this._doConnect()
   }
@@ -68,22 +128,26 @@ export class VoteClient {
       }
 
       this.ws.onclose = (event) => {
-        this.isConnecting = false
-
+        // Late close from a previous connection attempt: ignore it so we
+        // don't double-fire status changes or schedule a reconnect against
+        // the fresh socket.
         if (currentConnectionId !== this.connectionId) {
           return
         }
 
+        this.isConnecting = false
         this.options.onStatusChange(false)
 
         if (!this.isExplicitlyClosed) {
           if (event.code >= 4000 && event.code < 5000) {
+            // Application-defined permanent close — stop trying.
+            this.isPermanentlyClosed = true
             console.error(`Connection closed permanently (code: ${event.code})`)
           } else {
             this.scheduleReconnect()
           }
         }
-        this.options.onClose()
+        this.options.onClose(event)
       }
 
       this.ws.onerror = (error) => {
@@ -97,15 +161,46 @@ export class VoteClient {
     }
   }
 
+  /**
+   * Schedule the next reconnect with exponential backoff + jitter.
+   *
+   * Backoff: initialReconnectDelay * 2^attempts, capped at maxReconnectDelay.
+   * Jitter: 50–100% of the base delay. Without jitter, every client behind
+   * a shared-NAT classroom retries in lockstep after a server restart and
+   // they all hammer the per-IP rate limiter at the same instant.
+   *
+   * Offline awareness: if `navigator.onLine === false`, the timer is NOT
+   * scheduled — the browser `online` event triggers an immediate retry.
+   */
   scheduleReconnect() {
-    const delay = Math.min(
+    if (this.isPermanentlyClosed || this.isExplicitlyClosed) {
+      return
+    }
+
+    if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
+      this.isPermanentlyClosed = true
+      console.error(`Max reconnect attempts (${this.options.maxReconnectAttempts}) reached; giving up`)
+      return
+    }
+
+    const base = Math.min(
       this.options.initialReconnectDelay * Math.pow(2, this.reconnectAttempts),
       this.options.maxReconnectDelay
     )
+    // Jitter: spread 30+ clients across [50%, 100%] of the base interval.
+    const jittered = base * (0.5 + Math.random() * 0.5)
+    const delay = Math.min(jittered, this.options.maxReconnectDelay)
 
     this.reconnectAttempts++
 
+    // If the browser is offline, don't schedule — the `online` event will
+    // trigger an immediate retry via _onOnline.
+    if (!this.online) {
+      return
+    }
+
     this.reconnectTimeoutId = setTimeout(() => {
+      this.reconnectTimeoutId = null
       this.isConnecting = false
       this._doConnect()
     }, delay)
@@ -127,6 +222,7 @@ export class VoteClient {
       clearTimeout(this.reconnectTimeoutId)
       this.reconnectTimeoutId = null
     }
+    this._unbindOnlineEvents()
     if (this.ws) {
       this.ws.close()
     }
