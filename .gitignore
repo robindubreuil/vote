@@ -69,3 +69,5 @@ GEMINI.md
 # Test artifacts
 test-results/
 playwright-report/
+coverage/
+backend/data/
