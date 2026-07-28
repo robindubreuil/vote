@@ -10,12 +10,21 @@ let handleKeyPress = null
 const { track: trackListener, cleanup: cleanupEventListeners } = createListenerTracker()
 
 /**
- * Render the initial layout structure (Header, Main, Footer)
+ * Render the initial layout structure (Header, Main, Footer).
+ *
+ * Accessibility (F6): the layout owns a single stable `<header>` and a
+ * `<main>` landmark. Per-state renderers only return the inner main
+ * content; the header is populated by `updateView` via
+ * `renderStagiaireHeaderHTML`, so every AppState always has exactly one
+ * `<header>` and one `<main>` — the previous design emitted a new
+ * `<header>` per state and omitted it entirely from the JOINING and
+ * edit-name views, leaving screen-reader users without a banner landmark.
  * @param {HTMLElement} app - The app element
  */
 export function renderLayout(app) {
   app.innerHTML = `
-    <div class="container" id="main-container"></div>
+    <header class="header" id="app-header" hidden></header>
+    <main class="container" id="main-container"></main>
     <div id="game-overlay" class="game-overlay" hidden>
       <div class="game-frame">
         <div class="game-hud">
@@ -90,11 +99,49 @@ export function renderLayout(app) {
 }
 
 /**
+ * Build the banner header markup based on the current state.
+ * Returns '' for states that should not show a header (JOINING, and the
+ * edit-name modal which replaces the whole main area). `updateView`
+ * hides the header element when this returns empty.
+ * @returns {string}
+ */
+function renderStagiaireHeaderHTML() {
+  // The header needs a session code (otherwise there's nothing to show
+  // but the title, which the join card already provides).
+  if (!state.sessionCode) return ''
+  if (state.prenomEdit) return ''
+  switch (state.appState) {
+    case AppState.WAITING:
+    case AppState.VOTING:
+    case AppState.VOTED:
+    case AppState.CLOSED:
+      return `
+        <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
+        <div class="header-right">
+          ${renderSessionCodeButton(state.sessionCode, state.connected)}
+        </div>
+      `
+    default:
+      return ''
+  }
+}
+
+/**
  * Update the main view based on current state
  */
 export function updateView() {
+  const header = document.getElementById('app-header')
   const container = document.getElementById('main-container')
   if (!container) return
+
+  // Sync the stable header. Hidden when there's no content (JOINING,
+  // edit-name modal) so the landmark stays present in the a11y tree
+  // without showing an empty banner.
+  if (header) {
+    const headerHTML = renderStagiaireHeaderHTML()
+    header.innerHTML = headerHTML
+    header.hidden = !headerHTML
+  }
 
   // Sauvegarde du focus
   const activeElementId = document.activeElement?.id
@@ -157,6 +204,11 @@ export function render() {
 
 /**
  * Render the join session form
+ *
+ * Accessibility (F8): both inputs reference the error-message element
+ * via `aria-describedby` so AT users hear the validation message when
+ * they focus the field. `aria-invalid` is toggled by the handlers
+ * (`handleJoin`) on validation failure / success.
  */
 function renderJoinHTML() {
   return `
@@ -175,6 +227,8 @@ function renderJoinHTML() {
             autocomplete="name"
             autocapitalize="words"
             maxlength="16"
+            aria-describedby="join-error"
+            aria-invalid="false"
           />
         </div>
         <div class="input-group">
@@ -191,9 +245,11 @@ function renderJoinHTML() {
             pattern="[A-HJ-NP-Ya-hj-np-y]{3}"
             value="${escapeHtml(state.sessionCode)}"
             autocomplete="off"
+            aria-describedby="join-error"
+            aria-invalid="false"
           />
         </div>
-        <div class="error-message" role="alert" data-testid="error-message"></div>
+        <div class="error-message" id="join-error" role="alert" data-testid="error-message"></div>
         <button type="submit" class="btn btn-primary btn-large" data-testid="join-btn">
           ${t.stagiaire.join}
         </button>
@@ -207,12 +263,6 @@ function renderJoinHTML() {
  */
 function renderWaitingHTML() {
   return `
-    <header class="header">
-      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
-      <div class="header-right">
-        ${renderSessionCodeButton(state.sessionCode, state.connected)}
-      </div>
-    </header>
     <div class="card">
       <div class="waiting-state">
         <div class="waiting-icon">${hourglass(' class="icon icon-xl"')}</div>
@@ -229,6 +279,10 @@ function renderWaitingHTML() {
 
 /**
  * Render the edit name form
+ *
+ * Accessibility (F8): the input references an inline error element via
+ * `aria-describedby`. The handler (`handleEditName`) toggles
+ * `aria-invalid` on validation failure and clears it on success.
  */
 function renderEditNameHTML() {
   return `
@@ -249,8 +303,11 @@ function renderEditNameHTML() {
             maxlength="16"
             required
             autofocus
+            aria-describedby="edit-name-error"
+            aria-invalid="false"
           />
         </div>
+        <div class="error-message" id="edit-name-error" role="alert" data-testid="edit-name-error"></div>
         <div class="button-row">
           <button type="button" class="btn btn-secondary" id="cancelEditName">${t.common.cancel}</button>
           <button type="submit" class="btn btn-primary">${t.common.save}</button>
@@ -267,12 +324,6 @@ function renderVotingHTML() {
   const activeColors = COLORS.filter((c) => state.availableColors.includes(c.id))
 
   return `
-    <header class="header">
-      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
-      <div class="header-right">
-        ${renderSessionCodeButton(state.sessionCode, state.connected)}
-      </div>
-    </header>
     <div class="card">
       <h2 class="card-title">${t.stagiaire.voteNow}</h2>
       <p class="vote-instruction ${state.multipleChoice ? 'multiple-choice' : 'single-choice'}" data-testid="vote-instruction" aria-live="polite">
@@ -285,22 +336,30 @@ function renderVotingHTML() {
 }
 
 /**
- * Render single choice voting buttons
+ * Render single choice voting buttons.
+ *
+ * Accessibility (F7): the wrapper exposes `role="radiogroup"` + an
+ * `aria-label` so screen-reader users hear the group context before the
+ * options. Each button uses `role="radio"` + `aria-checked` (rather than
+ * the toggle pattern `aria-pressed`) so the semantics match the
+ * single-select behaviour: picking one option clears the others.
  */
 function renderSingleChoiceHTML(activeColors) {
   const isConnected = state.connected
   return `
-    <div class="vote-grid" data-count="${activeColors.length}">
+    <div class="vote-grid" role="radiogroup" aria-label="${t.stagiaire.singleChoiceGroupLabel}" data-count="${activeColors.length}">
       ${activeColors
         .map((color) => {
           const label = state.colorLabels[color.id] || color.name
+          const selected = state.selectedColors.has(color.id)
           return `
         <button
           type="button"
-          class="vote-button bg-${color.id} ${state.selectedColors.has(color.id) ? 'selected' : ''}"
+          class="vote-button bg-${color.id} ${selected ? 'selected' : ''}"
           data-color="${color.id}"
           data-testid="vote-btn-${color.id}"
-          aria-pressed="${state.selectedColors.has(color.id)}"
+          role="radio"
+          aria-checked="${selected}"
           aria-label="${label}"
           ${!isConnected ? 'disabled' : ''}
         >
@@ -314,12 +373,18 @@ function renderSingleChoiceHTML(activeColors) {
 }
 
 /**
- * Render multiple choice voting checkboxes
+ * Render multiple choice voting checkboxes.
+ *
+ * Accessibility (F7): the options live inside a `<fieldset>` whose
+ * `<legend>` carries the instruction. Native checkboxes already expose
+ * the multi-select semantics, so the fieldset/legend pair only adds the
+ * programmatic group label that was previously missing.
  */
 function renderMultipleChoiceHTML(activeColors) {
   const isConnected = state.connected
   return `
-    <div class="vote-grid" data-count="${activeColors.length}">
+    <fieldset class="vote-grid vote-fieldset" data-count="${activeColors.length}">
+      <legend class="vote-fieldset-legend">${t.stagiaire.multipleChoiceGroupLabel}</legend>
       ${activeColors
         .map((color) => {
           const label = state.colorLabels[color.id] || color.name
@@ -343,15 +408,19 @@ function renderMultipleChoiceHTML(activeColors) {
         `
         })
         .join('')}
-    </div>
+    </fieldset>
     <button type="button" class="btn btn-success btn-large" id="submitVote" data-testid="submit-vote-btn" ${state.selectedColors.size === 0 || !isConnected ? 'disabled' : ''}>
       ${t.stagiaire.validateVote}
     </button>
-    ${state.allowBlank ? `
+    ${
+      state.allowBlank
+        ? `
     <button type="button" class="btn btn-secondary" id="blankVoteBtn" data-testid="blank-vote-btn" ${!isConnected ? 'disabled' : ''}>
       ${t.formateur.blankVote}
     </button>
-    ` : ''}
+    `
+        : ''
+    }
   `
 }
 
@@ -367,12 +436,6 @@ function renderVotedHTML() {
     .join(' + ')
 
   return `
-    <header class="header">
-      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
-      <div class="header-right">
-        ${renderSessionCodeButton(state.sessionCode, state.connected)}
-      </div>
-    </header>
     <div class="card">
       <div class="voted-state">
         <div class="voted-icon">${check(' class="icon icon-xl"')}</div>
@@ -391,28 +454,23 @@ function renderVotedHTML() {
  * Render the vote closed state
  */
 function renderClosedHTML() {
-  const competitiveHTML = state.competitive && state.revealed
-    ? (() => {
-        const positive = state.voteScore >= 0
-        const scoreText = positive ? `+${state.voteScore}` : String(state.voteScore)
-        const rankSuffix = state.rank === 1 ? 'er' : 'e'
-        return `
+  const competitiveHTML =
+    state.competitive && state.revealed
+      ? (() => {
+          const positive = state.voteScore >= 0
+          const scoreText = positive ? `+${state.voteScore}` : String(state.voteScore)
+          const rankSuffix = state.rank === 1 ? 'er' : 'e'
+          return `
         <div class="score-feedback ${positive ? 'positive' : 'negative'}">
           <div class="score-feedback-vote">${scoreText} pts</div>
           <div class="score-feedback-total">${t.stagiaire.totalScoreLabel || 'Total'} : ${state.totalScore} pts</div>
           <div class="score-feedback-rank">${state.rank}${rankSuffix} / ${state.totalStagiaires}</div>
         </div>
       `
-      })()
-    : ''
+        })()
+      : ''
 
   return `
-    <header class="header">
-      <h1>${vote(' class="icon icon-md"')} ${t.common.voteColore}</h1>
-      <div class="header-right">
-        ${renderSessionCodeButton(state.sessionCode, state.connected)}
-      </div>
-    </header>
     <div class="card">
       <div class="vote-closed-state">
         <div class="closed-icon">${stop(' class="icon icon-xl"')}</div>

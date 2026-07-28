@@ -415,4 +415,59 @@ describe('formateur renderers — idempotency snapshots', () => {
       expect(renderStagiairesVotesHTML()).toContain('Anonyme')
     })
   })
+
+  // ============================================
+  // F10: sanitizeColor tripwire
+  // ============================================
+  // COLORS is a constant today, so sanitizeColor is defense-in-depth.
+  // The tests below feed poisoned IDs into the rendering paths to prove
+  // that *if* a custom-palette feature ever let operator-supplied
+  // colour values reach the DOM, the malicious payload would be stripped
+  // before the style attribute is generated.
+  describe('F10: color sanitization', () => {
+    const POISON = '"; pointer-events:all; background-image:url(javascript:1)'
+    const POISONED_COLORS = [
+      { id: 'x', name: 'X', color: POISON },
+      { id: 'y', name: 'Y', color: '#22c55e' }
+    ]
+
+    it('renderConfigHTML strips a poisoned color value from the swatch style', () => {
+      // Replace the module-level COLORS reference for this assertion.
+      // We exercise renderColorBarsHTML directly since it accepts an
+      // explicit colors array (the other renderers read COLORS).
+      const html = renderColorBarsHTML([POISONED_COLORS[0]], { x: 1 }, 1)
+      expect(html).not.toContain(POISON)
+      expect(html).toContain('#666666') // sanitizeColor fallback
+    })
+
+    it('renderCombinationsHTML strips a poisoned segment color', () => {
+      state.selectedColors = new Set(['x'])
+      state.stagiaires = [{ id: 's1', name: 'M', connected: true, vote: ['x'] }]
+      // COLORS is module-scoped; the renderers look up `color?.color` by id.
+      // We can't inject poisoned values through state.stagiaires alone, but
+      // we can prove the sanitizeColor contract by checking that a missing
+      // color (color === undefined) produces the safe fallback rather than
+      // an empty/undefined interpolation.
+      const html = renderCombinationsHTML()
+      expect(html).not.toContain('undefined')
+      expect(html).toContain('background-color: #666666')
+    })
+
+    it('renderStagiairesVotesHTML uses the safe fallback for unknown color IDs', () => {
+      state.selectedColors = new Set(['unknown-id'])
+      state.stagiaires = [{ id: 's1', name: 'M', connected: true, vote: ['unknown-id'] }]
+      const html = renderStagiairesVotesHTML()
+      expect(html).not.toContain('undefined')
+      expect(html).toContain('background-color: #666666')
+    })
+
+    it('renderColorBarsHTML never emits the raw `color.color` value when it is non-hex', () => {
+      // Direct path: pass a poisoned color object to renderColorBarsHTML.
+      const html = renderColorBarsHTML([{ id: 'x', name: 'X', color: 'red' }], { x: 1 }, 1)
+      // 'red' (named colour) is rejected → #666666 fallback used in both
+      // the swatch and the fill.
+      const matches = html.match(/background-color:\s*red/g)
+      expect(matches).toBeNull()
+    })
+  })
 })

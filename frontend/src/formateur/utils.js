@@ -1,5 +1,6 @@
-import { COLORS, escapeHtml } from '@shared/colors.js'
+import { COLORS, escapeHtml, sanitizeColor } from '@shared/colors.js'
 import { icons } from '@shared/icons.js'
+import { guardDynamicImport } from '@shared/error-boundary.js'
 import { state } from './state.js'
 
 /**
@@ -139,11 +140,11 @@ export function updateColorBars(activeColors, colorCounts, maxCount) {
       row.setAttribute('data-color', color.id)
       row.innerHTML = `
         <div class="color-bar-label">
-          <span class="color-bar-swatch" style="background-color: ${color.color}"></span>
+          <span class="color-bar-swatch" style="background-color: ${sanitizeColor(color.color)}"></span>
           <span class="color-bar-name">${escapeHtml(state.colorLabels[color.id] || color.name)}</span>
         </div>
         <div class="color-bar-track">
-          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${color.color}"></div>
+          <div class="color-bar-fill ${count === 0 ? 'empty' : ''}" style="width: ${percent}%; background-color: ${sanitizeColor(color.color)}"></div>
         </div>
         <span class="color-bar-count">${count}</span>
       `
@@ -203,16 +204,23 @@ export function updateVoteResults() {
   // Optimized update of color bars
   updateColorBars(activeColors, colorCounts, maxCount)
 
-  // Update combinations and stagiaires lists via dynamic import
-  import('./renderers.js').then(({ renderCombinationsHTML, renderStagiairesVotesHTML }) => {
-    const combinationsList = document.querySelector('.combinations-list')
-    if (combinationsList) {
-      combinationsList.innerHTML = renderCombinationsHTML()
-    }
+  // Update combinations and stagiaires lists via dynamic import. A failed
+  // chunk load (network drop, SW cache miss) previously stalled the panel
+  // silently; guardDynamicImport surfaces a toast and re-throws so callers
+  // can recover.
+  guardDynamicImport(import('./renderers.js'), 'formateur renderers')
+    .then(({ renderCombinationsHTML, renderStagiairesVotesHTML }) => {
+      const combinationsList = document.querySelector('.combinations-list')
+      if (combinationsList) {
+        combinationsList.innerHTML = renderCombinationsHTML()
+      }
 
-    const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
-    if (stagiairesVotesList) {
-      stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
-    }
-  })
+      const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
+      if (stagiairesVotesList) {
+        stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
+      }
+    })
+    .catch(() => {
+      // Already surfaced by guardDynamicImport; nothing more to do here.
+    })
 }

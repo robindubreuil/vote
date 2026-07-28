@@ -28,6 +28,30 @@ function getOverlay() {
   return document.getElementById('game-overlay')
 }
 
+/**
+ * Toggle field-level accessibility state on a form input.
+ *
+ * Sets `aria-invalid` and the legacy `.error` class together so screen
+ * readers (aria-invalid) and sighted users (CSS-styled .error) both get
+ * the validation signal. `aria-invalid="false"` (rather than removing
+ * the attribute) is deliberate: a freshly rendered input defaults to
+ * `aria-invalid="false"` so this keeps the DOM state symmetric and
+ * avoids ever surfacing the implicit "unset" state to AT.
+ *
+ * @param {HTMLInputElement} input
+ * @param {boolean} invalid
+ */
+function setFieldInvalid(input, invalid) {
+  if (!input) return
+  if (invalid) {
+    input.classList.add('error')
+    input.setAttribute('aria-invalid', 'true')
+  } else {
+    input.classList.remove('error')
+    input.setAttribute('aria-invalid', 'false')
+  }
+}
+
 function showOverlayScreen(id) {
   for (const sid of ['gamePauseScreen', 'gameOverScreen', 'gameRulesScreen']) {
     const el = document.getElementById(sid)
@@ -415,20 +439,22 @@ export function handleJoin(e) {
   // Validation
   const nameError = validateName(prenom)
   if (nameError) {
-    prenomInput.classList.add('error')
+    setFieldInvalid(prenomInput, true)
+    setFieldInvalid(codeInput, false)
     showError(nameError)
     return
   }
 
   const codeError = validateSessionCode(code)
   if (codeError) {
-    codeInput.classList.add('error')
+    setFieldInvalid(codeInput, true)
+    setFieldInvalid(prenomInput, false)
     showError(codeError)
     return
   }
 
-  prenomInput.classList.remove('error')
-  codeInput.classList.remove('error')
+  setFieldInvalid(prenomInput, false)
+  setFieldInvalid(codeInput, false)
 
   state.prenom = prenom
   state.sessionCode = code
@@ -452,12 +478,26 @@ export function handleEditName(e) {
   // Validation du prénom
   const nameError = validateName(newPrenom)
   if (nameError) {
-    input.classList.add('error')
-    showError(nameError)
+    setFieldInvalid(input, true)
+    // The edit-name modal has its own inline error element; surface the
+    // message there so AT users don't have to navigate back to the join
+    // form's #join-error slot (which doesn't exist in this state).
+    const inlineError = document.getElementById('edit-name-error')
+    if (inlineError) {
+      inlineError.textContent = nameError
+      inlineError.style.display = 'block'
+    } else {
+      showError(nameError)
+    }
     return
   }
 
-  input.classList.remove('error')
+  setFieldInvalid(input, false)
+  const inlineError = document.getElementById('edit-name-error')
+  if (inlineError) {
+    inlineError.textContent = ''
+    inlineError.style.display = 'none'
+  }
 
   state.prenom = newPrenom
   safeLocalSet('vote_stagiaire_prenom', newPrenom)

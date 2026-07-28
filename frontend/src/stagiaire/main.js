@@ -7,6 +7,7 @@ import { validateSessionCode } from '@shared/validation.js'
 import { CONSTANTS } from '@shared/config.js'
 import { getSessionCodeFromURL } from '@shared/utils/url.js'
 import { safeLocalGet, safeSessionGet } from '@shared/utils/safe-storage.js'
+import { installGlobalErrorHandlers } from '@shared/error-boundary.js'
 
 // Élément DOM principal
 const app = document.getElementById('app')
@@ -78,4 +79,5 @@ function init() {
 }
 
 // Démarrage
+installGlobalErrorHandlers()
 init()

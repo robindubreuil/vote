@@ -153,13 +153,17 @@ function updateLeaderboard(state) {
   }
 
   section.hidden = false
-  list.innerHTML = state.leaderboard.map((entry, i) => `
+  list.innerHTML = state.leaderboard
+    .map(
+      (entry, i) => `
     <li class="aid-leaderboard-row rank-${i + 1}">
       <span class="aid-leaderboard-rank">${i + 1}</span>
       <span class="aid-leaderboard-name">${escapeHtml(entry.name || 'Anonyme')}</span>
       <span class="aid-leaderboard-score">${entry.score}</span>
     </li>
-  `).join('')
+  `
+    )
+    .join('')
 }
 
 /**
@@ -199,7 +203,13 @@ function toggleFullscreen() {
 
 /**
  * Attach all event listeners for the aid view.
+ *
+ * Returns a teardown function so the caller (`initConnectionAid`) can
+ * remove every listener on `beforeunload` / `pagehide`. The previous
+ * implementation registered an anonymous `keydown` on `document` that
+ * leaked across navigations (F12).
  * @param {string} joinURL
+ * @returns {() => void}
  */
 function attachListeners(joinURL) {
   const copyBtn = document.getElementById('aidCopyBtn')
@@ -216,14 +226,19 @@ function attachListeners(joinURL) {
   }
 
   // Keyboard: F for fullscreen, C to copy URL
-  document.addEventListener('keydown', (e) => {
+  const onKeydown = (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
     if (e.key === 'f' || e.key === 'F') {
       toggleFullscreen()
     } else if (e.key === 'c' || e.key === 'C') {
       copyBtn?.click()
     }
-  })
+  }
+  document.addEventListener('keydown', onKeydown)
+
+  return () => {
+    document.removeEventListener('keydown', onKeydown)
+  }
 }
 
 /**
@@ -238,7 +253,7 @@ export function initConnectionAid(sessionCode) {
   app.innerHTML = renderSkeleton(sessionCode, joinURL)
 
   void renderQR(joinURL)
-  attachListeners(joinURL)
+  const detachListeners = attachListeners(joinURL)
 
   // Track freshness so we can dim the indicator when the main tab goes quiet
   // (closed, crashed, or backgrounded and not pushing updates).
@@ -252,7 +267,10 @@ export function initConnectionAid(sessionCode) {
   const subscriber = createSessionSubscriber(sessionCode, onUpdate)
   subscriber.start()
 
-  window.setInterval(() => {
+  // Stale-indicator sweep. The id is captured so teardown can clear it
+  // (F12): previously the interval leaked across navigations and kept
+  // firing on a detached DOM.
+  const staleIntervalId = window.setInterval(() => {
     if (!lastUpdate) return
     if (Date.now() - lastUpdate > 8000) {
       const dot = document.getElementById('aidCountDot')
@@ -263,5 +281,17 @@ export function initConnectionAid(sessionCode) {
     }
   }, 2000)
 
-  window.addEventListener('beforeunload', () => subscriber.close())
+  // Single, idempotent teardown. beforeunload covers desktop tab close;
+  // pagehide covers mobile/Safari where beforeunload is unreliable.
+  // subscriber.close() is idempotent so calling it from both is safe.
+  let tornDown = false
+  function teardown() {
+    if (tornDown) return
+    tornDown = true
+    detachListeners()
+    window.clearInterval(staleIntervalId)
+    subscriber.close()
+  }
+  window.addEventListener('beforeunload', teardown, { once: true })
+  window.addEventListener('pagehide', teardown, { once: true })
 }
