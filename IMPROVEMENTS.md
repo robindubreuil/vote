@@ -37,13 +37,13 @@ no offline awareness, no jitter, no max attempts.
 
 The single most impactful security change. Closes the trainer-takeover chain.
 
-- [ ] **S1** Trainer role is self-asserted; any client that knows the public 3-char session code (shown in the QR to every stagiaire) can `trainer_join` and kick the legitimate trainer — `backend/internal/hub/client.go:175`, `backend/internal/hub/hub.go:197-219`. Add a per-session trainer token minted at session creation, validated before any takeover.
-- [ ] **S2** "Session introuvable" branch in `handleTrainerJoin` skips `RecordFailedJoin` → 12,167 codes enumerable in ~20 min — `backend/internal/hub/client.go:205-208`.
-- [ ] **S3** `CheckOrigin` returns `true` for empty Origin — `backend/internal/server/server.go:280-286`. Browsers always send Origin on cross-origin WS; reject absence.
-- [ ] **S4** Dashboard logout has no server-side revocation; exfiltrated cookie remains valid up to 7 days — `backend/internal/server/auth.go:160-168`.
-- [ ] **S9** `shouldUseSecureCookie` trusts the `Host` header (allows `Host: localhost` to flip `Secure=false`) — `backend/internal/server/auth.go:90-97`.
-- [ ] **S11** Error messages echo client input and internal error text — `backend/internal/vote/manager.go:203`, `backend/internal/hub/hub.go:297`.
-- [ ] Add token-minting + auth tests; verify integration test for takeover rejection.
+- [x] **S1** Trainer role is self-asserted; any client that knows the public 3-char session code (shown in the QR to every stagiaire) can `trainer_join` and kick the legitimate trainer — `backend/internal/hub/client.go:175`, `backend/internal/hub/hub.go:197-219`. Add a per-session trainer token minted at session creation, validated before any takeover.
+- [x] **S2** "Session introuvable" branch in `handleTrainerJoin` skips `RecordFailedJoin` → 12,167 codes enumerable in ~20 min — `backend/internal/hub/client.go:205-208`.
+- [x] **S3** `CheckOrigin` returns `true` for empty Origin — `backend/internal/server/server.go:280-286`. Browsers always send Origin on cross-origin WS; reject absence.
+- [x] **S4** Dashboard logout has no server-side revocation; exfiltrated cookie remains valid up to 7 days — `backend/internal/server/auth.go:160-168`.
+- [x] **S9** `shouldUseSecureCookie` trusts the `Host` header (allows `Host: localhost` to flip `Secure=false`) — `backend/internal/server/auth.go:90-97`.
+- [x] **S11** Error messages echo client input and internal error text — `backend/internal/vote/manager.go:203`, `backend/internal/hub/hub.go:297`.
+- [x] Add token-minting + auth tests; verify integration test for takeover rejection.
 
 ## Session 4 — Concurrency cluster under reconnect storms
 

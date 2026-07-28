@@ -1,12 +1,14 @@
 package vote
 
 import (
+	"crypto/subtle"
 	"errors"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 	"vote-backend/internal/models"
+	"vote-backend/internal/security"
 )
 
 const (
@@ -46,6 +48,7 @@ func (m *Manager) CreateSession(sessionID, trainerID string) (*Session, error) {
 	defer m.mu.Unlock()
 
 	session := NewSession(sessionID, trainerID)
+	session.TrainerToken = security.GenerateToken()
 	m.sessions[sessionID] = session
 	m.stats.SessionsCreated.Inc()
 	return session, nil
@@ -83,6 +86,30 @@ func (m *Manager) UpdateTrainer(sessionID, trainerID string) error {
 	session.TrainerID = trainerID
 	session.LastActivity = time.Now().Unix()
 	return nil
+}
+
+// ValidateTrainerToken reports whether the presented token matches the
+// session's minted trainer token. Constant-time compare prevents timing
+// side-channels. A session with an empty TrainerToken (only possible for
+// legacy in-memory sessions pre-dating the field) matches nothing, which
+// forces token-less legacy sessions to be recreated rather than silently
+// treated as public.
+func (m *Manager) ValidateTrainerToken(sessionID, token string) bool {
+	if token == "" {
+		return false
+	}
+	m.mu.RLock()
+	session, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	if session.TrainerToken == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(session.TrainerToken), []byte(token)) == 1
 }
 
 func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
@@ -200,7 +227,7 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 			continue
 		}
 		if !activeSet[c] {
-			return "", errors.New("invalid color: " + c)
+			return "", errors.New("invalid color")
 		}
 	}
 

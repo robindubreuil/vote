@@ -38,6 +38,52 @@ func TestCreateSession(t *testing.T) {
 	}
 }
 
+// TestTrainerTokenMintingAndValidation covers S1: every session is minted a
+// crypto-random trainer token that gates takeover of an active trainer.
+func TestTrainerTokenMintingAndValidation(t *testing.T) {
+	m := NewManager()
+
+	sess, err := m.CreateSession("ABC", "trainer1")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token := sess.GetTrainerToken()
+	if token == "" {
+		t.Fatal("session should be minted a non-empty trainer token")
+	}
+
+	// The token should have meaningful entropy (base64url of 32 bytes ≈ 43 chars).
+	if len(token) < 32 {
+		t.Errorf("trainer token too short (%d chars), expected ≥32", len(token))
+	}
+
+	// Correct token validates.
+	if !m.ValidateTrainerToken("ABC", token) {
+		t.Error("ValidateTrainerToken should accept the minted token")
+	}
+
+	// Wrong token does not validate.
+	if m.ValidateTrainerToken("ABC", "wrong-token") {
+		t.Error("ValidateTrainerToken should reject a wrong token")
+	}
+
+	// Empty token does not validate.
+	if m.ValidateTrainerToken("ABC", "") {
+		t.Error("ValidateTrainerToken should reject an empty token")
+	}
+
+	// Non-existent session does not validate.
+	if m.ValidateTrainerToken("XYZ", token) {
+		t.Error("ValidateTrainerToken should reject for a non-existent session")
+	}
+
+	// Each session gets a distinct token.
+	sess2, _ := m.CreateSession("DEF", "trainer2")
+	if sess2.GetTrainerToken() == token {
+		t.Error("distinct sessions should have distinct trainer tokens")
+	}
+}
+
 func TestJoinStagiaire(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")

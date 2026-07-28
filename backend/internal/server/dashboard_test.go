@@ -157,7 +157,8 @@ func TestDashboardAccessibleWithValidCookie(t *testing.T) {
 func TestDashboardTamperedCookieRejected(t *testing.T) {
 	srv := newTestServer(t, "s3cr3t")
 	w := httptest.NewRecorder()
-	// Valid-looking but wrong signature.
+	// Valid-looking but wrong signature. Also uses the old 3-part format
+	// (pre-nonce) which the parser must reject outright.
 	req, _ := http.NewRequest("GET", "/dashboard", nil)
 	req.AddCookie(&http.Cookie{Name: "vote_admin", Value: "v1.99999999999.aGVsbG8"})
 	req.Header.Set("Accept", "text/html")
@@ -167,6 +168,24 @@ func TestDashboardTamperedCookieRejected(t *testing.T) {
 	}
 }
 
+// TestDashboardOldFormatCookieRejected verifies that cookies minted before
+// the S4 nonce change (3-part format) are rejected, forcing a re-login
+// rather than silently accepting a pre-revocation cookie.
+func TestDashboardOldFormatCookieRejected(t *testing.T) {
+	srv := newTestServer(t, "s3cr3t")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/dashboard", nil)
+	// Correct version, valid-looking 3-part shape — must be rejected
+	// because the parser now requires 4 parts (v1.nonce.exp.sig).
+	req.AddCookie(&http.Cookie{Name: "vote_admin", Value: "v1.99999999999.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
+	req.Header.Set("Accept", "text/html")
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Errorf("expected redirect for old-format cookie, got %d", w.Code)
+	}
+}
+
+// TestDashboardLogoutClearsCookie verifies the cookie is cleared client-side.
 func TestDashboardLogoutClearsCookie(t *testing.T) {
 	srv := newTestServer(t, "s3cr3t")
 	w := httptest.NewRecorder()
@@ -181,6 +200,83 @@ func TestDashboardLogoutClearsCookie(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(setCookie), "max-age=0") {
 		t.Errorf("logout cookie should have Max-Age=0, got: %s", setCookie)
+	}
+}
+
+// TestDashboardLogoutRevokesCookieServerSide covers S4: after logout, the
+// exfiltrated cookie value must stop working server-side immediately, not
+// at the embedded expiry. Without revocation, a stolen cookie remains
+// valid up to maxAge (7 days default).
+func TestDashboardLogoutRevokesCookieServerSide(t *testing.T) {
+	srv := newTestServer(t, "s3cr3t")
+
+	// 1. Mint a valid cookie.
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/dashboard/login", strings.NewReader("password=s3cr3t"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.router.ServeHTTP(w, req)
+
+	var token string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "vote_admin" {
+			token = c.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("login should mint a cookie")
+	}
+
+	// 2. Cookie works before logout.
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: "vote_admin", Value: token})
+	req.Header.Set("Accept", "text/html")
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cookie should work before logout, got %d", w.Code)
+	}
+
+	// 3. Logout revokes the cookie server-side.
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/dashboard/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "vote_admin", Value: token})
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("logout should redirect, got %d", w.Code)
+	}
+
+	// 4. The SAME cookie value is now rejected (would-be valid by
+	// signature/expiry alone, but the revocation set blocks it).
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: "vote_admin", Value: token})
+	req.Header.Set("Accept", "text/html")
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Errorf("revoked cookie must be rejected (redirect to login), got %d", w.Code)
+	}
+
+	// 5. A freshly minted cookie still works (revocation is per-token, not global).
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/dashboard/login", strings.NewReader("password=s3cr3t"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.router.ServeHTTP(w, req)
+	var token2 string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "vote_admin" {
+			token2 = c.Value
+		}
+	}
+	if token2 == "" || token2 == token {
+		t.Fatal("second login should mint a distinct cookie")
+	}
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: "vote_admin", Value: token2})
+	req.Header.Set("Accept", "text/html")
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("fresh cookie should work after a different token was revoked, got %d", w.Code)
 	}
 }
 
@@ -434,7 +530,8 @@ func lineStartsWith(body, prefix string) bool {
 }
 
 // TestCookieSigningRoundTrip is a focused unit test on the HMAC scheme:
-// sign then verify, and confirm a different secret rejects.
+// sign then verify, confirm a different secret rejects, and confirm each
+// minting is unique (nonce).
 func TestCookieSigningRoundTrip(t *testing.T) {
 	a := newDashboardAuth("secret-one", time.Hour)
 	token := a.signCookie(time.Now().Add(time.Hour))
@@ -451,29 +548,46 @@ func TestCookieSigningRoundTrip(t *testing.T) {
 	if a.verifyCookie(expired) {
 		t.Error("expired token must not verify")
 	}
+
+	// Each minting produces a unique cookie (nonce). Without this,
+	// revoking one login within the same second would revoke them all.
+	t2 := a.signCookie(time.Now().Add(time.Hour))
+	if t2 == token {
+		t.Error("two signCookie calls must produce distinct tokens (nonce)")
+	}
+	if !a.verifyCookie(t2) {
+		t.Error("second token should also verify")
+	}
 }
 
-// TestShouldUseSecureCookie pins the localhost heuristic.
+// TestShouldUseSecureCookie pins the loopback heuristic. S9: the decision
+// is driven by the TCP peer (RemoteAddr), not the client-controlled Host
+// header, so a spoofed `Host: localhost` cannot flip Secure=false.
 func TestShouldUseSecureCookie(t *testing.T) {
 	cases := []struct {
+		name     string
 		tls      bool
+		remote   string
 		host     string
 		expected bool
 	}{
-		{true, "example.com", true},
-		{false, "localhost:8080", false},
-		{false, "127.0.0.1:8080", false},
-		{false, "vote.example.com", true},
-		{false, "10.0.0.5:8080", true},
+		{"tls", true, "51.0.0.1:1234", "vote.example.com", true},
+		{"loopback v4", false, "127.0.0.1:8080", "vote.example.com", false},
+		{"loopback v6", false, "[::1]:8080", "vote.example.com", false},
+		{"remote", false, "10.0.0.5:8080", "vote.example.com", true},
+		{"spoofed host does not relax", false, "10.0.0.5:8080", "localhost", true},
+		{"spoofed host v6 does not relax", false, "[2001:db8::1]:8080", "127.0.0.1", true},
 	}
 	for _, c := range cases {
-		req := &http.Request{Host: c.host}
-		if c.tls {
-			req.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
-		}
-		got := shouldUseSecureCookie(req)
-		if got != c.expected {
-			t.Errorf("host=%s tls=%v: expected %v, got %v", c.host, c.tls, c.expected, got)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			req := &http.Request{Host: c.host, RemoteAddr: c.remote}
+			if c.tls {
+				req.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
+			}
+			got := shouldUseSecureCookie(req)
+			if got != c.expected {
+				t.Errorf("tls=%v remote=%s host=%s: expected %v, got %v", c.tls, c.remote, c.host, c.expected, got)
+			}
+		})
 	}
 }

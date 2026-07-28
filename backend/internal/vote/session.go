@@ -10,6 +10,7 @@ type Session struct {
 	mu             sync.RWMutex
 	ID             string
 	TrainerID      string
+	TrainerToken   string
 	Stagiaires     map[string]string
 	VoteState      string
 	ActiveColors   []string
@@ -163,4 +164,12 @@ func (s *Session) GetActiveColorsRaw() []string {
 	out := make([]string, len(s.ActiveColors))
 	copy(out, s.ActiveColors)
 	return out
+}
+
+// GetTrainerToken returns the per-session secret that gates trainer
+// takeover. Read under the session lock.
+func (s *Session) GetTrainerToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.TrainerToken
 }
