@@ -430,10 +430,14 @@ func TestWebSocketReconnection(t *testing.T) {
 	if msg["type"] != "session_joined" {
 		t.Fatalf("Expected session_joined, got %v", msg["type"])
 	}
-	// Capture the server-generated ID
+	// Capture the server-generated ID and reclaim token (S6/S12).
 	stagiaireID, ok := msg["stagiaireId"].(string)
 	if !ok || len(stagiaireID) != 12 {
 		t.Fatalf("Expected 12-char stagiaireId, got %v", msg["stagiaireId"])
+	}
+	reclaimToken, _ := msg["reclaimToken"].(string)
+	if reclaimToken == "" {
+		t.Fatalf("Expected reclaimToken in session_joined (S6/S12)")
 	}
 	trainer.WaitForType("connected_count", 2*time.Second)
 
@@ -455,10 +459,14 @@ func TestWebSocketReconnection(t *testing.T) {
 	// Drain any pending messages from trainer
 	trainer.DrainMessages()
 
-	// Reconnect - the server will assign a new ID, but the name "Grace" will be preserved
+	// Reconnect — present the captured ID AND reclaim token to attach
+	// to the existing identity. Without the token, the join is rejected
+	// as an unauthenticated takeover (S6/S12). Name-based reclaim is
+	// gone: a fresh join with name "Grace" would now hit ErrNameInUse
+	// because the prior Grace's entry still owns that name.
 	stagiaire2 := NewWSClient(t, ts.WebSocketURL())
 	defer stagiaire2.Close()
-	stagiaire2.SendMessage(StagiaireJoin(sessionCode, "", "Grace").Build())
+	stagiaire2.SendMessage(StagiaireJoin(sessionCode, stagiaireID, "Grace").ReclaimToken(reclaimToken).Build())
 	msg = stagiaire2.WaitForType("session_joined", 2*time.Second)
 	if msg["type"] != "session_joined" {
 		t.Errorf("Expected session_joined after reconnect, got %v", msg["type"])
@@ -499,6 +507,10 @@ func TestWebSocketSameSessionRejoinWithDuplicateName(t *testing.T) {
 	if !ok || len(aliceID) != 12 {
 		t.Fatalf("Expected 12-char stagiaireId for Alice, got %v", aliceMsg["stagiaireId"])
 	}
+	aliceToken, _ := aliceMsg["reclaimToken"].(string)
+	if aliceToken == "" {
+		t.Fatalf("Expected reclaimToken for Alice (S6/S12)")
+	}
 	trainer.WaitForType("connected_count", 2*time.Second)
 
 	// Second stagiaire "Bob" joins
@@ -511,11 +523,12 @@ func TestWebSocketSameSessionRejoinWithDuplicateName(t *testing.T) {
 	// Drain any extra messages from trainer
 	trainer.DrainMessages()
 
-	// Now Alice tries to rejoin the SAME session with her ID but with name "Bob" (duplicate!)
-	// This should FAIL with "Ce nom est déjà utilisé"
+	// Now Alice tries to rejoin the SAME session with her ID + token but
+	// with name "Bob" (duplicate!). This should FAIL with "Ce nom est
+	// déjà utilisé" — the rename-on-reclaim path checks for collisions.
 	alice2 := NewWSClient(t, ts.WebSocketURL())
 	defer alice2.Close()
-	alice2.SendMessage(StagiaireJoin(sessionCode, aliceID, "Bob").Build())
+	alice2.SendMessage(StagiaireJoin(sessionCode, aliceID, "Bob").ReclaimToken(aliceToken).Build())
 
 	// Should receive error (not session_joined)
 	msg = alice2.WaitForType("error", 2*time.Second)
@@ -560,13 +573,17 @@ func TestWebSocketSameSessionRejoinWithNewUniqueName(t *testing.T) {
 	if !ok || len(aliceID) != 12 {
 		t.Fatalf("Expected 12-char stagiaireId, got %v", aliceMsg["stagiaireId"])
 	}
+	aliceToken, _ := aliceMsg["reclaimToken"].(string)
+	if aliceToken == "" {
+		t.Fatalf("Expected reclaimToken (S6/S12)")
+	}
 	trainer.WaitForType("connected_count", 2*time.Second)
 
-	// Alice rejoins same session with her ID but with a new unique name "Alice2"
-	// This should succeed (valid rename)
+	// Alice rejoins same session with her ID + token and a new unique
+	// name "Alice2". This should succeed (valid rename-on-reclaim).
 	alice2 := NewWSClient(t, ts.WebSocketURL())
 	defer alice2.Close()
-	alice2.SendMessage(StagiaireJoin(sessionCode, aliceID, "Alice2").Build())
+	alice2.SendMessage(StagiaireJoin(sessionCode, aliceID, "Alice2").ReclaimToken(aliceToken).Build())
 	msg = alice2.WaitForType("session_joined", 2*time.Second)
 	if msg["type"] != "session_joined" {
 		t.Errorf("Expected session_joined for valid rename, got %v", msg["type"])
@@ -616,24 +633,34 @@ func TestWebSocketSameSessionRejoinWithDifferentCase(t *testing.T) {
 	if !ok || len(aliceID) != 12 {
 		t.Fatalf("Expected 12-char stagiaireId, got %v", aliceMsg["stagiaireId"])
 	}
+	aliceToken, _ := aliceMsg["reclaimToken"].(string)
+	if aliceToken == "" {
+		t.Fatalf("Expected reclaimToken (S6/S12)")
+	}
 	trainer.WaitForType("connected_count", 2*time.Second)
 
-	// Another stagiaire "alice" (lowercase) joins - should be blocked due to collision
+	// Another stagiaire "alice" (lowercase) joins with no reclaim token.
+	// This is a fresh join attempt colliding with the existing Alice —
+	// blocked by ErrNameInUse. The previous "par une personne
+	// connectée" message variant is gone: name-based reclaim no longer
+	// distinguishes connected vs disconnected owners (S6), so the
+	// single message covers both cases.
 	alice2 := NewWSClient(t, ts.WebSocketURL())
 	defer alice2.Close()
 	alice2.SendMessage(StagiaireJoin(sessionCode, "", "alice").Build())
 
 	// Should receive error (not session_joined)
 	msg = alice2.WaitForType("error", 2*time.Second)
-	if errMsg, ok := msg["message"].(string); !ok || errMsg != "Ce nom est déjà utilisé par une personne connectée" {
-		t.Errorf("Expected error 'Ce nom est déjà utilisé par une personne connectée', got %v", msg["message"])
+	if errMsg, ok := msg["message"].(string); !ok || errMsg != "Ce nom est déjà utilisé" {
+		t.Errorf("Expected error 'Ce nom est déjà utilisé', got %v", msg["message"])
 	}
 
-	// Alice rejoins with her ID but name "ALICE" (all caps)
-	// This should be ALLOWED - same person, case variation of her own name
+	// Alice rejoins with her ID + token and name "ALICE" (all caps).
+	// This is her own identity, so the case variation is allowed (the
+	// collision check skips the caller's own ID).
 	alice3 := NewWSClient(t, ts.WebSocketURL())
 	defer alice3.Close()
-	alice3.SendMessage(StagiaireJoin(sessionCode, aliceID, "ALICE").Build())
+	alice3.SendMessage(StagiaireJoin(sessionCode, aliceID, "ALICE").ReclaimToken(aliceToken).Build())
 
 	msg = alice3.WaitForType("session_joined", 2*time.Second)
 	if msg["type"] != "session_joined" {

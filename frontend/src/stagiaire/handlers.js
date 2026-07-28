@@ -578,6 +578,7 @@ export async function leaveSession() {
   game = null
   safeSessionRemove('vote_session_code')
   safeSessionRemove('vote_stagiaire_id')
+  safeSessionRemove('vote_stagiaire_reclaim_token')
   state.sessionCode = ''
   state.appState = AppState.JOINING
   state.connected = false
@@ -589,6 +590,7 @@ export async function leaveSession() {
   state.gameEnabled = false
   state.gamePlaying = false
   state.stagiaireId = null
+  state.reclaimToken = null
   const client = getClient()
   if (client) {
     client.close()

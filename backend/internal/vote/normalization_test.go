@@ -1,6 +1,7 @@
 package vote
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -32,38 +33,37 @@ func TestNameNormalization(t *testing.T) {
 	}
 }
 
-func TestGetStagiaireIDByName(t *testing.T) {
+// TestNormalizeNameCollisionsInSession verifies that name normalization
+// is applied to stagiaire-collision checks (the CC2 authoritative check
+// inside JoinStagiaire). Replaces the legacy TestGetStagiaireIDByName
+// which depended on the now-removed name-based reclaim lookup — names
+// are public, guessable, and ≤16 chars, so they can no longer be used
+// to attach to an existing identity (S6).
+func TestNormalizeNameCollisionsInSession(t *testing.T) {
 	m := NewManager()
 	_, _ = m.CreateSession("ABC", "trainer1")
 
 	validID := "123456789012"
-	// Add initial user
-	err := m.JoinStagiaire("ABC", validID, "Jean-Pierre")
-	if err != nil {
+	if _, err := m.JoinStagiaire("ABC", validID, "Jean-Pierre", ""); err != nil {
 		t.Fatalf("JoinStagiaire failed: %v", err)
 	}
 
-	// Test finding with different variations
-	variations := []string{
+	// All normalized variants of "Jean-Pierre" collide with the existing
+	// entry under a distinct ID — name-based reclaim is gone (S6), so a
+	// second client presenting the same name cannot attach.
+	for _, name := range []string{
 		"jean-pierre",
 		"Jean Pierre",
 		"jeanpierre",
 		"JEAN-PIERRE",
-	}
-
-	for _, name := range variations {
-		id, found := m.GetStagiaireIDByName("ABC", name)
-		if !found {
-			t.Errorf("Failed to find existing user 'Jean-Pierre' using variation '%s'", name)
-		}
-		if id != validID {
-			t.Errorf("Found wrong ID for variation '%s': got %s, want %s", name, id, validID)
+	} {
+		if _, err := m.JoinStagiaire("ABC", "999999999999", name, ""); !errors.Is(err, ErrNameInUse) {
+			t.Errorf("variant %q should collide with Jean-Pierre, got %v", name, err)
 		}
 	}
 
-	// Test non-match
-	_, found := m.GetStagiaireIDByName("ABC", "Jean-Paul")
-	if found {
-		t.Error("Should not find non-existent user 'Jean-Paul'")
+	// A non-matching name does not collide.
+	if _, err := m.JoinStagiaire("ABC", "999999999998", "Jean-Paul", ""); err != nil {
+		t.Errorf("Jean-Paul should not collide, got %v", err)
 	}
 }

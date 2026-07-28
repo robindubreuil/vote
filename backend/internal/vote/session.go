@@ -7,11 +7,19 @@ import (
 )
 
 type Session struct {
-	mu             sync.RWMutex
-	ID             string
-	TrainerID      string
-	TrainerToken   string
-	Stagiaires     map[string]string
+	mu           sync.RWMutex
+	ID           string
+	TrainerID    string
+	TrainerToken string
+	Stagiaires   map[string]string
+	// ReclaimTokens stores a per-stagiaire reclaim token (S6/S12). The
+	// token is minted on first join and required for any subsequent
+	// reconnect-by-ID — without it, a client that merely knows a
+	// stagiaireId (e.g. via sessionStorage leak on a shared device)
+	// cannot take over the identity and its accumulated scores. Map
+	// invariant: id ∈ Stagiaires ⟺ id ∈ ReclaimTokens, maintained by
+	// JoinStagiaire (the sole mutator).
+	ReclaimTokens  map[string]string
 	VoteState      string
 	ActiveColors   []string
 	ActiveLabels   map[string]string
@@ -42,6 +50,7 @@ func NewSession(id, trainerID string) *Session {
 		ID:             id,
 		TrainerID:      trainerID,
 		Stagiaires:     make(map[string]string),
+		ReclaimTokens:  make(map[string]string),
 		VoteState:      models.VoteStateIdle,
 		Votes:          make(map[string][]string),
 		Scores:         make(map[string]int),
@@ -178,4 +187,12 @@ func (s *Session) GetTrainerToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.TrainerToken
+}
+
+// GetReclaimToken returns the per-stagiaire reclaim token. Empty when
+// no token has been minted for the ID. Read under the session lock.
+func (s *Session) GetReclaimToken(stagiaireID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ReclaimTokens[stagiaireID]
 }

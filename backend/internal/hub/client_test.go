@@ -939,8 +939,8 @@ func TestTrainerReconnectReceivesFullConfig(t *testing.T) {
 		trainer2.TrainerToken = sess.GetTrainerToken()
 	}
 	trainer2.handleMessage(mustMarshal(t, models.Message{
-		Type:        "trainer_join",
-		SessionCode: sessionCode,
+		Type:         "trainer_join",
+		SessionCode:  sessionCode,
 		TrainerToken: trainer2.TrainerToken,
 	}))
 

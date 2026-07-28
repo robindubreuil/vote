@@ -288,7 +288,7 @@ func TestMetricsEndpointProductCounters(t *testing.T) {
 	// Drive some counters via the manager to ensure non-zero wiring.
 	mgr := h.VoteManager
 	mgr.CreateSession("ABC", "trainer1")
-	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice", "")
 	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 
@@ -339,7 +339,7 @@ func TestMetricsEndpointLabeledSeriesExposition(t *testing.T) {
 	h := hub.NewHub(cfg)
 	mgr := h.VoteManager
 	mgr.CreateSession("ABC", "trainer1")
-	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice", "")
 	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 	mgr.RemoveSession("ABC") // observe one ended session in every histogram
@@ -426,7 +426,7 @@ func TestDashboardParseMetricsHandlesLabeledLines(t *testing.T) {
 	h := hub.NewHub(cfg)
 	mgr := h.VoteManager
 	mgr.CreateSession("ABC", "trainer1")
-	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice", "")
 	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 	mgr.RemoveSession("ABC")

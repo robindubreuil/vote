@@ -274,6 +274,18 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		return
 	}
 
+	// S7: per-IP concurrent-connection cap. Acquired BEFORE the WS
+	// upgrade so a rejected dial never consumes a file descriptor or
+	// goroutine. The slot is released by Hub.unregisterClient when the
+	// client's readPump exits (every readPump defer routes through
+	// Unregister, even if the client never sent a join message).
+	if !s.hub.AcquireIPSlot(clientIP) {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "Too many concurrent connections from this network",
+		})
+		return
+	}
+
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -294,6 +306,9 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		slog.Error("WebSocket upgrade error", "error", err)
+		// Upgrade failed — release the slot we reserved so the cap
+		// doesn't slowly drain on handshake errors.
+		s.hub.ReleaseIPSlot(clientIP)
 		return
 	}
 
@@ -301,6 +316,9 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	if !ok {
 		slog.Error("Failed to generate unique client ID")
 		conn.Close()
+		// readPump never started, so unregisterClient never runs —
+		// release manually.
+		s.hub.ReleaseIPSlot(clientIP)
 		return
 	}
 

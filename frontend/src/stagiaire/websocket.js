@@ -4,7 +4,7 @@ import { showError } from '@shared/ui.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 import { pauseGameExternal, teardownGame } from './handlers.js'
-import { safeSessionSet } from '@shared/utils/safe-storage.js'
+import { safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 import { resetHighScore, saveStreak } from '@shared/game-storage.js'
 
 // Configuration de l'API WebSocket
@@ -38,7 +38,12 @@ export function initClient() {
           type: 'stagiaire_join',
           sessionCode: state.sessionCode,
           name: state.prenom,
-          stagiaireId: state.stagiaireId || undefined
+          stagiaireId: state.stagiaireId || undefined,
+          // S6/S12: the reclaim token proves ownership of the
+          // stagiaireId. Without it, a stale ID alone is rejected
+          // (anyone who reads sessionStorage on a shared device could
+          // otherwise inherit the prior stagiaire's scores).
+          reclaimToken: state.reclaimToken || undefined
         })
       }
     },
@@ -84,6 +89,23 @@ function handleMessage(msg) {
         state.stagiaireId = msg.stagiaireId
         safeSessionSet('vote_stagiaire_id', msg.stagiaireId)
       }
+      // S6/S12: persist the reclaim token alongside the ID so a
+      // reconnect can prove ownership. sessionStorage (not localStorage)
+      // scopes the token to the tab — a shared device cannot leak it
+      // across users.
+      if (msg.reclaimToken) {
+        state.reclaimToken = msg.reclaimToken
+        safeSessionSet('vote_stagiaire_reclaim_token', msg.reclaimToken)
+      }
+      // If the server signals that the prior ID is no longer
+      // reclaimable, drop the stale credentials so the next attempt
+      // starts fresh (and any loop stops resending the bad ID).
+      if (msg.error === 'session_expired' || msg.staleIdentity) {
+        delete state.stagiaireId
+        delete state.reclaimToken
+        safeSessionRemove('vote_stagiaire_id')
+        safeSessionRemove('vote_stagiaire_reclaim_token')
+      }
       if (state.appState === AppState.JOINING) {
         resetHighScore()
         saveStreak(0)
@@ -97,6 +119,25 @@ function handleMessage(msg) {
       let errorMessage = msg.message || 'Erreur de connexion'
       if (errorMessage === 'Session not found') {
         errorMessage = 'Session introuvable'
+      }
+      // S6/S12: the server rejected the reclaim token (or the ID is
+      // stale post-restart). Drop the cached credentials and retry
+      // once as a fresh identity. Without this, the auto-reconnect
+      // loop would keep resending the same bad ID forever.
+      if (errorMessage === 'Session expirée — veuillez recréer votre identité') {
+        delete state.stagiaireId
+        delete state.reclaimToken
+        safeSessionRemove('vote_stagiaire_id')
+        safeSessionRemove('vote_stagiaire_reclaim_token')
+        if (state.sessionCode && state.prenom && client) {
+          client.send({
+            type: 'stagiaire_join',
+            sessionCode: state.sessionCode,
+            name: state.prenom
+          })
+        }
+        // Suppress the toast — the retry is transparent to the user.
+        break
       }
       showError(errorMessage)
       break

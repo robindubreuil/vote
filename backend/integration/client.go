@@ -287,6 +287,13 @@ func (b *MessageBuilder) TrainerToken(token string) *MessageBuilder {
 	return b
 }
 
+// ReclaimToken sets the per-stagiaire reclaim token (S6/S12). Required
+// to take over an existing identity by stagiaireId on reconnect.
+func (b *MessageBuilder) ReclaimToken(token string) *MessageBuilder {
+	b.msg.ReclaimToken = token
+	return b
+}
+
 // Colors sets the colors.
 func (b *MessageBuilder) Colors(colors ...string) *MessageBuilder {
 	b.msg.Colors = colors

@@ -70,3 +70,58 @@ func TestSpecificOriginsEnableCredentials(t *testing.T) {
 		t.Errorf("unexpected origins: %v", cfg.AllowedOrigins)
 	}
 }
+
+// TestResourceCapsDefaultsAndOverrides covers S7: the three resource
+// caps have documented defaults and are overridable via env. A zero or
+// negative value disables each cap independently — used by tests.
+func TestResourceCapsDefaultsAndOverrides(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("VOTE_MAX_SESSIONS", "")
+		t.Setenv("VOTE_MAX_CLIENTS_PER_SESSION", "")
+		t.Setenv("VOTE_MAX_CONNECTIONS_PER_IP", "")
+
+		cfg := LoadConfig()
+
+		if cfg.MaxSessionsGlobal != 1000 {
+			t.Errorf("MaxSessionsGlobal default: got %d, want 1000", cfg.MaxSessionsGlobal)
+		}
+		if cfg.MaxClientsPerSession != 200 {
+			t.Errorf("MaxClientsPerSession default: got %d, want 200", cfg.MaxClientsPerSession)
+		}
+		if cfg.MaxConnectionsPerIP != 50 {
+			t.Errorf("MaxConnectionsPerIP default: got %d, want 50", cfg.MaxConnectionsPerIP)
+		}
+	})
+
+	t.Run("env_overrides", func(t *testing.T) {
+		t.Setenv("VOTE_MAX_SESSIONS", "5")
+		t.Setenv("VOTE_MAX_CLIENTS_PER_SESSION", "3")
+		t.Setenv("VOTE_MAX_CONNECTIONS_PER_IP", "7")
+
+		cfg := LoadConfig()
+
+		if cfg.MaxSessionsGlobal != 5 {
+			t.Errorf("MaxSessionsGlobal override: got %d, want 5", cfg.MaxSessionsGlobal)
+		}
+		if cfg.MaxClientsPerSession != 3 {
+			t.Errorf("MaxClientsPerSession override: got %d, want 3", cfg.MaxClientsPerSession)
+		}
+		if cfg.MaxConnectionsPerIP != 7 {
+			t.Errorf("MaxConnectionsPerIP override: got %d, want 7", cfg.MaxConnectionsPerIP)
+		}
+	})
+
+	t.Run("disable_via_zero", func(t *testing.T) {
+		t.Setenv("VOTE_MAX_SESSIONS", "0")
+		t.Setenv("VOTE_MAX_CLIENTS_PER_SESSION", "-1")
+
+		cfg := LoadConfig()
+
+		if cfg.MaxSessionsGlobal != 0 {
+			t.Errorf("MaxSessionsGlobal should be 0 (disabled), got %d", cfg.MaxSessionsGlobal)
+		}
+		if cfg.MaxClientsPerSession != -1 {
+			t.Errorf("MaxClientsPerSession should be -1 (disabled), got %d", cfg.MaxClientsPerSession)
+		}
+	})
+}
