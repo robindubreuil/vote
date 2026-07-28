@@ -51,6 +51,35 @@ type Sample struct {
 	MultipleChoiceVotes int64     `json:"mc"`
 }
 
+// HistogramBucket is one cumulative Prometheus histogram bucket: the count of
+// observations whose value was ≤ LE.
+type HistogramBucket struct {
+	LE    float64 `json:"le"`
+	Count int64   `json:"count"`
+}
+
+// Histogram is the persisted shape of a vote.HistogramSnapshot. Stored only
+// in counters.json (not in stats.jsonl samples) so the time-series log stays
+// compact — distributions don't need a per-sample history.
+type Histogram struct {
+	Count   int64             `json:"count"`
+	Sum     float64           `json:"sum"`
+	Buckets []HistogramBucket `json:"buckets,omitempty"`
+}
+
+// Counters is what counters.json persists: the latest cumulative counters
+// plus the latest histogram distributions, so a restart can restore both as
+// all-time monotonic. It embeds Sample so the same JSON shape extends what
+// older deployments already had on disk (extra histogram fields default to
+// zero on unmarshal and are simply skipped by an older binary reading newer
+// counters.json).
+type Counters struct {
+	Sample
+	SessionDuration    Histogram `json:"sd,omitempty"`
+	VotesPerSession    Histogram `json:"vp,omitempty"`
+	TraineesPerSession Histogram `json:"tp,omitempty"`
+}
+
 // Store owns the two persistence files. Methods are safe for concurrent use;
 // the sampling goroutine is the sole writer, ReadSamples is safe to call from
 // HTTP handlers concurrently with writes.
@@ -98,11 +127,15 @@ func New(dir string) (*Store, error) {
 // Dir returns the on-disk data directory.
 func (s *Store) Dir() string { return s.dir }
 
-// SaveCounters atomically writes the current cumulative counters. The write is
-// temp-file + rename, so a crash never leaves a partially-written counters.json
-// and readers always see either the old or the new complete file.
-func (s *Store) SaveCounters(sample Sample) error {
-	data, err := json.Marshal(sample)
+// SaveCounters atomically writes the current cumulative counters (and the
+// histogram distributions). The write is temp-file + rename, so a crash never
+// leaves a partially-written counters.json and readers always see either the
+// old or the new complete file.
+func (s *Store) SaveCounters(c Counters) error {
+	if !validCounters(c) {
+		return fmt.Errorf("store: invalid counters")
+	}
+	data, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("store: marshal counters: %w", err)
 	}
@@ -116,28 +149,29 @@ func (s *Store) SaveCounters(sample Sample) error {
 	return nil
 }
 
-// LoadCounters reads the persisted base counters. Missing file → zero value
-// (fresh start). Corrupt or invalid file → zero value (recover, never crash
-// the server on boot). A valid snapshot is non-negative and internally
-// consistent (feature counters cannot exceed votes started).
-func (s *Store) LoadCounters() (Sample, error) {
+// LoadCounters reads the persisted counters and histograms. Missing file →
+// zero value (fresh start). Corrupt or invalid file → zero value (recover,
+// never crash the server on boot). A valid snapshot has non-negative,
+// internally-consistent counters and (when present) cumulative-non-decreasing
+// histogram buckets whose counts cannot exceed the total observation count.
+func (s *Store) LoadCounters() (Counters, error) {
 	data, err := os.ReadFile(s.countersPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Sample{}, nil
+			return Counters{}, nil
 		}
-		return Sample{}, fmt.Errorf("store: read %s: %w", countersFile, err)
+		return Counters{}, fmt.Errorf("store: read %s: %w", countersFile, err)
 	}
-	var sample Sample
-	if err := json.Unmarshal(data, &sample); err != nil {
+	var c Counters
+	if err := json.Unmarshal(data, &c); err != nil {
 		slog.Warn("counters.json corrupt, starting fresh", "error", err, "path", s.countersPath)
-		return Sample{}, nil
+		return Counters{}, nil
 	}
-	if !valid(sample) {
+	if !validCounters(c) {
 		slog.Warn("counters.json invalid, starting fresh", "path", s.countersPath)
-		return Sample{}, nil
+		return Counters{}, nil
 	}
-	return sample, nil
+	return c, nil
 }
 
 // AppendSample appends one sample to the append-only log, rotating to a single
@@ -258,6 +292,32 @@ func valid(s Sample) bool {
 		s.GameEnabledVotes >= 0 && s.MultipleChoiceVotes >= 0 &&
 		s.GameEnabledVotes <= s.VotesStarted &&
 		s.MultipleChoiceVotes <= s.VotesStarted
+}
+
+// validHistogram enforces the Prometheus cumulative-bucket invariants: total
+// count non-negative, bucket counts non-negative and monotonically
+// non-decreasing, and no bucket holds more observations than the total.
+func validHistogram(h Histogram) bool {
+	if h.Count < 0 {
+		return false
+	}
+	var prev int64
+	for _, b := range h.Buckets {
+		if b.Count < 0 || b.Count > h.Count || b.Count < prev {
+			return false
+		}
+		prev = b.Count
+	}
+	return true
+}
+
+// validCounters is the on-disk invariant for counters.json: the time-series
+// counter portion (delegated to valid) plus any embedded histogram snapshots.
+func validCounters(c Counters) bool {
+	return valid(c.Sample) &&
+		validHistogram(c.SessionDuration) &&
+		validHistogram(c.VotesPerSession) &&
+		validHistogram(c.TraineesPerSession)
 }
 
 // Compile-time guard that os.WriteFile's truncation path keeps the file mode.

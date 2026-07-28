@@ -136,10 +136,12 @@ func (s *ProductStats) Snapshot() ProductStatsSnapshot {
 	}
 }
 
-// Restore seeds the cumulative counters with a persisted base so they read as
-// all-time monotonic across process restarts. Called once on boot before the
-// server accepts traffic. Histograms are intentionally not restored — they
-// describe the current run's distribution only.
+// Restore seeds the cumulative counters and histograms with a persisted base
+// so they read as all-time monotonic across process restarts. Called once on
+// boot before the server accepts traffic. Histogram buckets are matched by
+// their LE bound so a future change to the bucket schema doesn't corrupt the
+// in-memory histogram — unmatched bounds in the snapshot are skipped, and
+// unmatched bounds in the live histogram stay at zero.
 func (s *ProductStats) Restore(snap ProductStatsSnapshot) {
 	s.SessionsCreated.Add(snap.SessionsCreated)
 	s.VotesStarted.Add(snap.VotesStarted)
@@ -147,6 +149,28 @@ func (s *ProductStats) Restore(snap ProductStatsSnapshot) {
 	s.TraineesJoined.Add(snap.TraineesJoined)
 	s.GameEnabledVotes.Add(snap.GameEnabledVotes)
 	s.MultipleChoiceVotes.Add(snap.MultipleChoiceVotes)
+	restoreHistogram(s.SessionDurationSecs, snap.SessionDuration)
+	restoreHistogram(s.VotesPerSession, snap.VotesPerSession)
+	restoreHistogram(s.TraineesPerSession, snap.TraineesPerSession)
+}
+
+// restoreHistogram replays a persisted snapshot into a live histogram. The
+// snapshot is assumed to be cumulative (Prometheus convention), so the values
+// are added directly; subsequent Observe calls compose correctly on top.
+func restoreHistogram(h *Histogram, snap HistogramSnapshot) {
+	if snap.Count == 0 {
+		return
+	}
+	h.count.Add(snap.Count)
+	addFloat(&h.sumBits, snap.Sum)
+	for i, le := range h.buckets {
+		for _, b := range snap.Buckets {
+			if b.LE == le {
+				h.counts[i].Add(b.Count)
+				break
+			}
+		}
+	}
 }
 
 // observeEndedSession records distribution metrics for a session that is being

@@ -118,9 +118,17 @@ func (s *Security) RecordFailedJoin(ip string) {
 
 	if attempt.Count >= MaxFailedAttempts {
 		backoffExponent := attempt.Count - MaxFailedAttempts
-		backoffMs := BaseBackoffMs * (1 << backoffExponent)
-		if backoffMs > MaxBackoffMs {
+		// Cap the exponent to prevent int64 overflow around Count=56,
+		// which would wrap negative and bypass the MaxBackoffMs ceiling.
+		const maxBackoffExponent = 30
+		var backoffMs int
+		if backoffExponent > maxBackoffExponent {
 			backoffMs = MaxBackoffMs
+		} else {
+			backoffMs = BaseBackoffMs * (1 << backoffExponent)
+			if backoffMs > MaxBackoffMs {
+				backoffMs = MaxBackoffMs
+			}
 		}
 		// Add jitter to prevent timing attacks: ±25% randomization
 		jitterRange := int(float64(backoffMs) * BackoffJitter)

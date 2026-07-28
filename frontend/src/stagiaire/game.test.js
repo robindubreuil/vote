@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { Mastermind, computePegs, _test } from './game.js'
+import { loadHighScore } from '@shared/game-storage.js'
 
 // localStorage stub — Mastermind persists high scores on win.
 const store = new Map()
@@ -208,6 +209,47 @@ describe('Mastermind game flow', () => {
     const slowScore = game.score
 
     expect(fastScore).toBeGreaterThan(slowScore)
+  })
+
+  it('game.score is the per-round score, not the cumulative high score', () => {
+    // Regression guard for handlers.js#handleSubmit, which must report
+    // game.score (this round) — not loadHighScore() (lifetime max) — to the
+    // server. If a sub-record round reports the high score instead,
+    // competitive ranking inflates across the whole class.
+    localStorage.clear()
+
+    // Round 1: win quickly to set a high bar.
+    game.newGame()
+    game.secret = ['rouge', 'vert', 'bleu', 'jaune']
+    game.place('rouge')
+    game.place('vert')
+    game.place('bleu')
+    game.place('jaune')
+    game.submit()
+    const round1Score = game.score
+    expect(round1Score).toBeGreaterThan(0)
+    expect(loadHighScore()).toBe(round1Score)
+
+    // Round 2: lose (use all 8 attempts without solving) → score is 0.
+    game.newGame()
+    game.secret = ['rouge', 'vert', 'bleu', 'jaune']
+    for (let i = 0; i < game.maxAttempts; i++) {
+      game.place('rouge')
+      game.place('rouge')
+      game.place('rouge')
+      game.place('rouge')
+      game.submit()
+    }
+    expect(game.status).toBe('lost')
+    const round2Score = game.score
+    expect(round2Score).toBe(0)
+
+    // Lifetime high is unchanged (round 1 still holds the record)...
+    expect(loadHighScore()).toBe(round1Score)
+    // ...but the value handlers.js should report for round 2 is
+    // game.score (0), not loadHighScore() (round1Score). Before the fix,
+    // a loss would still report round1Score to the server.
+    expect(game.score).not.toBe(loadHighScore())
   })
 })
 

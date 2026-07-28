@@ -25,9 +25,36 @@ func sample(t time.Time, sc, vs, vc, tj, ge, mc int64) Sample {
 	return Sample{Time: t, SessionsCreated: sc, VotesStarted: vs, VotesCast: vc, TraineesJoined: tj, GameEnabledVotes: ge, MultipleChoiceVotes: mc}
 }
 
+// counters wraps a Sample in a Counters with empty histograms. Used by tests
+// that exercise the counter round-trip without caring about distributions.
+func counters(t time.Time, sc, vs, vc, tj, ge, mc int64) Counters {
+	return Counters{Sample: sample(t, sc, vs, vc, tj, ge, mc)}
+}
+
+// sampleEqual compares the time-series-counter portion of two Counters values
+// (Histogram contains a slice and therefore can't be compared with ==).
+func sampleEqual(a, b Counters) bool {
+	return a.Sample == b.Sample &&
+		histogramEqual(a.SessionDuration, b.SessionDuration) &&
+		histogramEqual(a.VotesPerSession, b.VotesPerSession) &&
+		histogramEqual(a.TraineesPerSession, b.TraineesPerSession)
+}
+
+func histogramEqual(a, b Histogram) bool {
+	if a.Count != b.Count || a.Sum != b.Sum || len(a.Buckets) != len(b.Buckets) {
+		return false
+	}
+	for i := range a.Buckets {
+		if a.Buckets[i] != b.Buckets[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestSaveLoadCountersRoundTrip(t *testing.T) {
 	s := newTestStore(t)
-	want := sample(time.Unix(1700000000, 0).UTC(), 10, 20, 200, 150, 5, 3)
+	want := counters(time.Unix(1700000000, 0).UTC(), 10, 20, 200, 150, 5, 3)
 	if err := s.SaveCounters(want); err != nil {
 		t.Fatalf("SaveCounters: %v", err)
 	}
@@ -35,7 +62,35 @@ func TestSaveLoadCountersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCounters: %v", err)
 	}
-	if got != want {
+	if !sampleEqual(got, want) {
+		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", got, want)
+	}
+}
+
+func TestSaveLoadCountersWithHistogramsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	want := Counters{
+		Sample: sample(time.Unix(1700000000, 0).UTC(), 3, 5, 50, 12, 1, 0),
+		VotesPerSession: Histogram{
+			Count: 3,
+			Sum:   30,
+			Buckets: []HistogramBucket{
+				{LE: 0, Count: 0},
+				{LE: 5, Count: 2},
+				{LE: 10, Count: 2},
+				{LE: 50, Count: 3},
+			},
+		},
+		TraineesPerSession: Histogram{Count: 3, Buckets: []HistogramBucket{{LE: 10, Count: 3}}},
+	}
+	if err := s.SaveCounters(want); err != nil {
+		t.Fatalf("SaveCounters: %v", err)
+	}
+	got, err := s.LoadCounters()
+	if err != nil {
+		t.Fatalf("LoadCounters: %v", err)
+	}
+	if !sampleEqual(got, want) {
 		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", got, want)
 	}
 }
@@ -46,7 +101,7 @@ func TestLoadCountersMissingIsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCounters on missing file: %v", err)
 	}
-	if got != (Sample{}) {
+	if !sampleEqual(got, Counters{}) {
 		t.Errorf("expected zero sample for missing file, got %+v", got)
 	}
 }
@@ -60,7 +115,7 @@ func TestLoadCountersCorruptIsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCounters on corrupt file should not error: %v", err)
 	}
-	if got != (Sample{}) {
+	if !sampleEqual(got, Counters{}) {
 		t.Errorf("corrupt file should yield zero, got %+v", got)
 	}
 }
@@ -68,12 +123,12 @@ func TestLoadCountersCorruptIsZero(t *testing.T) {
 func TestLoadCountersNegativeRejected(t *testing.T) {
 	s := newTestStore(t)
 	bad := sample(time.Now(), -1, 0, 0, 0, 0, 0)
-	data, _ := json.Marshal(bad)
+	data, _ := json.Marshal(Counters{Sample: bad})
 	if err := os.WriteFile(s.countersPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.LoadCounters()
-	if got != (Sample{}) {
+	if !sampleEqual(got, Counters{}) {
 		t.Errorf("negative counters must be rejected, got %+v", got)
 	}
 }
@@ -82,10 +137,66 @@ func TestLoadCountersFeatureOverflowRejected(t *testing.T) {
 	s := newTestStore(t)
 	// game-enabled (5) cannot exceed votes-started (3)
 	bad := sample(time.Now(), 1, 3, 10, 5, 5, 0)
+	data, _ := json.Marshal(Counters{Sample: bad})
+	os.WriteFile(s.countersPath, data, 0o600)
+	if got, _ := s.LoadCounters(); !sampleEqual(got, Counters{}) {
+		t.Errorf("game > started must be rejected, got %+v", got)
+	}
+}
+
+func TestLoadCountersRejectsNonCumulativeHistogram(t *testing.T) {
+	s := newTestStore(t)
+	// Buckets must be cumulative non-decreasing: this snapshot claims 5
+	// observations ≤ 5 and only 3 ≤ 10, which is impossible.
+	bad := Counters{
+		Sample: sample(time.Now(), 1, 0, 0, 0, 0, 0),
+		VotesPerSession: Histogram{
+			Count:   5,
+			Buckets: []HistogramBucket{{LE: 5, Count: 5}, {LE: 10, Count: 3}},
+		},
+	}
 	data, _ := json.Marshal(bad)
 	os.WriteFile(s.countersPath, data, 0o600)
-	if got, _ := s.LoadCounters(); got != (Sample{}) {
-		t.Errorf("game > started must be rejected, got %+v", got)
+	if got, _ := s.LoadCounters(); !sampleEqual(got, Counters{}) {
+		t.Errorf("non-cumulative histogram must be rejected, got %+v", got)
+	}
+}
+
+func TestLoadCountersRejectsHistogramBucketExceedsCount(t *testing.T) {
+	s := newTestStore(t)
+	// A single bucket claims 10 observations but the total count is 5.
+	bad := Counters{
+		Sample: sample(time.Now(), 1, 0, 0, 0, 0, 0),
+		VotesPerSession: Histogram{
+			Count:   5,
+			Buckets: []HistogramBucket{{LE: 10, Count: 10}},
+		},
+	}
+	data, _ := json.Marshal(bad)
+	os.WriteFile(s.countersPath, data, 0o600)
+	if got, _ := s.LoadCounters(); !sampleEqual(got, Counters{}) {
+		t.Errorf("bucket > count must be rejected, got %+v", got)
+	}
+}
+
+func TestLoadCountersBackwardCompatIgnoresAbsentHistograms(t *testing.T) {
+	s := newTestStore(t)
+	// counters.json written by an older binary lacks the histogram fields.
+	// LoadCounters must accept it and leave histograms zero.
+	legacy := sample(time.Unix(1700000000, 0).UTC(), 7, 14, 100, 25, 2, 1)
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(s.countersPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadCounters()
+	if err != nil {
+		t.Fatalf("LoadCounters: %v", err)
+	}
+	if got.SessionsCreated != 7 || got.VotesCast != 100 {
+		t.Errorf("legacy counters not restored: %+v", got)
+	}
+	if got.SessionDuration.Count != 0 || got.VotesPerSession.Count != 0 || got.TraineesPerSession.Count != 0 {
+		t.Errorf("absent histograms should be zero, got %+v", got)
 	}
 }
 
@@ -169,7 +280,7 @@ func TestRotationKeepsBackup(t *testing.T) {
 
 func TestFilePermissions(t *testing.T) {
 	s := newTestStore(t)
-	s.SaveCounters(sample(time.Now(), 1, 0, 0, 0, 0, 0))
+	s.SaveCounters(counters(time.Now(), 1, 0, 0, 0, 0, 0))
 	s.AppendSample(sample(time.Now(), 1, 0, 0, 0, 0, 0))
 
 	dirFi, _ := os.Stat(s.dir)
@@ -195,7 +306,7 @@ func TestFilePermissions(t *testing.T) {
 // see the previous (or absent) value, never a partial one.
 func TestAtomicCounterWriteNoPartialRead(t *testing.T) {
 	s := newTestStore(t)
-	s.SaveCounters(sample(time.Unix(1700000000, 0), 5, 0, 0, 0, 0, 0))
+	s.SaveCounters(counters(time.Unix(1700000000, 0), 5, 0, 0, 0, 0, 0))
 	// Simulate an interrupted write: temp file present, counters.json stale.
 	tmp := filepath.Join(s.dir, countersFile+".tmp")
 	if err := os.WriteFile(tmp, []byte("{parti"), 0o600); err != nil {

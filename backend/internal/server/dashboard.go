@@ -86,17 +86,24 @@ const MAX_SNAPSHOTS = 1440; // 12h at 30s — bounds localStorage growth
 const STORE_KEY = 'vote:dashboard:snaps';
 
 // --- Prometheus text parser ---------------------------------------------
+// Parses the subset of the Prometheus exposition format the dashboard needs:
+//   name value                          → name
+//   name{labels} value                  → name{labels}
+// Lines starting with '#' (HELP/TYPE/comments) and unparseable values are
+// skipped. The map key preserves the (sorted-normalized) labels so callers
+// can look up a specific series via getLabeled.
 function parseMetrics(text) {
   const out = new Map();
   for (const line of text.split('\n')) {
     if (!line || line.startsWith('#')) continue;
-    // name{labels} value  |  name value
-    let name, rest;
+    let name, rest, labels = '';
     const brace = line.indexOf('{');
     if (brace > -1) {
-      name = line.slice(0, brace);
       const close = line.indexOf('}');
-      rest = line.slice(brace + 1, close) + ' ' + line.slice(close + 2);
+      if (close < 0) continue;
+      name = line.slice(0, brace);
+      labels = '{' + line.slice(brace + 1, close) + '}';
+      rest = line.slice(close + 1).trim();
     } else {
       const sp = line.indexOf(' ');
       name = line.slice(0, sp);
@@ -104,7 +111,7 @@ function parseMetrics(text) {
     }
     const val = parseFloat(rest);
     if (Number.isNaN(val)) continue;
-    out.set(name + (brace > -1 ? '{' + line.slice(brace + 1, line.indexOf('}')) + '}' : ''), val);
+    out.set(name + labels, val);
   }
   return out;
 }
@@ -151,10 +158,6 @@ function pushSnapshot(m) {
 }
 
 // --- Renderers -----------------------------------------------------------
-function fmt(n) {
-  if (n >= 1000) return (n/1000).toFixed(n >= 10000 ? 0 : 1) + 'k';
-  return String(Math.round(n));
-}
 // deltaWindow returns how much the given key grew over the last ms window,
 // using the persisted history. Falls back to the full run span when history
 // is shorter.
@@ -211,9 +214,19 @@ function renderCounters(m) {
   document.getElementById('counters').innerHTML = cards.map(function (c) {
     const d = deltaWindow(snaps, c.key, HOUR);
     let deltaText;
-    if (d === null) deltaText = '—';
-    else if (uptime * 1000 < HOUR) deltaText = '+' + d + ' depuis démarrage';
-    else deltaText = '+' + d + ' / dernière heure';
+    if (d === null) {
+      deltaText = '—';
+    } else {
+      // Label must reflect the actual polling span: when the local history
+      // is shorter than an hour, "/ dernière heure" would understate (or
+      // overstate) the rate. Fall back to "depuis démarrage" if the
+      // process itself is younger than the window, else advertise the
+      // observed span in minutes.
+      const histSpanMs = snaps.length >= 2 ? snaps[snaps.length - 1].t - snaps[0].t : 0;
+      if (histSpanMs >= HOUR) deltaText = '+' + d + ' / dernière heure';
+      else if (uptime * 1000 < HOUR) deltaText = '+' + d + ' depuis démarrage';
+      else deltaText = '+' + d + ' / ' + Math.max(1, Math.round(histSpanMs / 60000)) + ' min';
+    }
     return '<div class="card"><div class="label">' + c.label + '</div>' +
       '<div class="value">' + c.value + '</div>' +
       '<div class="delta' + (d === 0 ? ' muted' : '') + '">' + deltaText + '</div>' +
@@ -276,22 +289,39 @@ function renderHistogram(elId, m, name, leToLabel) {
   const el = document.getElementById(elId);
   if (count === 0) { el.innerHTML = '<div class="legend">aucune session terminée</div>'; return; }
   const buckets = [];
+  let infCount = 0;
   const re = new RegExp('^' + name + '_bucket\\{le="([^"]+)"\\}$');
   for (const [k, v] of m.entries()) {
     const match = k.match(re);
-    if (match && match[1] !== '+Inf') buckets.push({ le: parseFloat(match[1]), count: v });
+    if (!match) continue;
+    if (match[1] === '+Inf') { infCount = v; continue; }
+    buckets.push({ le: parseFloat(match[1]), count: v });
   }
   buckets.sort((a, b) => a.le - b.le);
-  if (buckets.length === 0) { el.innerHTML = ''; return; }
-  // non-cumulative per-bucket delta
-  const bars = buckets.map((b, i) => {
-    const prev = i > 0 ? buckets[i - 1].count : 0;
-    return { le: b.le, n: b.count - prev };
-  });
+  if (buckets.length === 0) {
+    el.innerHTML = '<div class="legend">distribution indisponible</div>';
+    return;
+  }
+  // Prometheus buckets are cumulative: bucket{le="x"} counts observations ≤ x.
+  // Per-bar count = this bucket − previous bucket. The +Inf bucket captures
+  // everything above the highest finite bound — render it as the rightmost
+  // bar so outlier sessions (e.g. >50 votes) stay visible.
+  const bars = [];
+  let prevCount = 0;
+  for (const b of buckets) {
+    const n = b.count - prevCount;
+    bars.push({ n, labelText: leToLabel(b.le), titleText: '≤ ' + leToLabel(b.le) + ' : ' + n });
+    prevCount = b.count;
+  }
+  if (infCount > prevCount) {
+    const topLE = buckets[buckets.length - 1].le;
+    const n = infCount - prevCount;
+    bars.push({ n, labelText: leToLabel(topLE) + '+', titleText: '> ' + leToLabel(topLE) + ' : ' + n });
+  }
   const maxN = Math.max(1, ...bars.map(b => b.n));
   el.innerHTML = bars.map(b => {
     const h = (b.n / maxN) * 100;
-    return '<div class="bar" style="height:' + h + '%" title="≤ ' + leToLabel(b.le) + ' : ' + b.n + '"><span class="le">' + leToLabel(b.le) + '</span></div>';
+    return '<div class="bar" style="height:' + h + '%" title="' + b.titleText + '"><span class="le">' + b.labelText + '</span></div>';
   }).join('');
 }
 function fmtDuration(sec) {
@@ -319,12 +349,25 @@ async function seedFromServer() {
     if (!res.ok) return;
     const samples = await res.json();
     if (!Array.isArray(samples) || samples.length === 0) return;
-    saveSnapshots(samples.map(function (s) {
+    const seeded = samples.map(function (s) {
       return {
         t: new Date(s.ts).getTime(),
         sc: s.sc, vs: s.vs, vc: s.vc, tj: s.tj,
       };
-    }));
+    });
+    // Merge with whatever the current tab has already accumulated. The
+    // server samples at 5-min cadence; live polls are 30s — preferring local
+    // samples for their span preserves the higher resolution instead of
+    // discarding it on every reload (and stops a second tab from wiping the
+    // first's history via shared localStorage).
+    const local = loadSnapshots();
+    if (local.length === 0) {
+      saveSnapshots(seeded);
+      return;
+    }
+    const earliestLocal = local[0].t;
+    const older = seeded.filter(s => s.t < earliestLocal);
+    saveSnapshots(older.concat(local));
   } catch (e) { /* network/auth hiccup — fall back to live polling */ }
 }
 async function tick() {

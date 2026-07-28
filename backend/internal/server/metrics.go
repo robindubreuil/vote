@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"vote-backend/internal/models"
 	"vote-backend/internal/vote"
 )
 
@@ -34,8 +35,15 @@ func (s *Server) handleMetrics(c *gin.Context) {
 	writeGauge(&b, "vote_trainers_connected", "Number of connected trainers", float64(m.ConnectedTrainers))
 	writeGauge(&b, "vote_stagiaires_connected", "Number of connected stagiaires", float64(m.ConnectedStagiaires))
 
-	for state, count := range m.VoteStates {
-		writeGaugeWithLabels(&b, "vote_sessions_by_state", "Sessions grouped by vote state", float64(count), "state", state)
+	// Prometheus expects exactly one HELP line and one TYPE line per metric
+	// name. Iterate the fixed state set so the header is emitted once and the
+	// output order is deterministic (the dashboard parser tolerates any
+	// order, but scrapers and tests benefit from stability).
+	const stateMetric = "vote_sessions_by_state"
+	fmt.Fprintf(&b, "# HELP %s Sessions grouped by vote state\n", stateMetric)
+	fmt.Fprintf(&b, "# TYPE %s gauge\n", stateMetric)
+	for _, state := range []string{models.VoteStateIdle, models.VoteStateActive, models.VoteStateClosed} {
+		fmt.Fprintf(&b, `%s{state="%s"} %g`+"\n", stateMetric, state, float64(m.VoteStates[state]))
 	}
 
 	writeCounter(&b, "vote_sessions_created_total", "Total sessions created since process start", float64(p.SessionsCreated))
@@ -100,12 +108,6 @@ func formatLE(v float64) string {
 		return strconv.FormatInt(int64(v), 10)
 	}
 	return strconv.FormatFloat(v, 'g', -1, 64)
-}
-
-func writeGaugeWithLabels(b *strings.Builder, name, help string, value float64, labelKey, labelValue string) {
-	fmt.Fprintf(b, "# HELP %s %s\n", name, help)
-	fmt.Fprintf(b, "# TYPE %s gauge\n", name)
-	fmt.Fprintf(b, `%s{%s="%s"} %g`+"\n", name, labelKey, labelValue, value)
 }
 
 func writeInfoMetric(b *strings.Builder, name, version, buildTime string) {

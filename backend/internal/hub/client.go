@@ -368,6 +368,10 @@ func (c *Client) handleStartVote(msg models.Message) {
 }
 
 func (c *Client) handleVote(msg models.Message) {
+	if c.Type != "stagiaire" {
+		c.SendError("unauthorized")
+		return
+	}
 	if vote.HasDuplicates(msg.Colors) {
 		c.SendError("Duplicate colors are not allowed")
 		return
@@ -425,7 +429,14 @@ func (c *Client) handleResetVote(msg models.Message) {
 			return
 		}
 	}
-	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, nil, msg.GameEnabled, msg.Competitive, msg.AllowBlank)
+	// Validate labels if provided
+	if len(msg.Labels) > 0 {
+		if !vote.ValidateLabels(msg.Labels, c.Hub.Config.ValidColors) {
+			c.SendError("Invalid labels")
+			return
+		}
+	}
+	err := c.Hub.VoteManager.ResetVote(c.SessionID, c.ID, msg.Colors, msg.MultipleChoice, msg.Labels, msg.GameEnabled, msg.Competitive, msg.AllowBlank)
 	if err != nil {
 		c.SendError(err.Error())
 		return
