@@ -68,6 +68,16 @@ type Hub struct {
 	cancel context.CancelFunc
 	Config *config.Config
 
+	// ipConns (S7) counts live WS connections per RemoteAddr so an
+	// inbound flood from one IP (botnet, broken client in a reconnect
+	// loop, scripted enumeration) can be rejected before the upgrade
+	// completes. Incremented synchronously by AcquireIPSlot at WS
+	// handshake time so concurrent dials cannot all race past the cap;
+	// decremented by unregisterClient when the client's readPump exits.
+	// Trainer and stagiaire connections both count — they consume the
+	// same per-connection resources (goroutines, send buffer, fd).
+	ipConns map[string]int
+
 	// wg tracks every long-lived goroutine the Hub owns or watches:
 	// Run, cleanupLoop, and each client's readPump/writePump. Shutdown
 	// signals all of them via ctx/Conn.Close, then Wait returns once
@@ -86,6 +96,7 @@ func NewHub(cfg *config.Config) *Hub {
 		Security:    security.NewSecurity(ctx, cfg.MaxSessionCreations),
 		Register:    make(chan *Client),
 		Unregister:  make(chan *Client),
+		ipConns:     make(map[string]int),
 		ctx:         ctx,
 		cancel:      cancel,
 		Config:      cfg,
@@ -185,15 +196,74 @@ func (h *Hub) SessionExists(sessionID string) bool {
 	return ok
 }
 
-func (h *Hub) IsStagiaireConnected(sessionID, stagiaireID string) bool {
+// SessionCount returns the number of live session entries the Hub is
+// tracking. Used by the global-session cap (S7) — Connections is a
+// superset of VoteManager.sessions during normal operation because
+// GenerateSessionCode reserves the entry before the trainer registers,
+// and cleanupLoop only reaps entries with no session AND no clients.
+func (h *Hub) SessionCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	conns, ok := h.Connections[sessionID]
-	if !ok {
+	return len(h.Connections)
+}
+
+// AtSessionsCap reports whether the global session cap (S7) is reached.
+// A zero or negative MaxSessionsGlobal disables the cap (used by tests
+// and single-tenant dev where bounding isn't worth the bookkeeping).
+func (h *Hub) AtSessionsCap() bool {
+	if h.Config.MaxSessionsGlobal <= 0 {
 		return false
 	}
-	_, connected := conns.Stagiaires[stagiaireID]
-	return connected
+	return h.SessionCount() >= h.Config.MaxSessionsGlobal
+}
+
+// AcquireIPSlot increments the per-IP connection counter and reports
+// whether the new connection is permitted under the cap (S7). The
+// caller must pair this with a ReleaseIPSlot when the connection ends
+// (readPump always sends itself to Unregister on exit, and
+// unregisterClient calls ReleaseIPSlot). The increment happens under
+// h.mu so concurrent dials from the same IP see each other. A zero or
+// negative MaxConnectionsPerIP disables the cap.
+func (h *Hub) AcquireIPSlot(ip string) bool {
+	if ip == "" || h.Config.MaxConnectionsPerIP <= 0 {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.ipConns[ip] >= h.Config.MaxConnectionsPerIP {
+		return false
+	}
+	h.ipConns[ip]++
+	return true
+}
+
+// ReleaseIPSlot decrements the per-IP counter (S7). Idempotent: never
+// drops below zero, so a double-release (e.g. an unregistered client
+// whose slot was never acquired due to a config change mid-flight) is
+// safe.
+func (h *Hub) ReleaseIPSlot(ip string) {
+	if ip == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.ipConns[ip]
+	if n <= 1 {
+		// Drop the key entirely so the map doesn't accumulate zero
+		// entries (a long-lived server would otherwise retain every
+		// IP it ever saw). The next Acquire re-creates the entry.
+		delete(h.ipConns, ip)
+		return
+	}
+	h.ipConns[ip] = n - 1
+}
+
+// IPConnectionCount returns the current per-IP connection count.
+// Test-only helper.
+func (h *Hub) IPConnectionCount(ip string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.ipConns[ip]
 }
 
 func (h *Hub) GenerateSessionCode() string {
@@ -453,14 +523,29 @@ func (h *Hub) registerClient(client *Client) {
 			return
 		}
 
-		if err := h.VoteManager.JoinStagiaire(client.SessionID, client.ID, client.Name); err != nil {
+		// S7: per-session client cap. Counts the trainer slot too so the
+		// effective stagiaire limit is cap-1; the trainer is always
+		// allowed to reclaim their own session regardless. A zero or
+		// negative config disables the cap (used by tests that don't
+		// care about the bound).
+		if h.Config.MaxClientsPerSession > 0 && len(conns.Stagiaires)+1 >= h.Config.MaxClientsPerSession {
+			queueErr(client, "Session complète — réessayez plus tard")
+			return
+		}
+
+		result, err := h.VoteManager.JoinStagiaire(client.SessionID, client.ID, client.Name, client.ReclaimToken)
+		if err != nil {
 			// CC2: JoinStagiaire is the authoritative name-uniqueness
 			// arbiter (under the session lock). The advisory check in
 			// handleStagiaireJoin handles the common case; this catches
-			// the TOCTOU race.
-			if errors.Is(err, vote.ErrNameInUse) {
+			// the TOCTOU race. S6/S12: it is also the sole authority
+			// for reclaim-token validation.
+			switch {
+			case errors.Is(err, vote.ErrNameInUse):
 				queueErr(client, "Ce nom est déjà utilisé")
-			} else {
+			case errors.Is(err, vote.ErrReclaimUnauthorized):
+				queueErr(client, "Session expirée — veuillez recréer votre identité")
+			default:
 				queueErr(client, "Failed to join session")
 			}
 			return
@@ -477,11 +562,18 @@ func (h *Hub) registerClient(client *Client) {
 		}
 		conns.Stagiaires[client.ID] = client
 
-		queue(client, map[string]any{
-			"type":        "session_joined",
-			"sessionCode": client.SessionID,
-			"stagiaireId": client.ID,
-		})
+		// S6/S12: surface the reclaim token so the client can prove
+		// ownership of this identity on future reconnects. Without the
+		// token, a stale stagiaireId alone is not enough to inherit the
+		// prior Scores/GameScores (which are the actual high-value
+		// targets — they're what the competitive leaderboard ranks on).
+		joined := map[string]any{
+			"type":         "session_joined",
+			"sessionCode":  client.SessionID,
+			"stagiaireId":  client.ID,
+			"reclaimToken": result.ReclaimToken,
+		}
+		queue(client, joined)
 
 		if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
 			pending = append(pending, *ps)
@@ -542,6 +634,16 @@ func (h *Hub) registerClient(client *Client) {
 
 func (h *Hub) unregisterClient(client *Client) {
 	var pending []pendingSend
+
+	// S7: release the IP slot regardless of whether the client was
+	// registered. AcquireIPSlot was called at WS upgrade time, so every
+	// readPump defer (which always routes here) pairs with exactly one
+	// acquire — even if the client never sent a join message. Registered
+	// FIRST so it runs LAST (LIFO) — after both the unlock defer and the
+	// pending-sends flush. Taking h.mu inside ReleaseIPSlot while the
+	// function's own h.mu.Unlock() has already run is safe; doing it
+	// before that unlock would self-deadlock.
+	defer h.ReleaseIPSlot(client.IP)
 
 	// Deferred flush runs AFTER the unlock defer (LIFO): sends happen
 	// outside the hub write-lock (CC3).
@@ -754,7 +856,8 @@ func (h *Hub) cleanupLoop() {
 
 	for {
 		select {
-		case <-ticker.C:			h.mu.RLock()
+		case <-ticker.C:
+			h.mu.RLock()
 			protected := make(map[string]bool)
 			for id, conns := range h.Connections {
 				if conns.Trainer != nil || len(conns.Stagiaires) > 0 {

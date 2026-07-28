@@ -31,6 +31,16 @@ type Config struct {
 	// StatsSampleInterval is how often the server flushes counters to disk.
 	StatsSampleInterval time.Duration
 	MaxSessionCreations int
+	// Resource caps (S7). Zero or negative means "no cap" — useful for
+	// tests and single-tenant dev. Production defaults are set in
+	// LoadConfig and sized for a school-wide deployment: generous enough
+	// that a building full of trainers and a lecture hall full of
+	// stagiaires never hit them, tight enough that a flood (buggy client,
+	// scripted abuse, replay storm) can't exhaust memory or fan-out
+	// bandwidth.
+	MaxSessionsGlobal    int
+	MaxClientsPerSession int
+	MaxConnectionsPerIP  int
 }
 
 func LoadConfig() *Config {
@@ -73,6 +83,17 @@ func LoadConfig() *Config {
 		DataDir:             getEnv("VOTE_DATA_DIR", "./data"),
 		StatsSampleInterval: getEnvDuration("VOTE_STATS_INTERVAL", 5*time.Minute),
 		MaxSessionCreations: getEnvInt("VOTE_MAX_SESSIONS_PER_HOUR", 20),
+		// S7: resource caps. Defaults:
+		//   - 1000 sessions globally (~3x the largest expected school
+		//     deployment, caps memory growth from orphaned sessions).
+		//   - 200 clients per session (covers any lecture hall, blocks
+		//     a buggy client from spawning thousands of joins against
+		//     one code).
+		//   - 50 connections per IP (a full classroom behind one NAT,
+		//     plus headroom; blocks a botnet-style flood from one source).
+		MaxSessionsGlobal:    getEnvInt("VOTE_MAX_SESSIONS", 1000),
+		MaxClientsPerSession: getEnvInt("VOTE_MAX_CLIENTS_PER_SESSION", 200),
+		MaxConnectionsPerIP:  getEnvInt("VOTE_MAX_CONNECTIONS_PER_IP", 50),
 		ValidColors: []string{
 			"rouge", "vert", "bleu", "jaune",
 			"orange", "violet", "rose", "gris",

@@ -64,7 +64,7 @@ func TestHistoryReturnsPersistedSamples(t *testing.T) {
 	srv := newTestServerWithData(t, "s3cr3t")
 	mgr := srv.hub.VoteManager
 	mgr.CreateSession("ABC", "t1")
-	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice", "")
 	mgr.StartVote("ABC", "t1", []string{"rouge"}, false, nil, false, false, false)
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 
@@ -127,7 +127,7 @@ func TestPersistenceRestoresCountersAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	h1.VoteManager.CreateSession("ABC", "t1")
-	h1.VoteManager.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	h1.VoteManager.JoinStagiaire("ABC", "stagiaire001", "Alice", "")
 	h1.VoteManager.StartVote("ABC", "t1", []string{"rouge"}, false, nil, true, false, false)
 	h1.VoteManager.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 	h1.VoteManager.SubmitVote("ABC", "stagiaire002", []string{"rouge"})
@@ -179,7 +179,7 @@ func TestPersistenceRestoresHistogramsAcrossRestart(t *testing.T) {
 		h1.VoteManager.CreateSession(code, "t1")
 		for v := 0; v < votes; v++ {
 			id := fmt.Sprintf("s%03d", v)
-			h1.VoteManager.JoinStagiaire(code, id, "name")
+			h1.VoteManager.JoinStagiaire(code, id, "name", "")
 			h1.VoteManager.StartVote(code, "t1", []string{"rouge"}, false, nil, false, false, false)
 			h1.VoteManager.SubmitVote(code, id, []string{"rouge"})
 		}
@@ -226,7 +226,7 @@ func TestPersistenceRestoresHistogramsAcrossRestart(t *testing.T) {
 	// Ending a new session in run 2 must accumulate on top of the restored
 	// distribution, not reset it.
 	h2.VoteManager.CreateSession("NEW", "t1")
-	h2.VoteManager.JoinStagiaire("NEW", "s001", "n")
+	h2.VoteManager.JoinStagiaire("NEW", "s001", "n", "")
 	h2.VoteManager.StartVote("NEW", "t1", []string{"rouge"}, false, nil, false, false, false)
 	h2.VoteManager.SubmitVote("NEW", "s001", []string{"rouge"})
 	h2.VoteManager.RemoveSession("NEW")

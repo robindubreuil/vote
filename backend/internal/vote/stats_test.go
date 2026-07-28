@@ -62,8 +62,8 @@ func TestProductStatsWiredThroughManager(t *testing.T) {
 	}
 	const id1 = "stagiaire001"
 	const id2 = "stagiaire002"
-	m.JoinStagiaire("ABC", id1, "Alice")
-	m.JoinStagiaire("ABC", id2, "Bob")
+	m.JoinStagiaire("ABC", id1, "Alice", "")
+	m.JoinStagiaire("ABC", id2, "Bob", "")
 	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestHistogramSnapshotNeverTorn(t *testing.T) {
 		go func(seed int) {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				v := float64((seed+i)%60) // 0..59, scatters across all buckets
+				v := float64((seed + i) % 60) // 0..59, scatters across all buckets
 				h.Observe(v)
 			}
 		}(w)

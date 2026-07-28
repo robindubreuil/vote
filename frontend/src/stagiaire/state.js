@@ -23,6 +23,8 @@ export const AppState = {
  * @property {Set<string>} selectedColors
  * @property {boolean} hasVoted
  * @property {string|null} stagiaireId
+ * @property {string|null} reclaimToken Per-stagiaire secret proving
+ *   ownership of stagiaireId on reconnect (S6/S12).
  * @property {string} prenom
  * @property {boolean} prenomEdit
  */
@@ -36,6 +38,7 @@ export const state = {
   selectedColors: new Set(),
   hasVoted: false,
   stagiaireId: null,
+  reclaimToken: null,
   prenom: '',
   prenomEdit: false,
   gameEnabled: false,

@@ -31,6 +31,11 @@ var (
 	// already in progress. A second start_vote would silently discard
 	// every collected vote (BM2).
 	ErrVoteAlreadyActive = errors.New("un vote est déjà en cours")
+	// ErrReclaimUnauthorized is returned by JoinStagiaire when a
+	// stagiaireId is presented that matches an existing entry but the
+	// reclaim token is wrong or missing (S6/S12). The caller must drop
+	// the stale ID and rejoin with a fresh identity.
+	ErrReclaimUnauthorized = errors.New("reclaim token required")
 )
 
 type Manager struct {
@@ -123,12 +128,22 @@ func (m *Manager) ValidateTrainerToken(sessionID, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(session.TrainerToken), []byte(token)) == 1
 }
 
-func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
+// JoinStagiaireResult carries the outcome of a successful join. The
+// ReclaimToken must be returned to the client so it can prove ownership
+// of the identity on future reconnects (S6/S12). Reclaimed is true when
+// the join attached to an existing identity (preserving Scores and
+// GameScores); false when a fresh identity was minted.
+type JoinStagiaireResult struct {
+	ReclaimToken string
+	Reclaimed    bool
+}
+
+func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name, reclaimToken string) (JoinStagiaireResult, error) {
 	if !IsValidSessionCode(sessionID) || !IsValidStagiaireID(stagiaireID) {
-		return ErrInvalidInput
+		return JoinStagiaireResult{}, ErrInvalidInput
 	}
 	if name != "" && !IsValidName(name) {
-		return ErrInvalidInput
+		return JoinStagiaireResult{}, ErrInvalidInput
 	}
 
 	m.mu.RLock()
@@ -136,25 +151,52 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name string) error {
 	m.mu.RUnlock()
 
 	if !ok {
-		return ErrSessionNotFound
+		return JoinStagiaireResult{}, ErrSessionNotFound
 	}
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
+	// S6/S12: if the ID is already in the session, the presented
+	// reclaim token must match the stored one. This is the sole
+	// authority for identity reclaim — name-based matching was removed
+	// because names are public, guessable, and ≤16 chars (a "Marie"
+	// could be anyone). The ID alone is also insufficient: it is
+	// visible to anyone who can read the stagiaire's sessionStorage on
+	// a shared device. The token is the cryptographic proof of
+	// ownership; constant-time compare prevents timing side-channels.
+	if _, exists := session.Stagiaires[stagiaireID]; exists {
+		stored := session.ReclaimTokens[stagiaireID]
+		if stored == "" || subtle.ConstantTimeCompare([]byte(stored), []byte(reclaimToken)) != 1 {
+			return JoinStagiaireResult{}, ErrReclaimUnauthorized
+		}
+		// Reconnect path: the identity is reclaimed, not minted. Apply
+		// the (possibly updated) name, then bail out without running
+		// the new-join name-collision check below.
+		if name != "" {
+			session.Stagiaires[stagiaireID] = name
+		}
+		session.LastActivity = time.Now().Unix()
+		return JoinStagiaireResult{ReclaimToken: stored, Reclaimed: true}, nil
+	}
+
+	// Fresh join path. Mint a reclaim token alongside the new entry so
+	// the invariant (id ∈ Stagiaires ⟺ id ∈ ReclaimTokens) holds.
 	if name != "" {
 		normalised := NormalizeName(name)
 		for id, n := range session.Stagiaires {
 			if id != stagiaireID && NormalizeName(n) == normalised {
-				return ErrNameInUse
+				return JoinStagiaireResult{}, ErrNameInUse
 			}
 		}
 	}
 
+	token := security.GenerateToken()
 	session.Stagiaires[stagiaireID] = name
+	session.ReclaimTokens[stagiaireID] = token
 	session.LastActivity = time.Now().Unix()
 	m.stats.TraineesJoined.Inc()
-	return nil
+	return JoinStagiaireResult{ReclaimToken: token, Reclaimed: false}, nil
 }
 
 func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multipleChoice bool, labels map[string]string, gameEnabled bool, competitive bool, allowBlank bool) error {
@@ -547,28 +589,6 @@ func (m *Manager) StagiaireExists(stagiaireID string) bool {
 		}
 	}
 	return false
-}
-
-// GetStagiaireIDByName checks if a stagiaire name already exists in the session and returns their ID
-func (m *Manager) GetStagiaireIDByName(sessionID, name string) (string, bool) {
-	m.mu.RLock()
-	session, ok := m.sessions[sessionID]
-	m.mu.RUnlock()
-
-	if !ok {
-		return "", false
-	}
-
-	session.mu.RLock()
-	defer session.mu.RUnlock()
-
-	normalizedNew := NormalizeName(name)
-	for id, n := range session.Stagiaires {
-		if NormalizeName(n) == normalizedNew {
-			return id, true
-		}
-	}
-	return "", false
 }
 
 // IsNameInUse checks if a normalized name exists in the session, excluding a specific ID

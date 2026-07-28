@@ -269,4 +269,23 @@ describe('Stagiaire - WebSocket messages', () => {
     expect(parsed.sessionCode).toBe('ABC')
     expect(parsed.stagiaireId).toBe('abc123def456')
   })
+
+  it('should serialize join message with reclaimToken on reconnect', () => {
+    const message = {
+      type: 'stagiaire_join',
+      sessionCode: 'ABC',
+      name: 'Marie',
+      stagiaireId: 'abc123def456',
+      reclaimToken: 'tok_abc'
+    }
+    const parsed = JSON.parse(JSON.stringify(message))
+    expect(parsed.reclaimToken).toBe('tok_abc')
+  })
+
+  it('should parse session_joined carrying a reclaimToken (S6/S12)', () => {
+    const parsed = JSON.parse(
+      '{"type":"session_joined","sessionCode":"ABC","stagiaireId":"abc123def456","reclaimToken":"tok_xyz"}'
+    )
+    expect(parsed.reclaimToken).toBe('tok_xyz')
+  })
 })

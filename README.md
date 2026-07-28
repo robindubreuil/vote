@@ -79,6 +79,9 @@ See `.env.example`:
 | `VOTE_DASHBOARD_MAX_AGE` | `168h` (7 days) | How long a dashboard login cookie stays valid. |
 | `VOTE_DATA_DIR` | `./data` (dev), `/var/lib/vote` (Docker/Debian) | FHS location for persistent stats. Holds `counters.json` (restore checkpoint) + `stats.jsonl` (append-only history). Created `0700`, files `0600`. |
 | `VOTE_STATS_INTERVAL` | `5m` | How often the server flushes counters to disk. Crash loses ≤ one interval. |
+| `VOTE_MAX_SESSIONS` | `1000` | Global cap on live sessions. Blocks runaway session creation (memory growth). `0` or negative disables. |
+| `VOTE_MAX_CLIENTS_PER_SESSION` | `200` | Per-session client cap (counts the trainer slot, so the stagiaire limit is N−1). `0` or negative disables. |
+| `VOTE_MAX_CONNECTIONS_PER_IP` | `50` | Per-IP concurrent WS connection cap. Enforced before the WS upgrade so a rejected dial never consumes a goroutine. `0` or negative disables. |
 
 ## Metrics & Dashboard
 

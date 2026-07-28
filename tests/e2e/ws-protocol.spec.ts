@@ -484,6 +484,10 @@ test.describe('WS Protocol', () => {
     const s1 = await connectStagiaire(sessionCode, undefined, 'Alice');
     const joined = await s1.waitForMessage('session_joined');
     const stagiaireId = joined.stagiaireId;
+    // S6/S12: capture the reclaim token so the reconnect can prove
+    // ownership of the ID. Without it the join is rejected.
+    const reclaimToken = joined.reclaimToken;
+    expect(reclaimToken).toBeTruthy();
     await trainer.waitForMessage('connected_count');
 
     trainer.send({ type: 'start_vote', colors: ['rouge', 'vert'], multipleChoice: false });
@@ -492,7 +496,7 @@ test.describe('WS Protocol', () => {
 
     s1.dispose();
 
-    const s2 = await connectStagiaire(sessionCode, stagiaireId, 'Alice');
+    const s2 = await connectStagiaire(sessionCode, stagiaireId, 'Alice', reclaimToken);
     const joined2 = await s2.waitForMessage('session_joined');
     expect(joined2.stagiaireId).toBe(stagiaireId);
 
@@ -804,7 +808,10 @@ test.describe('WS Protocol', () => {
     await trainer.waitForMessage('connected_count');
 
     const s1 = await connectStagiaire(sessionCode, undefined, 'Alice');
-    const { stagiaireId } = await s1.waitForMessage('session_joined');
+    const joined = await s1.waitForMessage('session_joined');
+    const { stagiaireId } = joined;
+    // S6/S12: capture the reclaim token for the reconnect below.
+    const reclaimToken = joined.reclaimToken;
     await trainer.waitForMessage('connected_count');
 
     trainer.send({ type: 'start_vote', colors: ['rouge', 'vert'], multipleChoice: false });
@@ -817,7 +824,7 @@ test.describe('WS Protocol', () => {
 
     s1.dispose();
 
-    const s2 = await connectStagiaire(sessionCode, stagiaireId, 'Alice');
+    const s2 = await connectStagiaire(sessionCode, stagiaireId, 'Alice', reclaimToken);
     await s2.waitForMessage('session_joined');
 
     const voteStarted = await s2.waitForMessage('vote_started');

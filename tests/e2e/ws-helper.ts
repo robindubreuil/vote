@@ -101,7 +101,8 @@ export async function connectTrainer(
 export async function connectStagiaire(
   sessionCode: string,
   stagiaireId?: string,
-  name?: string
+  name?: string,
+  reclaimToken?: string
 ): Promise<WSClient> {
   const client = await createClient(WS_URL);
   client.send({
@@ -109,6 +110,10 @@ export async function connectStagiaire(
     sessionCode,
     ...(stagiaireId ? { stagiaireId } : {}),
     ...(name ? { name } : {}),
+    // S6/S12: required to take over an existing identity by
+    // stagiaireId. Without it the join is rejected as an
+    // unauthenticated takeover attempt.
+    ...(reclaimToken ? { reclaimToken } : {}),
   });
   return client;
 }

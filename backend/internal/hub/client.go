@@ -27,6 +27,12 @@ type Client struct {
 	SessionID    string
 	Type         string
 	TrainerToken string
+	// ReclaimToken is the per-stagiaire secret presented on reconnect
+	// to prove ownership of an existing identity (S6/S12). Captured
+	// from the stagiaire_join message and forwarded to
+	// VoteManager.JoinStagiaire, which is the sole authority for the
+	// constant-time compare against session.ReclaimTokens[id].
+	ReclaimToken string
 	Conn         *websocket.Conn
 	Send         chan []byte
 	Hub          *Hub
@@ -242,6 +248,15 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 			c.SendError("Trop de sessions créées — réessayez dans quelques minutes")
 			return
 		}
+		// S7: global session cap. Bounds memory growth across the whole
+		// process — a runaway trainer script (or a misconfigured load
+		// balancer retrying /ws) can't OOM the server. The cap counts
+		// Connections entries, which includes any reserved-but-not-yet-
+		// registered codes from concurrent trainers.
+		if c.Hub.AtSessionsCap() {
+			c.SendError("Trop de sessions actives — réessayez plus tard")
+			return
+		}
 		code = c.Hub.GenerateSessionCode()
 		if code == "" {
 			c.SendError("No session codes available")
@@ -302,6 +317,7 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 	c.Type = "stagiaire"
 	c.Name = msg.Name
 	c.SessionID = msg.SessionCode
+	c.ReclaimToken = msg.ReclaimToken
 
 	// Check if session exists via Hub (which checks Manager/Connections)
 	if !c.Hub.SessionExists(c.SessionID) {
@@ -309,52 +325,46 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 		return
 	}
 
-	// Identity Management Logic
-	finalID := c.ID // Start with the random ID
-	foundExisting := false
-	isCredentialed := false
-
-	// 1. Try reclaim by ID (highest priority - exact match - PROOF OF OWNERSHIP)
-	var existingName string
-	if msg.StagiaireID != "" {
+	// Identity resolution. The authoritative reclaim-token check runs
+	// inside JoinStagiaire (under the session lock, constant-time
+	// compare); the lookups here are advisory fast-fails so the common
+	// "stale ID after a server restart" case doesn't round-trip
+	// through Hub.Run just to be rejected.
+	//
+	// S6: name-based reclaim is gone. Two clients presenting the same
+	// name no longer collapse onto one identity (and its scores) —
+	// they're distinct stagiaires, and the second one is rejected with
+	// ErrNameInUse. The only way to attach to an existing identity is
+	// to present its ID AND its reclaim token.
+	if msg.StagiaireID != "" && vote.IsValidStagiaireID(msg.StagiaireID) {
 		if session, ok := c.Hub.VoteManager.GetSession(c.SessionID); ok {
-			if name, exists := session.GetStagiaires()[msg.StagiaireID]; exists {
-				finalID = msg.StagiaireID
-				foundExisting = true
-				isCredentialed = true
-				existingName = name
+			stagiaires := session.GetStagiaires()
+			if _, exists := stagiaires[msg.StagiaireID]; exists {
+				// ID is known: keep c.ID so JoinStagiaire takes the
+				// reclaim path. The token is checked authoritatively
+				// under the session lock; this advisory lookup just
+				// confirms the ID is plausibly the client's.
+				c.ID = msg.StagiaireID
+
+				// Fast-fail the rename-collision case before round-
+				// tripping through Hub.Run, so a typo doesn't consume
+				// the user's backoff budget.
+				if msg.Name != "" {
+					if existingName := stagiaires[msg.StagiaireID]; vote.NormalizeName(msg.Name) != vote.NormalizeName(existingName) {
+						if c.Hub.VoteManager.IsNameInUse(c.SessionID, msg.Name, c.ID) {
+							c.SendErrorWithBackoff("Ce nom est déjà utilisé")
+							return
+						}
+					}
+				}
 			}
+			// else: presented ID is not in the session. Leave c.ID as
+			// the server-generated value; JoinStagiaire treats it as a
+			// fresh join and mints a new reclaim token. The stale ID
+			// on the client will be overwritten by session_joined.
 		}
 	}
 
-	// 1.5. When reconnecting with credentials, validate the name
-	// If the provided name differs from the stored name (case-insensitive), check for collision
-	if isCredentialed && msg.Name != "" && vote.NormalizeName(msg.Name) != vote.NormalizeName(existingName) {
-		if c.Hub.VoteManager.IsNameInUse(c.SessionID, msg.Name, finalID) {
-			c.SendErrorWithBackoff("Ce nom est déjà utilisé")
-			return
-		}
-	}
-
-	// 2. If not found by ID, try match by Name (Claiming identity)
-	if !foundExisting {
-		if existingID, found := c.Hub.VoteManager.GetStagiaireIDByName(c.SessionID, msg.Name); found {
-			finalID = existingID
-			foundExisting = true
-			isCredentialed = false
-		}
-	}
-
-	// 3. Collision Check
-	// If we matched by NAME only (no credential), and the user is online, we BLOCK.
-	// If we matched by ID (credential), we ALLOW (this is a reconnect/takeover).
-	if foundExisting && !isCredentialed && c.Hub.IsStagiaireConnected(c.SessionID, finalID) {
-		c.SendErrorWithBackoff("Ce nom est déjà utilisé par une personne connectée")
-		return
-	}
-
-	// 4. Apply Identity
-	c.ID = finalID
 	c.Hub.Security.ClearFailedJoin(c.IP)
 
 	select {

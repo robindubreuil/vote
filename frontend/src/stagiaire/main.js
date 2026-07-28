@@ -41,6 +41,14 @@ function init() {
     state.stagiaireId = savedId
   }
 
+  // S6/S12: load the persisted reclaim token (scoped to the tab via
+  // sessionStorage) so a page reload can still prove ownership of the
+  // cached stagiaireId.
+  const savedToken = safeSessionGet('vote_stagiaire_reclaim_token')
+  if (savedToken) {
+    state.reclaimToken = savedToken
+  }
+
   const savedPrenom = safeLocalGet('vote_stagiaire_prenom')
   if (savedPrenom) {
     state.prenom = savedPrenom

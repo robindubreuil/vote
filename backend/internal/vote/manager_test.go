@@ -90,7 +90,7 @@ func TestJoinStagiaire(t *testing.T) {
 	m.CreateSession("ABC", "trainer1")
 
 	// Valid join - use exactly 12-char lowercase alphanumeric ID matching GenerateID format
-	err := m.JoinStagiaire("ABC", "stag1ab12cde", "Jean")
+	_, err := m.JoinStagiaire("ABC", "stag1ab12cde", "Jean", "")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -101,13 +101,13 @@ func TestJoinStagiaire(t *testing.T) {
 	}
 
 	// Invalid session
-	err = m.JoinStagiaire("KQR", "stag1ab12cde", "Jean")
+	_, err = m.JoinStagiaire("KQR", "stag1ab12cde", "Jean", "")
 	if err != ErrSessionNotFound {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
 	}
 
 	// Invalid Name
-	err = m.JoinStagiaire("ABC", "stag1ab12cde", "<script>")
+	_, err = m.JoinStagiaire("ABC", "stag1ab12cde", "<script>", "")
 	if err != ErrInvalidInput {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -120,36 +120,38 @@ func TestJoinStagiaireNameUniquenessUnderLock(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 
-	if err := m.JoinStagiaire("ABC", "s1abc1234567", "Jean"); err != nil {
+	res, err := m.JoinStagiaire("ABC", "s1abc1234567", "Jean", "")
+	if err != nil {
 		t.Fatalf("first join: %v", err)
 	}
 
 	// Same normalised name, different ID → collision.
-	err := m.JoinStagiaire("ABC", "s2abc1234567", "jéan")
+	_, err = m.JoinStagiaire("ABC", "s2abc1234567", "jéan", "")
 	if !errors.Is(err, ErrNameInUse) {
 		t.Errorf("expected ErrNameInUse, got %v", err)
 	}
 
 	// Normalised-equal variants also collide.
-	if err := m.JoinStagiaire("ABC", "s3abc1234567", "JEAN"); !errors.Is(err, ErrNameInUse) {
+	if _, err := m.JoinStagiaire("ABC", "s3abc1234567", "JEAN", ""); !errors.Is(err, ErrNameInUse) {
 		t.Errorf("expected ErrNameInUse for case variant, got %v", err)
 	}
 
-	// Re-join with the SAME id and same name is a no-op reconnect, not a collision.
-	if err := m.JoinStagiaire("ABC", "s1abc1234567", "Jean"); err != nil {
+	// Re-join with the SAME id and a valid token is a no-op reconnect,
+	// not a collision. The minted token is the proof of ownership.
+	if _, err := m.JoinStagiaire("ABC", "s1abc1234567", "Jean", res.ReclaimToken); err != nil {
 		t.Errorf("same-id rejoin should succeed, got %v", err)
 	}
 
 	// Empty names never collide (anonymous stagiaires).
-	if err := m.JoinStagiaire("ABC", "s4abc1234567", ""); err != nil {
+	if _, err := m.JoinStagiaire("ABC", "s4abc1234567", "", ""); err != nil {
 		t.Errorf("empty name join should succeed, got %v", err)
 	}
-	if err := m.JoinStagiaire("ABC", "s5abc1234567", ""); err != nil {
+	if _, err := m.JoinStagiaire("ABC", "s5abc1234567", "", ""); err != nil {
 		t.Errorf("second empty name join should succeed, got %v", err)
 	}
 
 	// A distinct name registers fine.
-	if err := m.JoinStagiaire("ABC", "s6abc1234567", "Marie"); err != nil {
+	if _, err := m.JoinStagiaire("ABC", "s6abc1234567", "Marie", ""); err != nil {
 		t.Errorf("distinct name should succeed, got %v", err)
 	}
 }
@@ -216,7 +218,7 @@ func TestStartVoteGameEnabled(t *testing.T) {
 func TestSubmitVote(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 
 	// Valid vote
@@ -250,7 +252,7 @@ func TestSubmitVote(t *testing.T) {
 func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "bleu"})
@@ -265,7 +267,7 @@ func TestSubmitVoteSingleChoiceEnforcement(t *testing.T) {
 func TestSubmitVoteMultipleChoiceAllowed(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "bleu"})
@@ -277,7 +279,7 @@ func TestSubmitVoteMultipleChoiceAllowed(t *testing.T) {
 func TestSubmitVoteEmptyColors(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{})
@@ -327,7 +329,7 @@ func TestResetVote(t *testing.T) {
 func TestUpdateStagiaireName(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Jean")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Jean", "")
 
 	err := m.UpdateStagiaireName("ABC", "s1abc1234567", "Paul")
 	if err != nil {
@@ -394,8 +396,8 @@ func TestUpdateTrainer(t *testing.T) {
 func TestRevealAnswersScoring(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
-	m.JoinStagiaire("ABC", "s2abc1234567", "Bob")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, true, false)
 
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
@@ -436,7 +438,7 @@ func TestRevealAnswersScoring(t *testing.T) {
 func TestRevealAnswersIdempotent(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	m.CloseVote("ABC", "trainer1")
@@ -457,7 +459,7 @@ func TestRevealAnswersIdempotent(t *testing.T) {
 func TestRevealAnswersCorrectsOnChange(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, true, false)
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	m.CloseVote("ABC", "trainer1")
@@ -473,7 +475,7 @@ func TestRevealAnswersCorrectsOnChange(t *testing.T) {
 func TestRevealAnswersCumulativeAcrossVotes(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	m.CloseVote("ABC", "trainer1")
@@ -516,7 +518,7 @@ func TestRevealAnswersUnauthorized(t *testing.T) {
 func TestRevealAnswersWithGameScore(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true, true, false)
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 
@@ -533,7 +535,7 @@ func TestRevealAnswersWithGameScore(t *testing.T) {
 func TestSubmitVoteBlank(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, true)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"blank"})
@@ -550,7 +552,7 @@ func TestSubmitVoteBlank(t *testing.T) {
 func TestSubmitVoteBlankNotAllowed(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"blank"})
@@ -562,7 +564,7 @@ func TestSubmitVoteBlankNotAllowed(t *testing.T) {
 func TestSubmitVoteBlankWithColors(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, true)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"blank", "rouge"})
@@ -574,7 +576,7 @@ func TestSubmitVoteBlankWithColors(t *testing.T) {
 func TestUpdateGameScoreMonotonic(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 
 	m.UpdateGameScore("ABC", "s1abc1234567", 500)
 	m.UpdateGameScore("ABC", "s1abc1234567", 300)
@@ -598,8 +600,8 @@ func TestUpdateGameScoreNonexistentStagiaire(t *testing.T) {
 func TestRevealAnswersScoreWithBlank(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
-	m.JoinStagiaire("ABC", "s2abc1234567", "Bob")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, true)
 
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
@@ -622,7 +624,7 @@ func TestRevealAnswersScoreWithBlank(t *testing.T) {
 func TestStartVoteClearsRevealState(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, false)
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	m.CloseVote("ABC", "trainer1")
@@ -650,7 +652,7 @@ func TestStartVoteClearsRevealState(t *testing.T) {
 func TestStartVoteRejectsActive(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	if err := m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false); err != nil {
 		t.Fatalf("first StartVote: %v", err)
 	}
@@ -689,7 +691,7 @@ func TestStartVoteRejectsActive(t *testing.T) {
 func TestSubmitVoteRejectsDuplicates(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, true, nil, false, false, false)
 
 	_, err := m.SubmitVote("ABC", "s1abc1234567", []string{"rouge", "rouge"})
@@ -720,9 +722,9 @@ func TestSubmitVoteRejectsDuplicates(t *testing.T) {
 func TestRevealAnswersCompetitionRankTies(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
-	m.JoinStagiaire("ABC", "s2abc1234567", "Bob")
-	m.JoinStagiaire("ABC", "s3abc1234567", "Carol")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
+	m.JoinStagiaire("ABC", "s3abc1234567", "Carol", "")
 
 	// Alice and Bob both pick the correct color → tie at the top.
 	// Carol picks wrong.
@@ -775,7 +777,7 @@ func TestRevealAnswersCompetitionRankTies(t *testing.T) {
 func TestRevealAnswersNonCompetitiveDoesNotScore(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
 	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, false, false)
 	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
 	m.CloseVote("ABC", "trainer1")
@@ -823,8 +825,8 @@ func TestRevealAnswersNonCompetitiveDoesNotScore(t *testing.T) {
 func TestVotesPerSessionLifetime(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
-	m.JoinStagiaire("ABC", "s1abc1234567", "Alice")
-	m.JoinStagiaire("ABC", "s2abc1234567", "Bob")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
 
 	// Three rounds, two votes each → lifetime = 6 vote events. At
 	// teardown len(Votes) is 2 (the last round); the histogram must
