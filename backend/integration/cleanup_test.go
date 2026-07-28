@@ -36,7 +36,7 @@ func TestSessionCleanup(t *testing.T) {
 	slog.SetDefault(logger)
 
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 
 	srv := server.NewServer(cfg, h)
 	go func() {

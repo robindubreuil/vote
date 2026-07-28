@@ -81,7 +81,7 @@ func waitForStagiaireCount(t *testing.T, h *Hub, code string, want int, timeout 
 // CM3).
 func TestStressReconnectStorm(t *testing.T) {
 	h := NewHub(stressCfg())
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := newStressClient(h, "trainer1stress")
@@ -223,7 +223,7 @@ func TestStressReconnectStorm(t *testing.T) {
 // authoritative check inside JoinStagiaire must reject the duplicate.
 func TestStressConcurrentNameRegistration(t *testing.T) {
 	h := NewHub(stressCfg())
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := newStressClient(h, "trainer1names")
@@ -370,7 +370,7 @@ func TestTrainerBufferFullDropsNotDisconnects(t *testing.T) {
 // pongWait reaps the entry.
 func TestClosingFlagSkipsBroadcasts(t *testing.T) {
 	h := NewHub(stressCfg())
-	go h.Run()
+	h.Run()
 	defer h.Shutdown()
 
 	trainer := newStressClient(h, "trainer1bcm3")

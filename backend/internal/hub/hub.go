@@ -67,6 +67,15 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	Config *config.Config
+
+	// wg tracks every long-lived goroutine the Hub owns or watches:
+	// Run, cleanupLoop, and each client's readPump/writePump. Shutdown
+	// signals all of them via ctx/Conn.Close, then Wait returns once
+	// every one has unregistered from the hub and torn itself down
+	// (CM1+CM2: previously Shutdown only cancelled the context and
+	// returned immediately, leaving hijacked WS conns un-drained and
+	// the process able to exit mid-writePump).
+	wg sync.WaitGroup
 }
 
 func NewHub(cfg *config.Config) *Hub {
@@ -87,8 +96,22 @@ func (h *Hub) Context() context.Context {
 	return h.ctx
 }
 
+// Run starts the dispatcher loop and the idle-session reaper. It performs
+// the WaitGroup bookkeeping synchronously before launching any goroutine
+// (the standard Add-before-go discipline) so a concurrent Shutdown caller
+// never races Wait against Add — sync.WaitGroup forbids that.
+//
+// Use as `h.Run()` (not `go h.Run()`): Run itself launches the goroutines
+// and returns immediately. Block on Shutdown to wait for them to exit.
 func (h *Hub) Run() {
+	h.wg.Add(2)
+	go h.runLoop()
 	go h.cleanupLoop()
+}
+
+// runLoop is the register/unregister dispatcher. Launched by Run.
+func (h *Hub) runLoop() {
+	defer h.wg.Done()
 	for {
 		select {
 		case client := <-h.Register:
@@ -96,14 +119,63 @@ func (h *Hub) Run() {
 		case client := <-h.Unregister:
 			h.unregisterClient(client)
 		case <-h.ctx.Done():
-			return
+			// Drain any in-flight register/unregister so goroutines
+			// blocked on the channel don't leak, then return so
+			// Run's wg entry decrements.
+			for {
+				select {
+				case c := <-h.Register:
+					h.registerClient(c)
+				case c := <-h.Unregister:
+					h.unregisterClient(c)
+				default:
+					return
+				}
+			}
 		}
 	}
 }
 
+// Shutdown signals every Hub-owned goroutine to wind down (Run,
+// cleanupLoop, every client's readPump + writePump) and blocks until all
+// of them have exited (CM1+CM2). Caller is expected to have already
+// stopped accepting new connections (e.g. via HTTP server shutdown).
+//
+// Ordering matters: the context cancel is what tells Run/cleanupLoop/
+// writePump to exit, and Conn.Close is what unblocks a readPump parked
+// in ReadMessage. After signalling we wait once for everything — the
+// per-client goroutines unregister themselves on the way out, which
+// also drains pending send work.
 func (h *Hub) Shutdown() {
 	h.Security.Shutdown()
 	h.cancel()
+
+	// Close every live WebSocket so blocked readPumps return. markClosing
+	// first so concurrent trySend/SendJSON short-circuit instead of
+	// pushing onto a closing channel.
+	h.mu.RLock()
+	type closeable struct{ c *Client }
+	var toClose []closeable
+	for _, conns := range h.Connections {
+		if conns.Trainer != nil && !conns.Trainer.closing.Load() {
+			conns.Trainer.markClosing()
+			toClose = append(toClose, closeable{conns.Trainer})
+		}
+		for _, c := range conns.Stagiaires {
+			if !c.closing.Load() {
+				c.markClosing()
+				toClose = append(toClose, closeable{c})
+			}
+		}
+	}
+	h.mu.RUnlock()
+	for _, cl := range toClose {
+		if cl.c.Conn != nil {
+			cl.c.Conn.Close()
+		}
+	}
+
+	h.wg.Wait()
 }
 
 func (h *Hub) SessionExists(sessionID string) bool {
@@ -353,11 +425,26 @@ func (h *Hub) registerClient(client *Client) {
 				// previous trainer picked colors). On a fresh session we have
 				// nothing useful to send — empty colors would clobber the
 				// client's autoloaded last-config.
-				queue(client, map[string]any{
+				//
+				// FH4: include the full config surface (labels, feature
+				// flags) so a reconnecting trainer's view matches the
+				// server's canonical state rather than their localStorage
+				// snapshot. The frontend's session_created handler runs
+				// applyLastConfigIfAvailable first; this message then
+				// overrides with whatever the server actually has stored,
+				// which is the source of truth across devices/trainers.
+				replayMsg := map[string]any{
 					"type":           "config_updated",
 					"selectedColors": colors,
 					"multipleChoice": multipleChoice,
-				})
+					"gameEnabled":    gameEnabled,
+					"competitive":    competitive,
+					"allowBlank":     allowBlank,
+				}
+				if labels != nil {
+					replayMsg["labels"] = labels
+				}
+				queue(client, replayMsg)
 			}
 		}
 	} else {
@@ -661,13 +748,13 @@ func (h *Hub) buildTrainerStagiaireListLocked(conns *SessionConnections, session
 }
 
 func (h *Hub) cleanupLoop() {
+	defer h.wg.Done()
 	ticker := time.NewTicker(h.Config.CleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			h.mu.RLock()
+		case <-ticker.C:			h.mu.RLock()
 			protected := make(map[string]bool)
 			for id, conns := range h.Connections {
 				if conns.Trainer != nil || len(conns.Stagiaires) > 0 {

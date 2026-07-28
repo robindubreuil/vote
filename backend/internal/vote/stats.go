@@ -1,8 +1,8 @@
 package vote
 
 import (
-	"math"
-	"sync/atomic"
+	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -10,23 +10,46 @@ import (
 // Counters are restored from counters.json on boot via Restore so they read
 // as all-time monotonic across process restarts.
 type Counter struct {
-	value atomic.Int64
+	value int64
+	mu    sync.RWMutex
 }
 
-func (c *Counter) Inc()         { c.value.Add(1) }
-func (c *Counter) Add(n int64)  { c.value.Add(n) }
-func (c *Counter) Value() int64 { return c.value.Load() }
+func (c *Counter) Inc() {
+	c.mu.Lock()
+	c.value++
+	c.mu.Unlock()
+}
+
+func (c *Counter) Add(n int64) {
+	c.mu.Lock()
+	c.value += n
+	c.mu.Unlock()
+}
+
+func (c *Counter) Value() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.value
+}
 
 // Histogram tracks the distribution of observations across fixed buckets in
 // Prometheus cumulative-histogram format. Each bucket counts the number of
 // observations that fell at or below its upper bound (le = "less than or
 // equal"). Bucket boundaries are immutable for the process lifetime so the
 // exposition stays consistent for scrapers.
+//
+// All mutation and read-back is serialised by a single RWMutex (BM3): a
+// concurrent Snapshot previously captured torn state — count incremented
+// while buckets were only partially updated — which violates the Prometheus
+// invariant that cumulative buckets are monotonically non-decreasing and
+// that the implicit +Inf bucket equals the total count. A snapshot taken
+// under the read-lock now always sees a coherent view.
 type Histogram struct {
-	count   atomic.Int64
-	sumBits atomic.Uint64
+	mu      sync.RWMutex
+	count   int64
+	sum     float64
 	buckets []float64
-	counts  []atomic.Int64
+	counts  []int64
 }
 
 func NewHistogram(buckets []float64) *Histogram {
@@ -34,16 +57,22 @@ func NewHistogram(buckets []float64) *Histogram {
 	copy(b, buckets)
 	return &Histogram{
 		buckets: b,
-		counts:  make([]atomic.Int64, len(b)),
+		counts:  make([]int64, len(b)),
 	}
 }
 
+// Observe records a single observation. The bucket loop runs from the
+// highest LE down so that, even under a racy reader that bypassed the
+// mutex, an in-flight Observe would leave the lower (cumulatively-larger)
+// buckets already incremented — belt-and-suspenders alongside the lock.
 func (h *Histogram) Observe(v float64) {
-	h.count.Add(1)
-	addFloat(&h.sumBits, v)
-	for i, le := range h.buckets {
-		if v <= le {
-			h.counts[i].Add(1)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.count++
+	h.sum += v
+	for i := len(h.buckets) - 1; i >= 0; i-- {
+		if v <= h.buckets[i] {
+			h.counts[i]++
 		}
 	}
 }
@@ -60,26 +89,41 @@ type HistogramBucket struct {
 }
 
 func (h *Histogram) Snapshot() HistogramSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	snap := HistogramSnapshot{
-		Count:   h.count.Load(),
-		Sum:     math.Float64frombits(h.sumBits.Load()),
+		Count:   h.count,
+		Sum:     h.sum,
 		Buckets: make([]HistogramBucket, len(h.buckets)),
 	}
 	for i, le := range h.buckets {
-		snap.Buckets[i] = HistogramBucket{LE: le, Count: h.counts[i].Load()}
+		snap.Buckets[i] = HistogramBucket{LE: le, Count: h.counts[i]}
 	}
 	return snap
 }
 
-// addFloat atomically adds v to the float64 whose bits live in bits. Uses a
-// CAS loop because this toolchain lacks atomic.Float64.
-func addFloat(bits *atomic.Uint64, v float64) {
-	for {
-		old := bits.Load()
-		new := math.Float64bits(math.Float64frombits(old) + v)
-		if bits.CompareAndSwap(old, new) {
-			return
+// bucketsMatchLocked reports whether the live histogram's bucket boundaries
+// are exactly the same (same LE values, same order) as the persisted
+// snapshot's. Caller holds h.mu (BM1).
+func (h *Histogram) bucketsMatchLocked(snap HistogramSnapshot) bool {
+	if len(h.buckets) != len(snap.Buckets) {
+		return false
+	}
+	for i, le := range h.buckets {
+		if snap.Buckets[i].LE != le {
+			return false
 		}
+	}
+	return true
+}
+
+// addLocked replays a persisted cumulative snapshot into the live histogram
+// by adding count/sum/bucket totals in bulk. Caller holds h.mu.
+func (h *Histogram) addLocked(snap HistogramSnapshot) {
+	h.count += snap.Count
+	h.sum += snap.Sum
+	for i, b := range snap.Buckets {
+		h.counts[i] += b.Count
 	}
 }
 
@@ -154,23 +198,38 @@ func (s *ProductStats) Restore(snap ProductStatsSnapshot) {
 	restoreHistogram(s.TraineesPerSession, snap.TraineesPerSession)
 }
 
-// restoreHistogram replays a persisted snapshot into a live histogram. The
-// snapshot is assumed to be cumulative (Prometheus convention), so the values
-// are added directly; subsequent Observe calls compose correctly on top.
+// restoreHistogram replays a persisted snapshot into a live histogram.
+//
+// BM1: refuse-to-restore on schema mismatch. The snapshot's bucket set
+// (LE values, in order) must exactly match the live histogram's. If it
+// does not — e.g. a deploy changed bucket boundaries — replaying would
+// either drop counts (snapshot has buckets the live view doesn't) or
+// leave the total `count` larger than the largest cumulative bucket
+// (live has buckets the snapshot doesn't), both of which trip
+// Prometheus's monotonicity check and cause the /metrics scrape to
+// fail. We log and skip the entire histogram in that case; counters
+// and any other matching histograms are still restored.
 func restoreHistogram(h *Histogram, snap HistogramSnapshot) {
 	if snap.Count == 0 {
 		return
 	}
-	h.count.Add(snap.Count)
-	addFloat(&h.sumBits, snap.Sum)
-	for i, le := range h.buckets {
-		for _, b := range snap.Buckets {
-			if b.LE == le {
-				h.counts[i].Add(b.Count)
-				break
-			}
-		}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.bucketsMatchLocked(snap) {
+		slog.Warn("Skipping histogram restore: bucket schema changed",
+			"snapshot_buckets", bucketLEs(snap.Buckets),
+			"live_buckets", h.buckets)
+		return
 	}
+	h.addLocked(snap)
+}
+
+func bucketLEs(bs []HistogramBucket) []float64 {
+	out := make([]float64, len(bs))
+	for i, b := range bs {
+		out[i] = b.LE
+	}
+	return out
 }
 
 // observeEndedSession records distribution metrics for a session that is being

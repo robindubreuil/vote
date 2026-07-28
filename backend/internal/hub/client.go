@@ -70,11 +70,17 @@ func NewClient(hub *Hub, conn *websocket.Conn, ip string) *Client {
 }
 
 func (c *Client) Start() {
+	// CM1: register both pumps with the Hub's WaitGroup so Shutdown can
+	// wait for them to fully exit. Without this, Shutdown returns while
+	// writePumps are still mid-writeMessage → truncated frames on the
+	// wire, and the process can exit with goroutines touching the conn.
+	c.Hub.wg.Add(2)
 	go c.readPump()
 	go c.writePump()
 }
 
 func (c *Client) readPump() {
+	defer c.Hub.wg.Done()
 	defer func() {
 		c.Hub.Security.RemoveMessageRate(c.ID)
 		select {
@@ -118,6 +124,7 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
+	defer c.Hub.wg.Done()
 	defer func() {
 		if c.pingTick != nil {
 			c.pingTick.Stop()
@@ -145,6 +152,10 @@ func (c *Client) writePump() {
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
+		case <-c.Hub.Context().Done():
+			// CM1: shutdown — stop writing. readPump's defer will close
+			// the conn once Shutdown calls Conn.Close.
+			return
 		}
 	}
 }

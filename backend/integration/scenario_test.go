@@ -387,7 +387,7 @@ func TestScenarioSessionTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	h := hub.NewHub(cfg)
-	go h.Run()
+	h.Run()
 
 	srv := server.NewServer(cfg, h)
 
