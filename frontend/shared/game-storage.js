@@ -1,21 +1,25 @@
 // localStorage-backed high-score store for the stagiaire mini-game.
 // Keyed per device (not per session) so a trainee's personal best
 // follows them across sessions. Designed to fail silently — private
-// mode or quota errors never crash the game.
+// mode or quota errors never crash the game. Reads go through
+// safeLocalGet because Firefox "never remember history" mode and some
+// embedded WebViews throw SecurityError on getItem (not just setItem).
+
+import { safeLocalGet, safeLocalRemove } from './utils/safe-storage.js'
 
 const HIGH_SCORE_KEY = 'vote:game:highscore'
 const SEEN_RULES_KEY = 'vote:game:seenRules'
 const STREAK_KEY = 'vote:game:streak'
 
 export function loadHighScore() {
-  const raw = localStorage.getItem(HIGH_SCORE_KEY)
+  const raw = safeLocalGet(HIGH_SCORE_KEY)
   if (!raw) return 0
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
 export function hasSeenRules() {
-  return localStorage.getItem(SEEN_RULES_KEY) === '1'
+  return safeLocalGet(SEEN_RULES_KEY) === '1'
 }
 
 export function markRulesSeen() {
@@ -52,7 +56,7 @@ export function resetHighScore() {
 }
 
 export function loadStreak() {
-  const raw = localStorage.getItem(STREAK_KEY)
+  const raw = safeLocalGet(STREAK_KEY)
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
@@ -66,13 +70,9 @@ export function saveStreak(n) {
 }
 
 export function _resetForTests() {
-  try {
-    localStorage.removeItem(HIGH_SCORE_KEY)
-    localStorage.removeItem(SEEN_RULES_KEY)
-    localStorage.removeItem(STREAK_KEY)
-  } catch {
-    // ignore
-  }
+  safeLocalRemove(HIGH_SCORE_KEY)
+  safeLocalRemove(SEEN_RULES_KEY)
+  safeLocalRemove(STREAK_KEY)
 }
 
 export const _constants = { HIGH_SCORE_KEY, SEEN_RULES_KEY, STREAK_KEY }

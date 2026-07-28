@@ -52,3 +52,37 @@ export const state = {
   totalStagiaires: 0,
   revealed: false
 }
+
+/**
+ * Reset every session-scoped field to its initial value. Symmetric with
+ * `resetTrainerState()` on the formateur side. Used when the stagiaire
+ * leaves a session so that joining another session starts from a clean
+ * slate — no leaked scoreboard, no leftover edit-name modal, no stale
+ * reveal state from the prior session.
+ *
+ * `prenom` is intentionally preserved: it is the user's preferred display
+ * name and is reused on the join form for the next session.
+ */
+export function resetStagiaireState() {
+  state.sessionCode = ''
+  state.appState = AppState.JOINING
+  state.connected = false
+  state.hasVoted = false
+  state.selectedColors.clear()
+  state.availableColors = []
+  state.colorLabels = {}
+  state.multipleChoice = false
+  state.gameEnabled = false
+  state.gamePlaying = false
+  state.stagiaireId = null
+  state.reclaimToken = null
+  state.prenomEdit = false
+  state.competitive = false
+  state.allowBlank = false
+  state.voteScore = 0
+  state.totalScore = 0
+  state.gameScore = 0
+  state.rank = 0
+  state.totalStagiaires = 0
+  state.revealed = false
+}

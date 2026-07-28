@@ -3,7 +3,7 @@ import { showError, showConfirmDialog } from '@shared/ui.js'
 import { loader } from '@shared/icons.js'
 import { CONSTANTS } from '@shared/config.js'
 import { t } from '@shared/i18n.js'
-import { state, AppState } from './state.js'
+import { state, resetStagiaireState } from './state.js'
 import { render } from './renderers.js'
 import { getClient } from './websocket.js'
 import { Mastermind, getDifficulty, getLevelProgress, streakMultiplier } from './game.js'
@@ -579,18 +579,7 @@ export async function leaveSession() {
   safeSessionRemove('vote_session_code')
   safeSessionRemove('vote_stagiaire_id')
   safeSessionRemove('vote_stagiaire_reclaim_token')
-  state.sessionCode = ''
-  state.appState = AppState.JOINING
-  state.connected = false
-  state.hasVoted = false
-  state.selectedColors.clear()
-  state.availableColors = []
-  state.colorLabels = {}
-  state.multipleChoice = false
-  state.gameEnabled = false
-  state.gamePlaying = false
-  state.stagiaireId = null
-  state.reclaimToken = null
+  resetStagiaireState()
   const client = getClient()
   if (client) {
     client.close()

@@ -499,5 +499,44 @@ describe('stagiaire handlers — submit / join / leave', () => {
       expect(state.reclaimToken).toBeNull()
       expect(fakeClient.close).toHaveBeenCalledTimes(1)
     })
+
+    // F5 regression: leaveSession must reset every session-scoped field,
+    // not just the ones the original manual reset happened to list. The 7
+    // fields below were omitted before resetStagiaireState() was extracted.
+    it('resets scoreboard, reveal, and edit-name fields (F5)', async () => {
+      mockConfirm.mockResolvedValueOnce(true)
+      const fakeClient = { close: vi.fn() }
+      mockGetClient.mockReturnValue(fakeClient)
+      // Seed all the fields that were previously leaked across sessions.
+      state.prenomEdit = true
+      state.voteScore = 1500
+      state.totalScore = 4200
+      state.gameScore = 300
+      state.rank = 1
+      state.totalStagiaires = 25
+      state.revealed = true
+      state.competitive = true
+      state.allowBlank = true
+      state.colorLabels = { rouge: 'Pour' }
+      state.multipleChoice = true
+      state.gameEnabled = true
+      state.gamePlaying = true
+
+      await leaveSession()
+
+      expect(state.prenomEdit).toBe(false)
+      expect(state.voteScore).toBe(0)
+      expect(state.totalScore).toBe(0)
+      expect(state.gameScore).toBe(0)
+      expect(state.rank).toBe(0)
+      expect(state.totalStagiaires).toBe(0)
+      expect(state.revealed).toBe(false)
+      expect(state.competitive).toBe(false)
+      expect(state.allowBlank).toBe(false)
+      expect(state.colorLabels).toEqual({})
+      expect(state.multipleChoice).toBe(false)
+      expect(state.gameEnabled).toBe(false)
+      expect(state.gamePlaying).toBe(false)
+    })
   })
 })

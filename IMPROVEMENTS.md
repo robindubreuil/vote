@@ -103,6 +103,101 @@ line coverage went 48.43% → 82.13%; 213 new tests across 7 files.
 
 ---
 
+## Sessions 9+ — Audit round 2
+
+Fresh audit pass over areas untouched by sessions 1–8 (DevOps/packaging, accessibility, observability, ops hygiene, defensive validation at trust boundaries). Findings grouped into conversation-sized sessions.
+
+### Session 9 — Critical frontend crashes + UX bugs
+
+Isolated, high-impact, fast. Each verifiable on its own.
+
+- [x] **F1** `localStorage.getItem` is unwrapped in `loadHighScore`, `hasSeenRules`, `loadStreak` — `frontend/shared/game-storage.js:11,18,55`. Writes are wrapped in try/catch, reads are not. Firefox "never remember history" mode and embedded WebViews throw `SecurityError` on `getItem`; the stagiaire app reads `loadHighScore` synchronously on join → crash. **Fix:** reads route through `safeLocalGet`; `_resetForTests` through `safeLocalRemove`.
+- [x] **F2** Same pattern in `getLastConfig`, `listPresets`, `_resetForTests` — `frontend/shared/presets.js:88,107,257`. Crashes the formateur's first render (last-config autoload on `session_created`). **Fix:** route through `safeLocalGet` / `safeLocalRemove`.
+- [x] **F3** `qrcode` (~116 KB pre-gzip) statically imported by the formateur entry chunk but used only in the `?aide=` branch — `frontend/src/formateur/main.js:14`. Every formateur page load pays for a dependency most trainers never open. **Fix:** dynamic `import('./connection-aid.js')` inside the aid branch. Verified: build now emits `connection-aid-*.js` as a separate 29 KB chunk (10.9 KB gzip); formateur entry dropped from ~70 KB to 41 KB.
+- [x] **F4** Preset-name `<input>` keydown handler called `preventDefault` but not `stopImmediatePropagation` on Escape → event bubbled to the app-level keydown handler → "Quitter la session?" confirm opened on top of the just-closed preset form — `frontend/src/formateur/renderers.js:384-392`. **Fix:** `stopImmediatePropagation` on Escape (and Enter for symmetry).
+- [x] **F5** `stagiaire/handlers.js:569-599` `leaveSession` manually reset state but omitted 7 fields (`prenomEdit`, `voteScore`, `totalScore`, `gameScore`, `rank`, `totalStagiaires`, `revealed`) plus `competitive`/`allowBlank`/`colorLabels`/`multipleChoice`/`gameEnabled`/`gamePlaying`. Formateur has `resetTrainerState()`; stagiaire had no symmetric helper. **Fix:** extracted `resetStagiaireState()` in `state.js` (preserves `prenom`), called from `leaveSession`.
+- [x] Tests: `game-storage.test.js` +4 (read-throws for loadHighScore/hasSeenRules/loadStreak + removeItem-throws), `presets.test.js` +3 (read-throws for getLastConfig/listPresets + removeItem-throws), `renderers.test.js` +2 (Escape + Enter isolation in preset input), `stagiaire/handlers.test.js` +1 (leaveSession resets all 13 fields). Frontend 403 → 413 tests, all green; `npm run lint` clean; `npm run build` emits the split chunk; backend `go test -race ./...` unchanged green.
+
+### Session 10 — Backend robustness cluster
+
+Sentinel error mapping, metrics-text safety, atomic counters, store self-heal.
+
+- [ ] **B1** `Counter` guards a single int64 with `sync.RWMutex`; `Inc` takes a write lock on every vote and every join — `backend/internal/vote/stats.go:12-33`. Wrong primitive. **Fix:** `atomic.Int64`.
+- [ ] **B6** `writeInfoMetric` interpolates `version`/`buildTime` into Prometheus label values with no escaping — `backend/internal/server/metrics.go:113-116`. A `"`, `\`, or `\n` in the version (operator-settable via ldflags) produces a malformed scrape → Prometheus rejects the **entire** scrape. **Fix:** escape label values.
+- [ ] **B3** Many leaf errors still flow raw to French clients: `"vote is not active"`, `"stagiaire not found in session"` (leaks internal entity name), `"only one color allowed..."`, lowercase `"unauthorized"`. Inconsistent with the capitalized French sentinels added in S11. **Fix:** French sentinel errors (or handler-boundary mapping).
+- [ ] **B9** Store rotation: if reopen fails after rename, `logFile` points at the closed/renamed-away handle → every subsequent `AppendSample` fails silently until restart — `backend/internal/store/store.go:193-216`. **Fix:** retry-reopen on failure or lazy-reopen from `AppendSample`.
+- [ ] **B11** `BroadcastSession` marshals the payload before checking the session exists — `backend/internal/hub/hub.go:678-690`. Broadcasts to dead sessions pay full marshal cost. **Fix:** existence check first.
+- [ ] **B10** `Client.LastActivity` is written but never read — dead field — `backend/internal/hub/client.go:41,60,109`. **Fix:** remove or wire an idle-evictor.
+- [ ] Tests for each: atomic-counter contention benchmark, metrics-label escape, French-error mapping table, store reopen-recovery, broadcast-skip-dead-session.
+
+### Session 11 — Backend perf + observability
+
+- [ ] **B2** `store.ReadSamples` reads both `stats.jsonl*` (~100 MB) fully into memory, then applies `limit`, while holding `s.mu` — `backend/internal/store/store.go:223-253`. `/dashboard/history` OOM risk on small VMs; sampler stalled by slow read. **Fix:** streaming tail-read with `bufio.Scanner`, release mutex before read.
+- [ ] **B8** `Hub.GetMetrics` holds `h.mu.RLock` across up to `MaxSessionsGlobal`=1000 `session.GetState()` calls — `backend/internal/hub/hub.go:937-966`. Blocks all register/unregister during a scrape. **Fix:** snapshot session pointers under RLock, release, iterate lock-free.
+- [ ] **B7** No HTTP access log / request-ID middleware; hub/client error logs lack session/IP/client correlation — only `gin.Recovery()` is wired. **Fix:** slog access middleware + request ID + enrich hub logs.
+- [ ] **B4** `GenerateID` calls `rand.Int` 12 times per connection (one syscall + big.Int per byte) vs `GenerateToken`'s single `rand.Read` — `backend/internal/security/security.go:344-357`. Hot path under reconnect flaps. **Fix:** batched `rand.Read`.
+- [ ] **B5** `getEnvDuration`/`getEnvInt` silently return the default on parse error — `backend/internal/config/config.go:135-151`. Ops typo invisible. **Fix:** `slog.Warn` on parse failure; filter empty elements after split for list envs.
+- [ ] Tests for each.
+
+### Session 12 — Frontend accessibility + safety nets
+
+The biggest UX gap — a11y was never audited.
+
+- [ ] **F6** Stagiaire layout has no `<main>` landmark and emits `<header>` per-state (missing entirely from `renderJoinHTML`/`renderEditNameHTML`) — `frontend/src/stagiaire/renderers.js:17-89`. Formateur has stable `<header>` + `<main>`. **Fix:** wrap `main-container` in `<main>`, emit one stable `<header>` in `renderLayout`.
+- [ ] **F7** Vote grid lacks grouping semantics — single-choice is a `<div>` of buttons, multiple-choice is loose checkboxes — `frontend/src/stagiaire/renderers.js:293,322`. SR users hear "Rouge, Vert…" with no context. **Fix:** `role="radiogroup"` + `aria-label` for single-choice, `<fieldset><legend>` for multiple.
+- [ ] **F8** Form-validation errors add `.error` class but never `aria-invalid` / `aria-describedby` — `frontend/src/stagiaire/handlers.js:418,425,454`. SR users get no field-level signal. **Fix:** set `aria-invalid` on error, clear on success; associate error message via `aria-describedby`.
+- [ ] **F10** 10 sites interpolate `color.color` raw into `style="background-color:..."` with no `^#[0-9a-f]{3,8}$` guard — `frontend/src/formateur/renderers.js:481,556,709,738,781,785,823,887`; `utils.js:142,146`. Safe today (COLORS is constant), tripwire if custom palettes land. **Fix:** `sanitizeColor()` helper applied at all sites.
+- [ ] **F11** No `unhandledrejection` / `error` handlers in either `main.js`. Dynamic `import('./renderers.js')` in `utils.js:207` is fire-and-forget — failed import = stale vote panel, no UI signal. **Fix:** register both handlers in `main.js`; surface a toast.
+- [ ] **F12** `connection-aid.js` starts `setInterval(checkStale, 2000)` and registers an anonymous `keydown` on `document`, neither cleared on `beforeunload` — `frontend/src/formateur/connection-aid.js:219,255,266`. **Fix:** clear interval + use named handler.
+- [ ] Tests / snapshot updates for each.
+
+### Session 13 — Frontend polish + i18n consolidation
+
+- [ ] **F9** Hardcoded French strings bypass `t` in ~15 sites (`pwa.js:66-91`, all game aria-labels, `'Anonyme'`, `'Session expirée...'`). Even for a French-only app, `t` is the single point for typo fixes. **Fix:** add keys, replace literals.
+- [ ] **F13** `vite.config.js` has no explicit `build.target`. SW uses `Promise.allSettled` + optional chaining — breaks old Chromium silently. **Fix:** set `build.target: 'es2019'`; rewrite SW `Promise.allSetSettled` → `Promise.all` or polyfill.
+- [ ] **F14** Dynamic `import('./renderers.js')` on every `vote_received` — `frontend/src/formateur/utils.js:207`. Smell (presumably breaks a circular dep), and a failed import silently stalls the vote panel. **Fix:** hoist render fragments into a small static-import module, or add `.catch`.
+- [ ] **F15** `stagiaire/main.js:52-55` persists `prenom` in `localStorage` (device-scoped) while S6/S12 carefully scoped identity to `sessionStorage`. Shared-tablet leak. **Fix:** move `prenom` to sessionStorage, or only auto-fill (not auto-join) when the saved code is in sessionStorage.
+- [ ] **F16** Duplicated pluralization logic in `connection-aid.js:141` and `renderers.js:464`. **Fix:** extract `formatConnectedCount(n)` util.
+- [ ] **F17** `_resetForTests`, `_constants` exported from production modules. Bundle bloat + console-callable surface. **Fix:** move to `*.test-utils.js` siblings or `import.meta.env.DEV` guards.
+- [ ] **F18** `validateName` rejects periods/commas; doesn't trim before length check — `frontend/shared/validation.js:19-29`. **Fix:** allow `.`/`,` or document restriction; trim-first.
+- [ ] Tests for each.
+
+### Session 14 — CI / release hardening
+
+- [ ] **D1** `release.yml` builds Docker image but never pushes; no GHCR, no Trivy scan, no SBOM, no cosign. **Fix:** add `docker` job: GHCR push, Trivy (fail on CRITICAL), SBOM attachment, cosign keyless sign. Pin actions by SHA.
+- [ ] **D3** `ci.yml:69-73` frontend job runs lint+test but never `npm run build`. SW template / version / compress-assets regressions merge to main, fail only at release. **Fix:** add `npm run build` step.
+- [ ] **D4** `debian/rules:31` runs plain `npm ci` (Dockerfile uses `--ignore-scripts`). Supply-chain gap. **Fix:** `npm ci --ignore-scripts`.
+- [ ] **D5** No tag/changelog version consistency check on release. A mistagged `v1.4.0` against a `1.3.1-1` changelog ships a mislabeled `.deb`. **Fix:** assert git tag matches `debian/changelog` head.
+- [ ] **D6** No `govulncheck` / `npm audit` / Trivy in CI. CVEs undetected. **Fix:** add `security` job.
+- [ ] **D7** `release.yml:30-34` `setup-node` cache missing `cache-dependency-path` (package-lock is in `frontend/`) → cache never hits. **Fix:** add `cache-dependency-path: frontend/package-lock.json`.
+
+### Session 15 — Infra / deployment hardening
+
+- [ ] **D2** No `/version` HTTP endpoint. **Fix:** add `GET /version` returning `{version, buildTime, git_commit}` JSON.
+- [ ] **D8** `debian/vote.service:12` `Restart=on-failure` weak for unattended classroom hardware (OOM-kill via SIGKILL, clean exits). **Fix:** `Restart=always` + `StartLimitIntervalSec=60` + `StartLimitBurst=5` + `RestartPreventExitStatus=143`.
+- [ ] **D9** Single `/health` does both liveness and readiness. **Fix:** split `/livez` (process up) and `/readyz` (hub initialized, not draining).
+- [ ] **D10** Runtime image is alpine. Distroless is smaller + smaller CVE surface; HEALTHCHECK can use `vote-server --health`. **Fix:** switch to `gcr.io/distroless/static-debian12:nonroot` or `scratch` + static binary.
+- [ ] **D11** `.dockerignore` missing `data/`, `**/playwright-report/`, `**/test-results/`, `.gocache/`, `.gomodcache/`, `*.log`. Build context bloat. **Fix:** add entries.
+- [ ] **D12** `debian/Caddyfile.example` missing `Cache-Control immutable` for `/assets/*`, `encode gzip zstd`, HSTS, `X-Content-Type-Options`, precompressed-asset handling. **Fix:** add.
+
+### Session 16 — Low-priority cleanup
+
+- [ ] **B12** Promote magic numbers to named consts with docs (`pongWait` vs `PingInterval`, trainer-takeover 50 ms delay, `ClientSendBufferSize`, dashboard caps).
+- [ ] **B13** Test-gap backfill: `auth.purgeRevoked` lazy eviction, store rotation failed-reopen (B9), `formatLE` non-integer branch.
+- [ ] **B14** CSPRNG-failure fallback in `generateTimestampID`/`GenerateToken` is predictable. If `/dev/urandom` is unavailable, S1/S12 security collapses. **Fix:** panic on entropy failure (a server that cannot generate secrets should not serve) or mix stronger fallback entropy.
+- [ ] **F19** `i18n.js` is misnamed (no locale system). Rename to `strings.js`, or actually wire a locale switcher.
+- [ ] **F20** `eslint.config.js` doesn't add Vitest globals for co-located `*.test.js` → false `no-undef` risk.
+- [ ] **F21** No defense-in-depth CSP `<meta>` in `formateur/index.html` / `stagiaire/index.html`. **Fix:** add restrictive meta CSP (requires removing inline `style=` attrs from F10 first, or `'unsafe-inline'` for style).
+- [ ] **F22** `requestFullscreen()` promise ignored — `connection-aid.js:191`. **Fix:** `.catch` with button feedback.
+- [ ] **D13** Add `make fmt-check` / `vuln` / `check` targets.
+- [ ] **D14** Single-arch deb; no arm64. **Fix:** matrix build over `[amd64, arm64]`.
+- [ ] **D15** `.env.example` missing `VOTE_MAX_SESSIONS_PER_HOUR`.
+- [ ] **D16** Base images tag-floated, not digest-pinned.
+- [ ] **D17** `getFreePort` TOCTOU — `backend/integration/integration_test.go:126-141`. **Fix:** bind port 0, read actual port from listener.
+- [ ] **D18** Release uses broad `contents: write`; no OIDC/cosign signing, no SLSA provenance.
+
+---
+
 ## Notes from the audit (kept for context)
 
 Things checked and found correct — do not regress:

@@ -356,3 +356,46 @@ describe('serializePresets / deserializePresets', () => {
     expect(listPresets()).toHaveLength(_constants.MAX_PRESETS)
   })
 })
+
+// F2 regression: reads must route through safeLocalGet so that a throwing
+// getItem (Firefox privacy mode, embedded WebView) degrades gracefully
+// instead of crashing the formateur's first render.
+describe('read-throws resilience (F2)', () => {
+  function withThrowingGetItem(fn) {
+    const original = localStorage.getItem
+    localStorage.getItem = () => {
+      throw new DOMException('The operation is insecure.', 'SecurityError')
+    }
+    try {
+      fn()
+    } finally {
+      localStorage.getItem = original
+    }
+  }
+
+  it('getLastConfig returns null when getItem throws', () => {
+    setLastConfig({ selectedColors: ['rouge'], colorLabels: {}, multipleChoice: false })
+    withThrowingGetItem(() => {
+      expect(getLastConfig()).toBeNull()
+    })
+  })
+
+  it('listPresets returns [] when getItem throws', () => {
+    savePreset('P1', { selectedColors: ['rouge'], colorLabels: {}, multipleChoice: false })
+    withThrowingGetItem(() => {
+      expect(listPresets()).toEqual([])
+    })
+  })
+
+  it('_resetForTests does not throw when removeItem throws', () => {
+    const original = localStorage.removeItem
+    localStorage.removeItem = () => {
+      throw new DOMException('The operation is insecure.', 'SecurityError')
+    }
+    try {
+      expect(() => _resetForTests()).not.toThrow()
+    } finally {
+      localStorage.removeItem = original
+    }
+  })
+})

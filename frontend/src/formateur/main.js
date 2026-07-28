@@ -11,7 +11,6 @@ import * as handlers from './handlers.js'
 import { state, resetTrainerState } from './state.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { CONSTANTS } from '@shared/config.js'
-import { initConnectionAid } from './connection-aid.js'
 import { initPWA } from '@shared/pwa.js'
 import { safeSessionGet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 import { stopTimer } from './utils.js'
@@ -43,7 +42,7 @@ function leaveSession() {
   attachLandingListenersWithHandlers()
 }
 
-function init() {
+async function init() {
   const app = document.getElementById('app')
 
   const urlParams = new URLSearchParams(window.location.search)
@@ -53,10 +52,16 @@ function init() {
   // videoprojector. It does NOT connect to the WebSocket (the backend only
   // allows one trainer per session); instead it subscribes to state updates
   // from the main formateur tab via BroadcastChannel.
+  //
+  // Dynamic import: connection-aid pulls in `qrcode` (~116 KB), which only
+  // this code path uses. Keeping it out of the entry chunk saves every
+  // regular formateur page load from paying for it (and keeps it off the
+  // service-worker precache list).
   const rawAidCode = urlParams.get('aide')
   if (rawAidCode) {
     const aidCode = CONSTANTS.SESSION_CODE_NORMALIZE(rawAidCode)
     if (validateSessionCode(aidCode) === null) {
+      const { initConnectionAid } = await import('./connection-aid.js')
       initConnectionAid(aidCode)
       return
     }
@@ -80,5 +85,5 @@ function init() {
   }
 }
 
-init()
+init().catch((err) => console.error('Formateur init failed:', err))
 initPWA()

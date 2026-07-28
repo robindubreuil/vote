@@ -9,7 +9,7 @@ vi.stubGlobal('localStorage', {
   clear: () => store.clear()
 })
 
-import { loadHighScore, saveHighScore, resetHighScore, _resetForTests } from './game-storage.js'
+import { loadHighScore, saveHighScore, resetHighScore, loadStreak, hasSeenRules, _resetForTests } from './game-storage.js'
 
 describe('game-storage', () => {
   beforeEach(() => {
@@ -88,6 +88,57 @@ describe('game-storage', () => {
 
     it('is a no-op when nothing is stored', () => {
       expect(() => resetHighScore()).not.toThrow()
+    })
+  })
+
+  // F1 regression: reads must not crash when localStorage.getItem throws.
+  // Firefox "never remember history" mode and some embedded WebViews throw
+  // SecurityError on getItem (not just setItem). The module documents that
+  // it "fails silently"; before the fix, only writes were wrapped.
+  describe('read-throws resilience (F1)', () => {
+    function withThrowingGetItem(fn) {
+      const original = localStorage.getItem
+      localStorage.getItem = () => {
+        throw new DOMException('The operation is insecure.', 'SecurityError')
+      }
+      try {
+        fn()
+      } finally {
+        localStorage.getItem = original
+      }
+    }
+
+    it('loadHighScore returns 0 when getItem throws', () => {
+      saveHighScore(500) // sanity: write path works
+      withThrowingGetItem(() => {
+        expect(loadHighScore()).toBe(0)
+      })
+    })
+
+    it('hasSeenRules returns false when getItem throws', () => {
+      localStorage.setItem('vote:game:seenRules', '1')
+      withThrowingGetItem(() => {
+        expect(hasSeenRules()).toBe(false)
+      })
+    })
+
+    it('loadStreak returns 0 when getItem throws', () => {
+      localStorage.setItem('vote:game:streak', '3')
+      withThrowingGetItem(() => {
+        expect(loadStreak()).toBe(0)
+      })
+    })
+
+    it('_resetForTests does not throw when removeItem throws', () => {
+      const original = localStorage.removeItem
+      localStorage.removeItem = () => {
+        throw new DOMException('The operation is insecure.', 'SecurityError')
+      }
+      try {
+        expect(() => _resetForTests()).not.toThrow()
+      } finally {
+        localStorage.removeItem = original
+      }
     })
   })
 })

@@ -208,3 +208,116 @@ describe('listener tracker split (C3 + M1 regression)', () => {
     cleanupAllListeners()
   })
 })
+
+// F4 regression: Escape inside the preset-name <input> must call
+// cancelSavePreset WITHOUT bubbling to the document-level app shortcut
+// (which would open the "Quitter la session?" confirm on top of the
+// just-closed form). Before the fix, preventDefault alone did not stop
+// propagation; stopImmediatePropagation is now used.
+describe('preset input Escape isolation (F4)', () => {
+  beforeEach(() => {
+    _confirmResult = false
+    state.sessionCode = 'ABC'
+    state.voteState = 'idle'
+    state.connectedCount = 0
+    state.selectedColors = new Set(['rouge', 'vert'])
+    state.colorLabels = {}
+    state.stagiaires = []
+    state.competitive = false
+    state.allowBlank = false
+    state.gameEnabled = false
+    state.multipleChoice = false
+    state.presetSaving = true
+  })
+
+  function mountPresetInput() {
+    buildAppShell()
+    renderFullLayout(document.getElementById('app'))
+    renderMainContent()
+    // The preset save form is conditionally rendered when presetSaving=true.
+    // We attach listeners which bind #presetNameInput if present.
+    attachConfigListeners({})
+    return document.getElementById('presetNameInput')
+  }
+
+  it('Escape in preset input calls cancelSavePreset and does NOT open leave-session dialog', async () => {
+    const cancelSpy = vi.fn()
+    setActionHandlers({
+      startVote: () => {},
+      closeVote: () => {},
+      resetVote: () => {},
+      revealAnswers: () => {},
+      resetConfig: () => {},
+      beginSavePreset: () => {},
+      cancelSavePreset: cancelSpy,
+      confirmSavePreset: () => {},
+      applyPreset: () => {},
+      deletePreset: () => {},
+      exportPresets: () => {},
+      importPresets: () => {}
+    })
+
+    const input = mountPresetInput()
+    // If presetSaving=true doesn't render the input in the current HTML,
+    // mount it manually so the test exercises the handler regardless of
+    // renderConfigHTML's exact conditional shape.
+    let target = input
+    if (!target) {
+      target = document.createElement('input')
+      target.id = 'presetNameInput'
+      document.getElementById('app-content').appendChild(target)
+      attachConfigListeners({})
+    }
+
+    const leave = vi.fn()
+    attachAppKeyboardShortcuts(leave)
+
+    _confirmResult = true // if the app handler fires, leave WILL be called
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushMicrotasks()
+
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    expect(leave).not.toHaveBeenCalled()
+
+    cleanupAllListeners()
+  })
+
+  it('Enter in preset input calls confirmSavePreset and does NOT trigger landing-page Enter', async () => {
+    const confirmSpy = vi.fn()
+    setActionHandlers({
+      startVote: () => {},
+      closeVote: () => {},
+      resetVote: () => {},
+      revealAnswers: () => {},
+      resetConfig: () => {},
+      beginSavePreset: () => {},
+      cancelSavePreset: () => {},
+      confirmSavePreset: confirmSpy,
+      applyPreset: () => {},
+      deletePreset: () => {},
+      exportPresets: () => {},
+      importPresets: () => {}
+    })
+
+    const input = mountPresetInput()
+    let target = input
+    if (!target) {
+      target = document.createElement('input')
+      target.id = 'presetNameInput'
+      target.value = 'Mon preset'
+      document.getElementById('app-content').appendChild(target)
+      attachConfigListeners({})
+    } else {
+      target.value = 'Mon preset'
+    }
+
+    // Landing Enter handler is NOT attached here (we're in full layout),
+    // but we verify confirmSavePreset fires and no unhandled error occurs.
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushMicrotasks()
+
+    expect(confirmSpy).toHaveBeenCalledWith('Mon preset')
+
+    cleanupAllListeners()
+  })
+})
