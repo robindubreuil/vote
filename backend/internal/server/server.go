@@ -50,10 +50,10 @@ func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 }
 
 // EnablePersistence opens the on-disk store, restores the cumulative counters
-// from the last checkpoint (so they read all-time across restarts), and starts
-// a background goroutine that samples counters to disk. Returns an error if the
-// store cannot be opened; in that case the server runs without persistence
-// (counters reset on restart, as before).
+// and histograms from the last checkpoint (so they read all-time across
+// restarts), and starts a background goroutine that samples counters to disk.
+// Returns an error if the store cannot be opened; in that case the server
+// runs without persistence (counters reset on restart, as before).
 func (s *Server) EnablePersistence() error {
 	st, err := store.New(s.config.DataDir)
 	if err != nil {
@@ -64,7 +64,8 @@ func (s *Server) EnablePersistence() error {
 	if err != nil {
 		slog.Warn("Failed to load persisted counters, starting fresh", "error", err)
 	} else if base.SessionsCreated > 0 || base.VotesStarted > 0 || base.VotesCast > 0 ||
-		base.TraineesJoined > 0 || base.GameEnabledVotes > 0 || base.MultipleChoiceVotes > 0 {
+		base.TraineesJoined > 0 || base.GameEnabledVotes > 0 || base.MultipleChoiceVotes > 0 ||
+		base.SessionDuration.Count > 0 || base.VotesPerSession.Count > 0 || base.TraineesPerSession.Count > 0 {
 		s.hub.VoteManager.Stats().Restore(vote.ProductStatsSnapshot{
 			SessionsCreated:     base.SessionsCreated,
 			VotesStarted:        base.VotesStarted,
@@ -72,9 +73,13 @@ func (s *Server) EnablePersistence() error {
 			TraineesJoined:      base.TraineesJoined,
 			GameEnabledVotes:    base.GameEnabledVotes,
 			MultipleChoiceVotes: base.MultipleChoiceVotes,
+			SessionDuration:     toVoteHistogramSnapshot(base.SessionDuration),
+			VotesPerSession:     toVoteHistogramSnapshot(base.VotesPerSession),
+			TraineesPerSession:  toVoteHistogramSnapshot(base.TraineesPerSession),
 		})
 		slog.Info("Restored persisted counters",
-			"sessions", base.SessionsCreated, "votes", base.VotesCast, "trainees", base.TraineesJoined)
+			"sessions", base.SessionsCreated, "votes", base.VotesCast, "trainees", base.TraineesJoined,
+			"histObs", base.SessionDuration.Count)
 	}
 	if err := st.Permissions(); err != nil {
 		slog.Warn("Data dir permissions self-check", "error", err)
@@ -119,21 +124,49 @@ func (s *Server) flushStats() {
 		return
 	}
 	snap := s.hub.ProductStats()
-	sample := store.Sample{
-		Time:                time.Now(),
-		SessionsCreated:     snap.SessionsCreated,
-		VotesStarted:        snap.VotesStarted,
-		VotesCast:           snap.VotesCast,
-		TraineesJoined:      snap.TraineesJoined,
-		GameEnabledVotes:    snap.GameEnabledVotes,
-		MultipleChoiceVotes: snap.MultipleChoiceVotes,
+	counters := store.Counters{
+		Sample: store.Sample{
+			Time:                time.Now(),
+			SessionsCreated:     snap.SessionsCreated,
+			VotesStarted:        snap.VotesStarted,
+			VotesCast:           snap.VotesCast,
+			TraineesJoined:      snap.TraineesJoined,
+			GameEnabledVotes:    snap.GameEnabledVotes,
+			MultipleChoiceVotes: snap.MultipleChoiceVotes,
+		},
+		SessionDuration:    toStoreHistogram(snap.SessionDuration),
+		VotesPerSession:    toStoreHistogram(snap.VotesPerSession),
+		TraineesPerSession: toStoreHistogram(snap.TraineesPerSession),
 	}
-	if err := s.store.AppendSample(sample); err != nil {
+	// The append-only log stores counters only — distributions don't need a
+	// per-sample history and would bloat stats.jsonl by ~4x.
+	if err := s.store.AppendSample(counters.Sample); err != nil {
 		slog.Warn("Failed to append stats sample", "error", err)
 	}
-	if err := s.store.SaveCounters(sample); err != nil {
+	if err := s.store.SaveCounters(counters); err != nil {
 		slog.Warn("Failed to persist counters checkpoint", "error", err)
 	}
+}
+
+// toStoreHistogram flattens a vote.HistogramSnapshot into the store-package
+// shape. Kept here (not in store.go) so the store package stays free of any
+// dependency on the vote package.
+func toStoreHistogram(h vote.HistogramSnapshot) store.Histogram {
+	buckets := make([]store.HistogramBucket, len(h.Buckets))
+	for i, b := range h.Buckets {
+		buckets[i] = store.HistogramBucket{LE: b.LE, Count: b.Count}
+	}
+	return store.Histogram{Count: h.Count, Sum: h.Sum, Buckets: buckets}
+}
+
+// toVoteHistogramSnapshot reverses toStoreHistogram at boot time so the vote
+// package can replay the snapshot via ProductStats.Restore.
+func toVoteHistogramSnapshot(h store.Histogram) vote.HistogramSnapshot {
+	buckets := make([]vote.HistogramBucket, len(h.Buckets))
+	for i, b := range h.Buckets {
+		buckets[i] = vote.HistogramBucket{LE: b.LE, Count: b.Count}
+	}
+	return vote.HistogramSnapshot{Count: h.Count, Sum: h.Sum, Buckets: buckets}
 }
 
 // FlushStats stops the background sampler and writes one final checkpoint so

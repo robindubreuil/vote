@@ -41,11 +41,8 @@ func IsValidStagiaireID(id string) bool {
 }
 
 func IsValidName(name string) bool {
-	if utf8.RuneCountInString(name) == 0 || utf8.RuneCountInString(name) > MaxNameLength {
-		return false
-	}
 	name = strings.TrimSpace(name)
-	if utf8.RuneCountInString(name) == 0 {
+	if utf8.RuneCountInString(name) == 0 || utf8.RuneCountInString(name) > MaxNameLength {
 		return false
 	}
 	return hasValidCharacters(name)

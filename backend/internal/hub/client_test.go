@@ -549,6 +549,101 @@ func TestRevealRejectsColorsOutsidePalette(t *testing.T) {
 	}
 }
 
+func TestHandleVoteRejectsTrainer(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCode := drainUntil(t, trainer, "session_created")["sessionCode"].(string)
+	time.Sleep(50 * time.Millisecond)
+
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type: "start_vote", Colors: []string{"rouge"},
+	}))
+	drainN(t, trainer, 3)
+
+	// The trainer (c.Type == "trainer" by default after trainer_join) attempts
+	// to vote. This must be rejected, not recorded.
+	trainer.SessionID = sessionCode
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type:   "vote",
+		Colors: []string{"rouge"},
+	}))
+
+	select {
+	case msg := <-trainer.Send:
+		var resp map[string]interface{}
+		json.Unmarshal(msg, &resp)
+		if resp["type"] != "error" {
+			t.Errorf("trainer vote should be rejected with error, got %v", resp["type"])
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for rejection")
+	}
+
+	session, ok := h.VoteManager.GetSession(sessionCode)
+	if !ok {
+		t.Fatal("session should exist")
+	}
+	if votes := session.GetVotes(); len(votes) != 0 {
+		t.Errorf("trainer vote should not be recorded, got %d votes", len(votes))
+	}
+}
+
+func TestHandleResetVotePreservesLabels(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCode := drainUntil(t, trainer, "session_created")["sessionCode"].(string)
+	time.Sleep(50 * time.Millisecond)
+
+	labels := map[string]string{"rouge": "Pomme"}
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type:           "start_vote",
+		Colors:         []string{"rouge"},
+		Labels:         labels,
+		MultipleChoice: false,
+	}))
+	drainN(t, trainer, 3)
+
+	// reset_vote with the same labels — previously the handler hard-coded nil
+	// and wiped the labels from the session state.
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type:   "reset_vote",
+		Colors: []string{"rouge"},
+		Labels: labels,
+	}))
+	drainUntil(t, trainer, "vote_reset")
+
+	session, ok := h.VoteManager.GetSession(sessionCode)
+	if !ok {
+		t.Fatal("session should exist")
+	}
+	got := session.GetActiveLabels()
+	if got["rouge"] != "Pomme" {
+		t.Errorf("label should survive reset_vote, got %v", got)
+	}
+}
+
 func mustMarshal(t *testing.T, msg models.Message) []byte {
 	t.Helper()
 	data, err := json.Marshal(msg)

@@ -213,3 +213,43 @@ func TestSessionCreateRateWindowExpiry(t *testing.T) {
 		t.Errorf("expected 0 stamps after prune, got %d", got)
 	}
 }
+
+func TestRecordFailedJoinBackoffOverflow(t *testing.T) {
+	sec := NewSecurity(context.Background(), 0)
+	defer sec.Shutdown()
+	ip := "10.0.0.99"
+
+	// Simulate a very high failure count — well past the int64 shift
+	// overflow point (~56). Before the fix, this wrapped negative and
+	// collapsed the backoff to the 100 ms floor.
+	sec.mu.Lock()
+	sec.failedJoins[ip] = &FailedJoinAttempt{
+		Count:            100,
+		LastAttempt:      time.Now(),
+		LastBackoffUntil: time.Now(),
+	}
+	sec.mu.Unlock()
+
+	sec.RecordFailedJoin(ip)
+
+	sec.mu.RLock()
+	attempt := sec.failedJoins[ip]
+	sec.mu.RUnlock()
+
+	if attempt == nil {
+		t.Fatal("failed join record should exist")
+	}
+	// The backoff window must not be in the past — that would indicate
+	// the 100 ms floor fired after an overflow.
+	if attempt.LastBackoffUntil.Before(time.Now()) {
+		t.Errorf("backoff should be in the future, got %v (now=%v)",
+			attempt.LastBackoffUntil, time.Now())
+	}
+	// And it must be well above the 100 ms floor that the overflow bug
+	// would collapse to. Jitter is ±25%, so the real minimum is ~75% of
+	// MaxBackoffMs; 60 s is a safe threshold far above the buggy floor.
+	minExpected := time.Now().Add(60 * time.Second)
+	if attempt.LastBackoffUntil.Before(minExpected) {
+		t.Errorf("backoff should be >= 60s; got %v", attempt.LastBackoffUntil)
+	}
+}

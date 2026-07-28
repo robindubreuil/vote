@@ -114,6 +114,27 @@ func TestIsValidNameLength(t *testing.T) {
 	}
 }
 
+func TestIsValidNameTrimsBeforeLengthCheck(t *testing.T) {
+	// A 16-char name with surrounding whitespace would exceed MaxNameLength
+	// if length were checked before trimming. After the fix, trim happens
+	// first so the name is valid.
+	padded16 := "  aaaaaaaaaaaaaaaa  "
+	if !IsValidName(padded16) {
+		t.Error("name that trims to <= MaxNameLength should be valid")
+	}
+
+	// A name that is still 17 chars after trimming must be rejected.
+	padded17 := "  aaaaaaaaaaaaaaaaa  "
+	if IsValidName(padded17) {
+		t.Error("name that trims to > MaxNameLength should be invalid")
+	}
+
+	// Whitespace-only is still rejected after trim.
+	if IsValidName("   ") {
+		t.Error("whitespace-only name should be invalid")
+	}
+}
+
 func TestValidateColors(t *testing.T) {
 	allowed := []string{"rouge", "vert", "bleu"}
 

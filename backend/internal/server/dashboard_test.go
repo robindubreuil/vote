@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -228,6 +229,208 @@ func TestMetricsEndpointProductCounters(t *testing.T) {
 			t.Errorf("metrics body missing %q\nBody:\n%s", e, body)
 		}
 	}
+}
+
+// TestMetricsEndpointLabeledSeriesExposition is a regression guard for the
+// dashboard's in-browser Prometheus parser. The parser must survive every
+// labeled line the server emits (histogram buckets, sessions_by_state,
+// build_info) — and the spec calls for exactly one HELP and one TYPE per
+// metric name. We assert both here against the raw text so a future change
+// to writeGaugeWithLabels or writeHistogram can't silently resurrect the
+// "drop every labeled line" parser bug.
+func TestMetricsEndpointLabeledSeriesExposition(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	mgr := h.VoteManager
+	mgr.CreateSession("ABC", "trainer1")
+	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
+	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
+	mgr.RemoveSession("ABC") // observe one ended session in every histogram
+
+	srv := NewServer(cfg, h)
+	srv.SetBuildInfo("test-version", "2026-01-01")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/metrics", nil)
+	srv.router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	// Every labeled series that the dashboard parser must extract. Assert
+	// presence of the labeled KEY (not the numeric value — bucket values
+	// depend on the actual session duration at runtime).
+	requiredLabeledKeys := []string{
+		`vote_sessions_by_state{state="idle"}`,
+		`vote_sessions_by_state{state="active"}`,
+		`vote_sessions_by_state{state="closed"}`,
+		`vote_session_duration_seconds_bucket{le="60"}`,
+		`vote_session_duration_seconds_bucket{le="300"}`,
+		`vote_session_duration_seconds_bucket{le="+Inf"}`,
+		`vote_session_duration_seconds_count`,
+		`vote_votes_per_session_bucket{le="0"}`,
+		`vote_votes_per_session_bucket{le="1"}`,
+		`vote_votes_per_session_bucket{le="+Inf"}`,
+		`vote_votes_per_session_count`,
+		`vote_trainees_per_session_bucket{le="1"}`,
+		`vote_trainees_per_session_bucket{le="+Inf"}`,
+		`vote_trainees_per_session_count`,
+		`vote_build_info{version="test-version",build_time="2026-01-01"}`,
+	}
+	for _, key := range requiredLabeledKeys {
+		// Match the key as the start of a whitespace-or-value-terminated token
+		// so that "le=\"1\"" doesn't false-match "le=\"10\"". Each Prometheus
+		// line is `<key> <number>` so the key is followed by ' ' or end of line.
+		if !lineStartsWith(body, key) {
+			t.Errorf("metrics body missing labeled key %q\nBody:\n%s", key, body)
+		}
+	}
+
+	// Prometheus spec: HELP and TYPE appear exactly once per metric name.
+	// Duplicating them (the old writeGaugeWithLabels-in-a-loop bug) is
+	// tolerated by lenient scrapers but breaks strict ones and bloats output.
+	helpCounts := map[string]int{}
+	typeCounts := map[string]int{}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "# HELP ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				helpCounts[parts[2]]++
+			}
+		} else if strings.HasPrefix(line, "# TYPE ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				typeCounts[parts[2]]++
+			}
+		}
+	}
+	for name, n := range helpCounts {
+		if n > 1 {
+			t.Errorf("metric %s: HELP emitted %d times (spec allows exactly 1)", name, n)
+		}
+	}
+	for name, n := range typeCounts {
+		if n > 1 {
+			t.Errorf("metric %s: TYPE emitted %d times (spec allows exactly 1)", name, n)
+		}
+	}
+}
+
+// TestDashboardParseMetricsHandlesLabeledLines is a Go-side reference
+// implementation of the in-browser parseMetrics. It exists so a regression
+// in the JS parser is caught at the next test run — the JS itself can't be
+// executed here without pulling in a JS engine, so we mirror its exact rules
+// and assert that feeding real /metrics output to those rules yields the
+// labeled keys the dashboard depends on. If you change parseMetrics in
+// dashboard.go, update this Go mirror in lock-step.
+func TestDashboardParseMetricsHandlesLabeledLines(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	mgr := h.VoteManager
+	mgr.CreateSession("ABC", "trainer1")
+	mgr.JoinStagiaire("ABC", "stagiaire001", "Alice")
+	mgr.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, false, false)
+	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
+	mgr.RemoveSession("ABC")
+
+	srv := NewServer(cfg, h)
+	srv.SetBuildInfo("v", "bt")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/metrics", nil)
+	srv.router.ServeHTTP(w, req)
+	body := w.Body.String()
+
+	parsed := parseMetricsReference(body)
+
+	cases := []struct{ key, desc string }{
+		{`vote_sessions_by_state{state="idle"}`, "idle state series"},
+		{`vote_sessions_by_state{state="active"}`, "active state series"},
+		{`vote_sessions_by_state{state="closed"}`, "closed state series"},
+		{`vote_session_duration_seconds_bucket{le="60"}`, "duration bucket le=60"},
+		{`vote_session_duration_seconds_bucket{le="+Inf"}`, "duration bucket +Inf"},
+		{`vote_session_duration_seconds_count`, "duration count"},
+		{`vote_votes_per_session_bucket{le="1"}`, "votes bucket le=1"},
+		{`vote_votes_per_session_bucket{le="+Inf"}`, "votes bucket +Inf"},
+		{`vote_votes_per_session_count`, "votes count"},
+		{`vote_trainees_per_session_bucket{le="1"}`, "trainees bucket le=1"},
+		{`vote_build_info{version="v",build_time="bt"}`, "build info"},
+		{`vote_sessions_created_total`, "unlabeled counter"},
+	}
+	for _, c := range cases {
+		v, ok := parsed[c.key]
+		if !ok {
+			t.Errorf("parser dropped labeled key %q (%s) — this is exactly the parseFloat-on-labels bug", c.key, c.desc)
+			continue
+		}
+		if v < 0 {
+			t.Errorf("parser returned negative for %q: %v", c.key, v)
+		}
+	}
+	// Specific value assertions: the ended session observed exactly one
+	// duration sample, one votes sample (=1 vote), one trainees sample (=1 trainee).
+	if got := parsed[`vote_session_duration_seconds_count`]; got != 1 {
+		t.Errorf("duration count: expected 1, got %v", got)
+	}
+	if got := parsed[`vote_session_duration_seconds_bucket{le="+Inf"}`]; got != 1 {
+		t.Errorf("duration +Inf bucket: expected 1, got %v", got)
+	}
+	if got := parsed[`vote_votes_per_session_bucket{le="1"}`]; got != 1 {
+		t.Errorf("votes bucket le=1: expected 1, got %v", got)
+	}
+	if got := parsed[`vote_votes_per_session_bucket{le="+Inf"}`]; got != 1 {
+		t.Errorf("votes bucket +Inf: expected 1, got %v", got)
+	}
+	if got := parsed[`vote_build_info{version="v",build_time="bt"}`]; got != 1 {
+		t.Errorf("build_info value: expected 1, got %v", got)
+	}
+}
+
+// parseMetricsReference mirrors dashboard.go's parseMetrics exactly. Any
+// change to the JS parser MUST be reflected here. The dashboard runs in the
+// browser, so this Go twin is the only compile-time-checkable spec we have.
+func parseMetricsReference(text string) map[string]float64 {
+	out := make(map[string]float64)
+	for _, line := range strings.Split(text, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		var name, rest, labels string
+		brace := strings.Index(line, "{")
+		if brace > -1 {
+			close := strings.Index(line, "}")
+			if close < 0 {
+				continue
+			}
+			name = line[:brace]
+			labels = "{" + line[brace+1:close] + "}"
+			rest = strings.TrimSpace(line[close+1:])
+		} else {
+			sp := strings.Index(line, " ")
+			name = line[:sp]
+			rest = line[sp+1:]
+		}
+		var val float64
+		if _, err := fmt.Sscanf(rest, "%g", &val); err != nil {
+			continue
+		}
+		out[name+labels] = val
+	}
+	return out
+}
+
+// lineStartsWith reports whether any line of body begins with prefix followed
+// by either a space or end-of-line. Used so a key like "le=1" doesn't
+// accidentally match "le=10".
+func lineStartsWith(body, prefix string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if line == prefix || strings.HasPrefix(line, prefix+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCookieSigningRoundTrip is a focused unit test on the HMAC scheme:
