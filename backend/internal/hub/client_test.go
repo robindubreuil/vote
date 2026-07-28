@@ -644,6 +644,92 @@ func TestHandleResetVotePreservesLabels(t *testing.T) {
 	}
 }
 
+// TestStartVoteRejectsLabelsOutsidePalette covers BM5: labels must
+// reference colors in the selected palette (msg.Colors), not the
+// global ValidColors. A trainer must not be able to attach a label to
+// a color that isn't on the ballot.
+func TestStartVoteRejectsLabelsOutsidePalette(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	drainUntil(t, trainer, "session_created")
+	drainUntil(t, trainer, "connected_count")
+	time.Sleep(50 * time.Millisecond)
+
+	// Labels include "vert", which is a globally-valid color but is NOT
+	// in the selected palette {rouge, bleu}. Must be rejected.
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type:   "start_vote",
+		Colors: []string{"rouge", "bleu"},
+		Labels: map[string]string{"rouge": "Pomme", "vert": "Salade"},
+	}))
+
+	select {
+	case msg := <-trainer.Send:
+		var resp map[string]interface{}
+		json.Unmarshal(msg, &resp)
+		if resp["type"] != "error" {
+			t.Errorf("expected error for label outside palette, got %v", resp["type"])
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for label-validation error")
+	}
+
+	// Sanity: the same label set WITH vert in the palette is accepted.
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type:   "start_vote",
+		Colors: []string{"rouge", "bleu", "vert"},
+		Labels: map[string]string{"rouge": "Pomme", "vert": "Salade"},
+	}))
+	drainUntil(t, trainer, "vote_started")
+}
+
+// TestResetVoteRejectsLabelsOutsidePalette covers BM5 on the reset path.
+func TestResetVoteRejectsLabelsOutsidePalette(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	drainUntil(t, trainer, "session_created")
+	drainUntil(t, trainer, "connected_count")
+	time.Sleep(50 * time.Millisecond)
+
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type:   "reset_vote",
+		Colors: []string{"rouge"},
+		Labels: map[string]string{"vert": "Salade"},
+	}))
+	select {
+	case msg := <-trainer.Send:
+		var resp map[string]interface{}
+		json.Unmarshal(msg, &resp)
+		if resp["type"] != "error" {
+			t.Errorf("expected error for label outside palette on reset, got %v", resp["type"])
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for label-validation error")
+	}
+}
+
 // TestTrainerTakeoverRequiresToken covers S1: an unauthenticated
 // trainer_join against a session with an active trainer must be rejected.
 // Only a connection presenting the minted token can take over.

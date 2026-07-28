@@ -27,6 +27,10 @@ var (
 	// re-check under the session lock, two clients racing for the same
 	// name both pass the advisory check and both register (CC2).
 	ErrNameInUse = errors.New("name already in use")
+	// ErrVoteAlreadyActive is returned by StartVote when a vote is
+	// already in progress. A second start_vote would silently discard
+	// every collected vote (BM2).
+	ErrVoteAlreadyActive = errors.New("un vote est déjà en cours")
 )
 
 type Manager struct {
@@ -169,6 +173,15 @@ func (m *Manager) StartVote(sessionID, trainerID string, colors []string, multip
 		return ErrUnauthorized
 	}
 
+	// BM2: a second start_vote while a vote is already Active would
+	// silently wipe the in-progress Votes map (and LastVoteScores),
+	// losing every collected vote. Force the trainer to close or reset
+	// first. Closed → StartVote is the legitimate "next round" path and
+	// remains allowed.
+	if session.VoteState == models.VoteStateActive {
+		return ErrVoteAlreadyActive
+	}
+
 	session.VoteState = models.VoteStateActive
 	session.ActiveColors = colors
 	session.ActiveLabels = labels
@@ -214,6 +227,14 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 		return "", errors.New("only one color allowed in single-choice mode")
 	}
 
+	// BL6: duplicate-color check lives inside SubmitVote (under the
+	// session lock) so the business rule can't be bypassed by a caller
+	// that skips the hub handler. The handler-side check is a useful
+	// fast-fail but is not authoritative.
+	if HasDuplicates(colors) {
+		return "", errors.New("duplicate colors are not allowed")
+	}
+
 	hasBlank := false
 	for _, c := range colors {
 		if c == "blank" {
@@ -248,6 +269,7 @@ func (m *Manager) SubmitVote(sessionID, stagiaireID string, colors []string) (st
 	}
 
 	session.Votes[stagiaireID] = colors
+	session.TotalVotes++
 	session.LastActivity = time.Now().Unix()
 	m.stats.VotesCast.Inc()
 
@@ -364,16 +386,26 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 				}
 			}
 		}
-		if session.Revealed {
-			session.Scores[id] -= session.LastVoteScores[id]
+		// BL3: scoring (cumulative accumulation + idempotent reversal)
+		// is scoped to Competitive mode by design. The per-round
+		// VoteScore above is still computed so the response carries
+		// correctness info, but a non-competitive session never mutates
+		// Scores / LastVoteScores / Revealed — those exist solely to
+		// power the competitive leaderboard across rounds.
+		if session.Competitive {
+			if session.Revealed {
+				session.Scores[id] -= session.LastVoteScores[id]
+			}
+			session.Scores[id] += entry.VoteScore
+			session.LastVoteScores[id] = entry.VoteScore
 		}
-		session.Scores[id] += entry.VoteScore
-		session.LastVoteScores[id] = entry.VoteScore
 		entry.TotalScore = session.Scores[id] + session.GameScores[id]
 		entries = append(entries, entry)
 	}
 
-	session.Revealed = true
+	if session.Competitive {
+		session.Revealed = true
+	}
 
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].TotalScore != entries[j].TotalScore {
@@ -382,12 +414,31 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 		return entries[i].Name < entries[j].Name
 	})
 
-	for i := range entries {
-		entries[i].Rank = i + 1
-	}
+	// BL2: assign competition ranks (tied TotalScores share a rank, the
+	// next lower score skips) so the value sent at reveal matches what
+	// computeRank will produce on reconnect. The previous ordinal
+	// assignment (i+1) broke ties alphabetically, so a student tied for
+	// first could see "2e" at reveal then "1er" after a reconnect.
+	assignCompetitionRanks(entries)
 
 	session.LastActivity = time.Now().Unix()
 	return entries, nil
+}
+
+// assignCompetitionRanks sets Rank on a slice pre-sorted by (TotalScore
+// DESC, tiebreaker ASC) using competition ranking: entries that tie on
+// TotalScore share a rank, and the next lower score's rank reflects the
+// number of entries strictly ahead rather than i+1. This matches the
+// on-the-fly computation in hub.computeRank so a client sees the same
+// rank at reveal and on reconnect (BL2).
+func assignCompetitionRanks(entries []ScoreEntry) {
+	for i := range entries {
+		if i > 0 && entries[i].TotalScore == entries[i-1].TotalScore {
+			entries[i].Rank = entries[i-1].Rank
+		} else {
+			entries[i].Rank = i + 1
+		}
+	}
 }
 
 func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error {
@@ -437,7 +488,9 @@ func (m *Manager) CleanupExpiredSessions(timeout time.Duration, protected map[st
 		session.mu.RLock()
 		inactive := now-session.LastActivity > timeoutSec
 		if inactive {
-			m.stats.observeEndedSession(session.CreatedAt, len(session.Votes), len(session.Stagiaires))
+			// BM4: observe lifetime votes (TotalVotes), not len(Votes)
+			// which only reflects the current/last round.
+			m.stats.observeEndedSession(session.CreatedAt, session.TotalVotes, len(session.Stagiaires))
 		}
 		session.mu.RUnlock()
 		if inactive {
@@ -451,7 +504,9 @@ func (m *Manager) RemoveSession(sessionID string) {
 	defer m.mu.Unlock()
 	if session, ok := m.sessions[sessionID]; ok {
 		session.mu.RLock()
-		m.stats.observeEndedSession(session.CreatedAt, len(session.Votes), len(session.Stagiaires))
+		// BM4: observe lifetime votes (TotalVotes), not len(Votes)
+		// which only reflects the current/last round.
+		m.stats.observeEndedSession(session.CreatedAt, session.TotalVotes, len(session.Stagiaires))
 		session.mu.RUnlock()
 	}
 	delete(m.sessions, sessionID)

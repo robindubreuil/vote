@@ -381,9 +381,12 @@ func (c *Client) handleStartVote(msg models.Message) {
 		return
 	}
 
-	// Validate labels if provided
+	// Validate labels if provided. BM5: labels must reference colors in
+	// the selected palette (msg.Colors), not the global ValidColors —
+	// otherwise a trainer could attach a label to a color that isn't
+	// even on the ballot.
 	if len(msg.Labels) > 0 {
-		if !vote.ValidateLabels(msg.Labels, c.Hub.Config.ValidColors) {
+		if !vote.ValidateLabels(msg.Labels, msg.Colors) {
 			c.SendError("Invalid labels")
 			return
 		}
@@ -482,9 +485,13 @@ func (c *Client) handleResetVote(msg models.Message) {
 			return
 		}
 	}
-	// Validate labels if provided
-	if len(msg.Labels) > 0 {
-		if !vote.ValidateLabels(msg.Labels, c.Hub.Config.ValidColors) {
+	// Validate labels if provided. BM5: labels must reference colors in
+	// the selected palette (msg.Colors when provided, otherwise the
+	// session's existing ActiveColors). On a reset_vote with no colors
+	// supplied there is no palette to label against, so we accept any
+	// labels — ResetVote clears ActiveLabels unconditionally.
+	if len(msg.Labels) > 0 && len(msg.Colors) > 0 {
+		if !vote.ValidateLabels(msg.Labels, msg.Colors) {
 			c.SendError("Invalid labels")
 			return
 		}
