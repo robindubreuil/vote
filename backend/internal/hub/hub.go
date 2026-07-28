@@ -196,9 +196,19 @@ func (h *Hub) registerClient(client *Client) {
 
 	if client.Type == "trainer" {
 		if old := conns.Trainer; old != nil && old != client {
+			// S1: takeover of an active trainer requires the per-session
+			// trainer token. Without this, anyone who knows the public
+			// 3-char session code (shown in the QR to every stagiaire)
+			// could send trainer_join and kick the legitimate trainer.
+			if !h.VoteManager.ValidateTrainerToken(client.SessionID, client.TrainerToken) {
+				client.SendError("Session déjà active — reprenez votre onglet existant")
+				return
+			}
 			old.SendError("New trainer connection detected, closing this one.")
 			time.AfterFunc(50*time.Millisecond, func() {
-				old.Conn.Close()
+				if old.Conn != nil {
+					old.Conn.Close()
+				}
 			})
 		}
 
@@ -218,11 +228,20 @@ func (h *Hub) registerClient(client *Client) {
 			}
 		}
 
-		client.SendJSON(map[string]any{
+		sessionCreated := map[string]any{
 			"type":        "session_created",
 			"sessionCode": client.SessionID,
 			"trainerId":   client.ID,
-		})
+		}
+		// Return the token only on creation or authenticated reconnection.
+		// The client persists it and re-sends on every trainer_join so
+		// reconnects can take over an active trainer connection.
+		if sess, ok := h.VoteManager.GetSession(client.SessionID); ok {
+			if token := sess.GetTrainerToken(); token != "" {
+				sessionCreated["trainerToken"] = token
+			}
+		}
+		client.SendJSON(sessionCreated)
 
 		h.notifyTrainerStagiaireListLocked(conns, client.SessionID, "connected_count")
 
@@ -294,7 +313,7 @@ func (h *Hub) registerClient(client *Client) {
 		}
 
 		if err := h.VoteManager.JoinStagiaire(client.SessionID, client.ID, client.Name); err != nil {
-			client.SendError("Failed to join session: " + err.Error())
+			client.SendError("Failed to join session")
 			return
 		}
 

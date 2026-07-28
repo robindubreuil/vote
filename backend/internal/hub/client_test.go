@@ -644,6 +644,117 @@ func TestHandleResetVotePreservesLabels(t *testing.T) {
 	}
 }
 
+// TestTrainerTakeoverRequiresToken covers S1: an unauthenticated
+// trainer_join against a session with an active trainer must be rejected.
+// Only a connection presenting the minted token can take over.
+func TestTrainerTakeoverRequiresToken(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	// 1. Legitimate trainer creates the session.
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCreated := drainUntil(t, trainer, "session_created")
+	sessionCode := sessionCreated["sessionCode"].(string)
+	token, _ := sessionCreated["trainerToken"].(string)
+	if token == "" {
+		t.Fatal("session_created must carry a trainerToken")
+	}
+	drainUntil(t, trainer, "connected_count")
+	time.Sleep(50 * time.Millisecond)
+
+	// 2. Imposter tries to take over WITHOUT the token → must be rejected.
+	imposter := &Client{ID: "imposter00001", Hub: h, Send: make(chan []byte, 20), IP: "10.0.0.99"}
+	initTestHandlers(imposter)
+	imposter.handleMessage(mustMarshal(t, models.Message{
+		Type:        "trainer_join",
+		SessionCode: sessionCode,
+	}))
+	imposterMsg := drainUntil(t, imposter, "error")
+	if msg, _ := imposterMsg["message"].(string); msg == "" {
+		t.Error("imposter should receive a rejection error")
+	}
+
+	// The legitimate trainer must still be the registered trainer.
+	h.mu.RLock()
+	active := h.Connections[sessionCode].Trainer
+	h.mu.RUnlock()
+	if active != trainer {
+		t.Error("imposter must not have displaced the legitimate trainer")
+	}
+
+	// 3. A reconnect with the correct token takes over successfully.
+	reconnect := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(reconnect)
+	reconnect.handleMessage(mustMarshal(t, models.Message{
+		Type:         "trainer_join",
+		SessionCode:  sessionCode,
+		TrainerToken: token,
+	}))
+	drainUntil(t, reconnect, "session_created")
+	drainUntil(t, reconnect, "connected_count")
+
+	h.mu.RLock()
+	active = h.Connections[sessionCode].Trainer
+	h.mu.RUnlock()
+	if active != reconnect {
+		t.Error("reconnect with valid token should become the active trainer")
+	}
+}
+
+// TestTrainerRecoveryWithoutTokenAllowed covers the recovery path: when
+// there is NO active trainer (previous trainer disconnected), a join
+// without a token is allowed so the legitimate trainer can recover after
+// a device crash. This is not a takeover.
+func TestTrainerRecoveryWithoutTokenAllowed(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCode := drainUntil(t, trainer, "session_created")["sessionCode"].(string)
+	drainUntil(t, trainer, "connected_count")
+	time.Sleep(50 * time.Millisecond)
+
+	// Simulate the trainer going away (unregister).
+	h.mu.Lock()
+	h.Connections[sessionCode].Trainer = nil
+	h.mu.Unlock()
+
+	// A new connection without the token should recover the session — no
+	// active trainer to protect.
+	recovery := &Client{ID: "recovery000001", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(recovery)
+	recovery.handleMessage(mustMarshal(t, models.Message{
+		Type:        "trainer_join",
+		SessionCode: sessionCode,
+	}))
+	drainUntil(t, recovery, "session_created")
+
+	h.mu.RLock()
+	active := h.Connections[sessionCode].Trainer
+	h.mu.RUnlock()
+	if active != recovery {
+		t.Error("recovery without token should succeed when no active trainer is present")
+	}
+}
+
 func mustMarshal(t *testing.T, msg models.Message) []byte {
 	t.Helper()
 	data, err := json.Marshal(msg)

@@ -23,12 +23,13 @@ import { users } from '@shared/icons.js'
 import { showToast } from '@shared/ui.js'
 import { t } from '@shared/i18n.js'
 import { applyLastConfigIfAvailable } from './handlers.js'
-import { safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
+import { safeSessionGet, safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 
 const WS_URL = getWebSocketURL()
 
 let client = null
 let trainerId = null
+let trainerToken = null
 let publisher = null
 
 export function getClient() {
@@ -63,6 +64,12 @@ export function initClient() {
     client.close()
   }
 
+  // Restore the persisted trainer token so reconnects (page reload, tab
+  // refresh) can re-authenticate against a live session. Without it the
+  // server rejects the takeover as an unauthenticated attempt.
+  trainerToken = safeSessionGet('vote_trainer_token') || null
+  trainerId = safeSessionGet('vote_trainer_id') || null
+
   client = new VoteClient(WS_URL, {
     onStatusChange: (connected) => {
       const wasConnected = state.connected
@@ -83,7 +90,8 @@ export function initClient() {
       client.send({
         type: 'trainer_join',
         sessionCode: state.sessionCode,
-        trainerId: trainerId || undefined
+        trainerId: trainerId || undefined,
+        trainerToken: trainerToken || undefined
       })
     },
     onMessage: (msg) => {
@@ -133,6 +141,15 @@ function handleMessage(msg) {
       if (msg.trainerId) {
         trainerId = msg.trainerId
         safeSessionSet('vote_trainer_id', msg.trainerId)
+      }
+      // S1: the per-session trainer token gates takeover of an active
+      // trainer connection. Persist it so reconnects (tab refresh, wifi
+      // flap) can re-authenticate; without it, a reconnect against a live
+      // session is rejected. Never written to localStorage — sessionStorage
+      // scopes it to this tab so a shared device doesn't leak it.
+      if (msg.trainerToken) {
+        trainerToken = msg.trainerToken
+        safeSessionSet('vote_trainer_token', msg.trainerToken)
       }
       updateHeader(client)
       attachListeners()
@@ -264,6 +281,7 @@ function leaveSessionFromHeader() {
   stopTimer()
   safeSessionRemove('vote_session_code')
   safeSessionRemove('vote_trainer_id')
+  safeSessionRemove('vote_trainer_token')
   resetTrainerState()
   cleanupAllListeners()
   renderLandingPage(document.getElementById('app'))

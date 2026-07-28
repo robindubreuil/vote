@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,12 @@ func NewWSClient(t *testing.T, wsURL string) *WSClient {
 		HandshakeTimeout: 5 * time.Second,
 	}
 
-	conn, _, err := dialer.Dial(wsURL, nil)
+	// S3 hardened CheckOrigin rejects absent Origin headers. Real browsers
+	// always send one; mirror that in tests so the wildcard-origined test
+	// server accepts the connection.
+	headers := http.Header{"Origin": []string{"http://localhost"}}
+
+	conn, _, err := dialer.Dial(wsURL, headers)
 	if err != nil {
 		t.Fatalf("Failed to connect to WebSocket: %v", err)
 	}
@@ -272,6 +278,12 @@ func (b *MessageBuilder) StagiaireID(id string) *MessageBuilder {
 // Name sets the name.
 func (b *MessageBuilder) Name(name string) *MessageBuilder {
 	b.msg.Name = name
+	return b
+}
+
+// TrainerToken sets the per-session trainer auth token.
+func (b *MessageBuilder) TrainerToken(token string) *MessageBuilder {
+	b.msg.TrainerToken = token
 	return b
 }
 

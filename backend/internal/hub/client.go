@@ -21,6 +21,7 @@ type Client struct {
 	Name         string
 	SessionID    string
 	Type         string
+	TrainerToken string
 	Conn         *websocket.Conn
 	Send         chan []byte
 	Hub          *Hub
@@ -203,12 +204,19 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 		// Trainer can only join existing sessions with specific codes
 		// To create a new session, use "new" or empty code
 		if !c.Hub.SessionExists(msg.SessionCode) && !c.Hub.VoteManager.SessionExists(msg.SessionCode) {
+			// Record the failure so the per-IP exponential backoff applies to
+			// session-code enumeration via trainer_join too. Without this,
+			// all 12,167 codes are enumerable in ~20 min (S2).
+			c.Hub.Security.RecordFailedJoin(c.IP)
 			c.SendJSON(map[string]any{"type": "error", "message": "Session introuvable"})
 			return
 		}
 		code = msg.SessionCode
 	}
 
+	// Capture the presented token; registerClient validates it under the hub
+	// lock before allowing takeover of an active trainer (S1).
+	c.TrainerToken = msg.TrainerToken
 	c.Type = "trainer"
 	c.SessionID = code
 	c.Hub.Security.ClearFailedJoin(c.IP)
@@ -485,7 +493,7 @@ func (c *Client) handleRevealAnswers(msg models.Message) {
 			}
 		}
 		if !found {
-			c.SendError("Color not in active palette: " + color)
+			c.SendError("Color not in active palette")
 			return
 		}
 	}

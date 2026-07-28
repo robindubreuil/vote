@@ -279,8 +279,12 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
+			// Browsers always send Origin on cross-origin WebSocket
+			// handshakes. Absence signals a non-browser client, which is
+			// exactly the profile of a scripted takeover or smuggling
+			// attempt. Reject it rather than implicitly trusting.
 			if origin == "" {
-				return true
+				return false
 			}
 			return s.config.IsOriginAllowed(origin)
 		},

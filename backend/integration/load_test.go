@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func NewLoadClient(wsURL string) (*LoadClient, error) {
 		HandshakeTimeout: 5 * time.Second,
 	}
 
-	conn, _, err := dialer.Dial(wsURL, nil)
+	conn, _, err := dialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost"}})
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}

@@ -143,7 +143,8 @@ func TestWebSocketSuccess(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
 
 	dialer := websocket.Dialer{}
-	conn, _, err := dialer.Dial(wsURL, nil)
+	headers := http.Header{"Origin": []string{"http://localhost"}}
+	conn, _, err := dialer.Dial(wsURL, headers)
 	if err != nil {
 		t.Fatalf("Failed to connect to WS: %v", err)
 	}
@@ -173,6 +174,7 @@ func TestWebSocketWithProxyHeader(t *testing.T) {
 
 	headers := http.Header{}
 	headers.Set("X-Forwarded-For", "10.0.0.1")
+	headers.Set("Origin", "http://localhost")
 
 	dialer := websocket.Dialer{}
 	conn, _, err := dialer.Dial(wsURL, headers)
@@ -187,5 +189,34 @@ func TestWebSocketWithProxyHeader(t *testing.T) {
 	err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping"}`))
 	if err != nil {
 		t.Errorf("Failed to write message: %v", err)
+	}
+}
+
+// TestWebSocketRejectsEmptyOrigin covers S3: the CheckOrigin upgrader must
+// reject a connection that carries no Origin header. Browsers always send
+// Origin on cross-origin WS handshakes; absence signals a scripted client,
+// which is the exact profile of a takeover/smuggling attempt.
+func TestWebSocketRejectsEmptyOrigin(t *testing.T) {
+	cfg := &config.Config{
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Second,
+		CleanupInterval: time.Hour,
+	}
+	h := hub.NewHub(cfg)
+	go h.Run()
+	defer h.Shutdown()
+
+	srv := NewServer(cfg, h)
+	ts := httptest.NewServer(srv.router)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+
+	// Even with a wildcard-origins config, empty Origin must be rejected —
+	// the check fires before IsOriginAllowed.
+	dialer := websocket.Dialer{}
+	_, _, err := dialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Error("expected handshake failure for empty Origin, got success")
 	}
 }

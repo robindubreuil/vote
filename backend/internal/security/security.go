@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"log/slog"
 	"math/big"
 	"sync"
@@ -27,6 +28,13 @@ const (
 
 	clientIDCharset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	clientIDLength  = 12
+
+	// trainerTokenBytes is the entropy budget for per-session trainer tokens.
+	// 32 bytes (256 bits) is the same as a CSRF token; base64url encodes it
+	// to ~43 chars. The token is never shown to stagiaires (the QR carries
+	// only the public session code), so guess-resistance far exceeds the
+	// code space.
+	trainerTokenBytes = 32
 )
 
 type FailedJoinAttempt struct {
@@ -226,6 +234,23 @@ func (s *Security) CountSessionCreations(ip string) int {
 	return n
 }
 
+// FailedJoinCount returns the number of failed-join attempts currently
+// recorded for the IP within the sliding window. Test-only helper used to
+// verify that the "Session introuvable" branch of trainer_join records its
+// failures against the per-IP backoff (S2).
+func (s *Security) FailedJoinCount(ip string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.failedJoins[ip]
+	if !ok {
+		return 0
+	}
+	if time.Since(a.LastAttempt) > FailedAttemptWindow {
+		return 0
+	}
+	return a.Count
+}
+
 func (s *Security) CheckMessageRate(clientID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -339,4 +364,19 @@ func generateTimestampID() string {
 		nano >>= 4
 	}
 	return string(b)
+}
+
+// GenerateToken returns a base64url-encoded cryptographically-random token.
+// Used for per-session trainer tokens that gate takeover of an active
+// trainer connection. Falls back to a time-derived value only if the system
+// CSPRNG is unavailable, matching GenerateID's resilience contract.
+func GenerateToken() string {
+	b := make([]byte, trainerTokenBytes)
+	if _, err := rand.Read(b); err != nil {
+		slog.Error("Error generating trainer token, using weak fallback", "error", err)
+		for i := range b {
+			b[i] = byte(time.Now().UnixNano() >> (uint(i) % 63))
+		}
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }

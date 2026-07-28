@@ -35,6 +35,7 @@ function leaveSession() {
   stopTimer()
   safeSessionRemove('vote_session_code')
   safeSessionRemove('vote_trainer_id')
+  safeSessionRemove('vote_trainer_token')
   closeClient()
   resetTrainerState()
   cleanupAllListeners()

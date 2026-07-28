@@ -2,14 +2,17 @@ package server
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,49 +21,67 @@ import (
 const (
 	dashboardCookieName = "vote_admin"
 	dashboardCookieVal  = "v1"
+	// dashboardNonceBytes makes each minted cookie unique even when the
+	// expiry lands in the same second. Without it, signCookie is
+	// deterministic over (secret, expiry) and two logins within one
+	// second produce identical tokens — so revoking one would revoke
+	// both, and the S4 revocation test can't distinguish them.
+	dashboardNonceBytes = 16
 )
 
 // dashboardAuth holds the configuration for the cookie auth scheme. A zero
 // value (empty secret) means the dashboard is disabled.
+//
+// S4: a server-side revocation set backs logout. Without it, an exfiltrated
+// cookie stays valid until its embedded expiry (up to 7 days). Revoked
+// entries are keyed by the full cookie value and expire naturally at
+// maxAge, bounding the set's memory.
 type dashboardAuth struct {
-	secret []byte
-	maxAge time.Duration
+	secret  []byte
+	maxAge  time.Duration
+	mu      sync.Mutex
+	revoked map[string]time.Time
 }
 
 func newDashboardAuth(secret string, maxAge time.Duration) *dashboardAuth {
 	if secret == "" {
 		return nil
 	}
-	return &dashboardAuth{secret: []byte(secret), maxAge: maxAge}
+	return &dashboardAuth{secret: []byte(secret), maxAge: maxAge, revoked: make(map[string]time.Time)}
 }
 
 func (a *dashboardAuth) enabled() bool { return a != nil }
 
-// signCookie builds an HMAC-SHA256 over the payload (version + expiry) and
-// returns "payload.signature" both base64url-encoded. The signature binds the
-// expiry so a leaked cookie cannot have its lifetime extended without the
-// secret.
+// signCookie builds an HMAC-SHA256 over the payload (version + nonce +
+// expiry) and returns "payload.signature" both base64url-encoded. The nonce
+// makes each minting unique; the signature binds the expiry so a leaked
+// cookie cannot have its lifetime extended without the secret.
 func (a *dashboardAuth) signCookie(expiresAt time.Time) string {
+	nonce := make([]byte, dashboardNonceBytes)
+	if _, err := rand.Read(nonce); err != nil {
+		slog.Error("Failed to generate dashboard cookie nonce", "error", err)
+	}
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
-	payload := dashboardCookieVal + "." + exp
+	payload := dashboardCookieVal + "." + hex.EncodeToString(nonce) + "." + exp
 	mac := hmac.New(sha256.New, a.secret)
 	mac.Write([]byte(payload))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return payload + "." + sig
 }
 
-// verifyCookie validates both the signature and the expiry. Returns true only
-// when the signature matches (constant-time) AND the cookie has not expired.
+// verifyCookie validates the signature, the expiry, AND that the cookie has
+// not been revoked server-side. Returns true only when all three hold.
+// Format: v1.<nonce>.<expUnix>.<sig> (4 dot-separated parts).
 func (a *dashboardAuth) verifyCookie(raw string) bool {
 	if raw == "" {
 		return false
 	}
-	parts := strings.SplitN(raw, ".", 3)
-	if len(parts) != 3 {
+	parts := strings.SplitN(raw, ".", 4)
+	if len(parts) != 4 {
 		return false
 	}
-	payload := parts[0] + "." + parts[1]
-	gotSig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	payload := parts[0] + "." + parts[1] + "." + parts[2]
+	gotSig, err := base64.RawURLEncoding.DecodeString(parts[3])
 	if err != nil {
 		return false
 	}
@@ -73,28 +94,73 @@ func (a *dashboardAuth) verifyCookie(raw string) bool {
 	if parts[0] != dashboardCookieVal {
 		return false
 	}
-	expUnix, err := strconv.ParseInt(parts[1], 10, 64)
+	expUnix, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil {
 		return false
 	}
-	return time.Now().Before(time.Unix(expUnix, 0))
+	if !time.Now().Before(time.Unix(expUnix, 0)) {
+		return false
+	}
+	// S4: reject cookies that were revoked via /dashboard/logout.
+	a.mu.Lock()
+	_, revoked := a.revoked[raw]
+	a.mu.Unlock()
+	return !revoked
+}
+
+// revoke adds the presented cookie value to the revocation set so subsequent
+// presentations are rejected even though the signature and expiry would
+// otherwise still pass.
+func (a *dashboardAuth) revoke(raw string) {
+	if raw == "" {
+		return
+	}
+	a.mu.Lock()
+	a.revoked[raw] = time.Now()
+	a.mu.Unlock()
+}
+
+// purgeRevoked drops entries older than maxAge — the underlying cookie would
+// be expired by then anyway, so keeping them wastes memory. Called lazily on
+// revoke to amortize the scan.
+func (a *dashboardAuth) purgeRevoked() {
+	cutoff := time.Now().Add(-a.maxAge)
+	a.mu.Lock()
+	for k, t := range a.revoked {
+		if t.Before(cutoff) {
+			delete(a.revoked, k)
+		}
+	}
+	a.mu.Unlock()
 }
 
 // shouldUseSecureCookie returns true when the connection is encrypted (TLS) or
 // is not loopback. On plain-HTTP loopback (local dev) Secure is relaxed so the
 // browser actually persists the cookie; production behind TLS always sets it.
+//
+// S9: the loopback check uses RemoteAddr (set by the server from the actual
+// TCP peer) rather than the Host header, which is fully client-controlled.
+// An attacker who can inject a `Host: localhost` header over plain HTTP
+// would otherwise flip Secure=false and enable cookie theft over an
+// insecure hop.
 func shouldUseSecureCookie(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	if isLoopbackRemoteAddr(r.RemoteAddr) {
 		return false
 	}
 	return true
+}
+
+// isLoopbackRemoteAddr reports whether the TCP peer is a loopback address.
+func isLoopbackRemoteAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // requireAuth is the middleware protecting /dashboard. If the dashboard is
@@ -157,10 +223,16 @@ func (s *Server) handleDashboardLogin(c *gin.Context) {
 }
 
 // handleDashboardLogout clears the cookie and returns to the login page.
+// S4: the presented cookie is also added to the server-side revocation set
+// so a stolen copy stops working immediately, not at the embedded expiry.
 func (s *Server) handleDashboardLogout(c *gin.Context) {
 	if !s.auth.enabled() {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
+	}
+	if cookie, err := c.Cookie(dashboardCookieName); err == nil {
+		s.auth.revoke(cookie)
+		s.auth.purgeRevoked()
 	}
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(dashboardCookieName, "", -1, "/dashboard", "", shouldUseSecureCookie(c.Request), true)
