@@ -1,17 +1,55 @@
 # Sample Caddyfile for Vote Coloré
 #
-# Caddy serves the frontend static assets and proxies API/WebSocket
-# routes to the Go backend. TLS is handled automatically by Caddy.
+# Caddy serves the frontend static assets and proxies API/WebSocket,
+# health, and dashboard routes to the Go backend. TLS is handled
+# automatically by Caddy (auto-HTTPS via Let's Encrypt / ZeroSSL).
 #
 # Install: cp /usr/share/doc/vote/examples/Caddyfile /etc/caddy/Caddyfile
 # Adjust the domain name, then: systemctl reload caddy
 
 vote.example.com {
-	# Proxy API, WebSocket, and dashboard routes to the Go backend.
-	@api path /ws* /health /metrics /dashboard*
+	# Proxy every backend-owned route to the Go server. Includes the new
+	# D2/D9 endpoints (/version, /livez, /readyz) alongside the legacy
+	# /health so any external monitor wired to the old path keeps working.
+	@api path /ws* /livez /readyz /health /version /metrics /dashboard*
 	reverse_proxy @api localhost:8080
 
-	# Serve frontend static assets.
+	# Serve on-the-fly gzip/zstd compression for responses the reverse
+	# proxy generates (small JSON probes, /metrics text). WebSocket and
+	# HTTP/2 upgrades are skipped automatically by Caddy's encode layer.
+	encode gzip zstd
+
+	# Security headers (D12). HSTS is a one-way ratchet — only enable it
+	# once you're confident the site will always be served over HTTPS.
+	# Add `; includeSubDomains` only if you control every subdomain.
+	#
+	# Cache-Control defaults to no-cache: HTML entry points (served as
+	# /formateur/, /stagiaire/, or /formateur/index.html), the service
+	# worker (sw.js — whose update flow depends on re-validation), and
+	# the manifest all need to revalidate so new deploys are picked up.
+	# The hashed /assets/* override below sets an immutable policy.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# Prevent the app frames from being embedded by third parties.
+		X-Frame-Options DENY
+		-Server
+		Cache-Control "no-cache"
+	}
+
+	# Content-hashed Vite assets (/assets/*) are immutable: the filename
+	# changes whenever the content does, so a stale cache entry can never
+	# serve the wrong bytes. Cache them aggressively for a year.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	# Serve frontend static assets, preferring the build-time precompressed
+	# .gz / .br sidecars (emitted by frontend/scripts/compress-assets.js)
+	# so request-time encoding cost is zero. Caddy negotiates via
+	# Accept-Encoding and falls back to the raw file.
 	root * /usr/share/vote/www
-	file_server
+	file_server {
+		precompressed gzip br
+	}
 }

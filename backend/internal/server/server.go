@@ -200,19 +200,37 @@ func (s *Server) CloseStore() {
 func (s *Server) setupRoutes() {
 	s.setupCORS()
 
-	s.router.GET("/health", func(c *gin.Context) {
-		if s.hub.Context().Err() != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
-			return
-		}
-		metrics := s.hub.GetMetrics()
-		c.JSON(http.StatusOK, gin.H{
-			"status":         "ok",
-			"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
-			"metrics":        metrics,
-			"persistence":    s.store != nil,
-		})
-	})
+	// --- Health probes (D9) ---
+	//
+	// Two distinct probes following the Kubernetes convention, so an
+	// orchestrator can tell "process is hung" (liveness) from "process
+	// is up but should not receive traffic" (readiness):
+	//
+	//   /livez  — liveness. Returns 200 as long as the HTTP server is
+	//             answering requests. Cheap by design: no locks, no
+	//             stats reads. Use this for container HEALTHCHECK and
+	//             liveness probes so a graceful drain does not get the
+	//             process killed mid-shutdown.
+	//
+	//   /readyz — readiness. Returns 503 while the hub is draining
+	//             (its context cancelled during shutdown); 200
+	//             otherwise. Use this for load-balancer / readiness
+	//             probes so traffic stops routing during drain.
+	//
+	// /health is kept as a backward-compatible alias of /readyz for the
+	// CI wait loop, the e2e webServer probe, and any external monitors
+	// already wired to it. It still returns the enriched payload
+	// (uptime, metrics, persistence) those callers were built against.
+	s.router.GET("/livez", s.handleLivez)
+	s.router.GET("/readyz", s.handleReadyz)
+	s.router.GET("/health", s.handleHealth)
+
+	// D2: public build metadata. Mirrors the vote_build_info metric but
+	// in a JSON shape that humans and non-Prometheus monitors can read
+	// without parsing the exposition format. Public on purpose — the
+	// version is already exposed via /metrics and helps operators
+	// confirm which image a load-balanced node is serving.
+	s.router.GET("/version", s.handleVersion)
 
 	s.router.GET("/ws", s.handleWebSocket)
 	s.router.GET("/metrics", s.handleMetrics)
@@ -267,6 +285,57 @@ func (s *Server) setupCORS() {
 		},
 		MaxAge: 12 * time.Hour,
 	}))
+}
+
+func (s *Server) handleVersion(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"version":    s.buildInfo.versionOrDefault(),
+		"build_time": s.buildInfo.buildTimeOrDefault(),
+		"git_commit": s.buildInfo.gitCommitOrDefault(),
+	})
+}
+
+// handleLivez is the liveness probe: the fact that the request reached a
+// handler means the HTTP server goroutine is scheduling, so we return
+// 200 with a tiny payload. Intentionally cheap — no locks, no stats
+// reads — so a deadlocked hot path still trips the probe.
+func (s *Server) handleLivez(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "alive",
+		"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
+	})
+}
+
+// handleReadyz is the readiness probe. The hub's context is cancelled
+// during Shutdown, so a non-nil Err() means we are draining and must
+// stop receiving traffic. Otherwise we are ready.
+func (s *Server) handleReadyz(c *gin.Context) {
+	if s.hub.Context().Err() != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "ready",
+		"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
+		"persistence":    s.store != nil,
+	})
+}
+
+// handleHealth is the backward-compatible alias of /readyz, retaining
+// the enriched payload (metrics + persistence + uptime) that existing
+// monitors and CI wait-loops were built against.
+func (s *Server) handleHealth(c *gin.Context) {
+	if s.hub.Context().Err() != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
+		return
+	}
+	metrics := s.hub.GetMetrics()
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "ok",
+		"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
+		"metrics":        metrics,
+		"persistence":    s.store != nil,
+	})
 }
 
 func (s *Server) handleWebSocket(c *gin.Context) {

@@ -20,6 +20,17 @@ backend/tmp/
 # Node
 node_modules/
 frontend/dist/
+**/playwright-report/
+**/test-results/
+
+# Persistent state + caches (D11)
+# data/ holds runtime stats written by local dev runs; never needed in
+# the image. The .gocache/.gomodcache dirs are created by debian/rules
+# (export GOCACHE/GOMODCACHE) and would bloat the build context.
+data/
+.gocache/
+.gomodcache/
+*.log
 
 # Environment
 .env

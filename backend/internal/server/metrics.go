@@ -15,10 +15,41 @@ import (
 type buildInfo struct {
 	Version   string
 	BuildTime string
+	GitCommit string
 }
 
-func (s *Server) SetBuildInfo(version, buildTime string) {
-	s.buildInfo = buildInfo{Version: version, BuildTime: buildTime}
+// SetBuildInfo stores the build metadata injected via -ldflags so the
+// /version endpoint and the vote_build_info metric can report it. All
+// three values are operator-set at build time; missing values surface as
+// the literal "unknown" rather than empty strings, which keeps the JSON
+// output stable for monitors that parse it.
+func (s *Server) SetBuildInfo(version, buildTime, gitCommit string) {
+	s.buildInfo = buildInfo{
+		Version:   version,
+		BuildTime: buildTime,
+		GitCommit: gitCommit,
+	}
+}
+
+func (b buildInfo) versionOrDefault() string {
+	if b.Version != "" {
+		return b.Version
+	}
+	return "unknown"
+}
+
+func (b buildInfo) buildTimeOrDefault() string {
+	if b.BuildTime != "" {
+		return b.BuildTime
+	}
+	return "unknown"
+}
+
+func (b buildInfo) gitCommitOrDefault() string {
+	if b.GitCommit != "" {
+		return b.GitCommit
+	}
+	return "unknown"
 }
 
 func (s *Server) handleMetrics(c *gin.Context) {
@@ -67,8 +98,11 @@ func (s *Server) handleMetrics(c *gin.Context) {
 	writeGauge(&b, "go_mem_heap_objects", "Number of allocated heap objects", float64(memStats.HeapObjects))
 	writeGauge(&b, "go_gc_total", "Total number of GC cycles", float64(memStats.NumGC))
 
-	if s.buildInfo.Version != "" {
-		writeInfoMetric(&b, "vote_build_info", s.buildInfo.Version, s.buildInfo.BuildTime)
+	if s.buildInfo.Version != "" || s.buildInfo.GitCommit != "" {
+		writeInfoMetric(&b, "vote_build_info",
+			s.buildInfo.versionOrDefault(),
+			s.buildInfo.buildTimeOrDefault(),
+			s.buildInfo.gitCommitOrDefault())
 	}
 
 	c.String(200, b.String())
@@ -139,9 +173,9 @@ func escapeLabelValue(v string) string {
 	return b.String()
 }
 
-func writeInfoMetric(b *strings.Builder, name, version, buildTime string) {
+func writeInfoMetric(b *strings.Builder, name, version, buildTime, gitCommit string) {
 	fmt.Fprintf(b, "# HELP %s Build information\n", name)
 	fmt.Fprintf(b, "# TYPE %s gauge\n", name)
-	fmt.Fprintf(b, `%s{version="%s",build_time="%s"} 1`+"\n",
-		name, escapeLabelValue(version), escapeLabelValue(buildTime))
+	fmt.Fprintf(b, `%s{version="%s",build_time="%s",git_commit="%s"} 1`+"\n",
+		name, escapeLabelValue(version), escapeLabelValue(buildTime), escapeLabelValue(gitCommit))
 }

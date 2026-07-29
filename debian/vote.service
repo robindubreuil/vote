@@ -2,6 +2,13 @@
 Description=Vote Coloré - Real-time voting server
 After=network.target
 Documentation=https://github.com/robindubreuil/vote
+# D8: restart-rate limiter. Unattended classroom hardware (Pi, thin
+# clients) will OOM-kill the process or trip a kernel glitch that makes
+# the server crash-loop. Bound the restart storm: at most 5 starts per
+# 60s, then systemd leaves the unit in "failed" for an admin to inspect
+# rather than burning CPU forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -9,8 +16,19 @@ User=vote
 Group=vote
 EnvironmentFile=-/etc/default/vote
 ExecStart=/usr/bin/vote-server
-Restart=on-failure
+# D8: Restart=always recovers from OOM-kill (SIGKILL → exit 137) and
+# clean-but-unexpected exits (a Go runtime fatal exits non-zero) —
+# on-failure would leave the service down on a clean exit, which on
+# classroom hardware usually means a transient fault we want to ride
+# through. systemctl stop is still honoured: systemd sets an internal
+# "manually stopped" flag that suppresses Restart regardless of policy.
+# 143 = 128 + SIGTERM(15): a process terminated by an external SIGTERM
+# (e.g. a monitoring/supervisor script other than systemd) is treated as
+# an intentional "stay down" and is NOT restarted, so a graceful
+# shutdown initiated from outside systemd is respected.
+Restart=always
 RestartSec=5s
+RestartPreventExitStatus=143
 
 # Security hardening
 NoNewPrivileges=true
