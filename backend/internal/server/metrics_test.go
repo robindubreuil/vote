@@ -17,6 +17,7 @@ func TestWriteInfoMetricEscapesLabelValues(t *testing.T) {
 		name      string
 		version   string
 		buildTime string
+		gitCommit string
 		// expectedRawSubstrings must appear verbatim in the output (after
 		// escaping). Each case asserts the wire-level escape sequence.
 		expectedRawSubstrings []string
@@ -28,12 +29,14 @@ func TestWriteInfoMetricEscapesLabelValues(t *testing.T) {
 			name:                  "plain ascii passes through",
 			version:               "1.2.3",
 			buildTime:             "2026-01-01",
-			expectedRawSubstrings: []string{`version="1.2.3"`, `build_time="2026-01-01"`},
+			gitCommit:             "abc1234",
+			expectedRawSubstrings: []string{`version="1.2.3"`, `build_time="2026-01-01"`, `git_commit="abc1234"`},
 		},
 		{
 			name:                  "double-quote in version",
 			version:               `evil"version`,
 			buildTime:             "2026-01-01",
+			gitCommit:             "abc1234",
 			expectedRawSubstrings: []string{`version="evil\"version"`},
 			forbiddenRawSubstrings: []string{
 				`version="evil"version"`, // unescaped quote closes the label early
@@ -43,6 +46,7 @@ func TestWriteInfoMetricEscapesLabelValues(t *testing.T) {
 			name:                   "backslash in version",
 			version:                `win\path`,
 			buildTime:              "2026-01-01",
+			gitCommit:              "abc1234",
 			expectedRawSubstrings:  []string{`version="win\\path"`},
 			forbiddenRawSubstrings: []string{`version="win\path"`},
 		},
@@ -50,6 +54,7 @@ func TestWriteInfoMetricEscapesLabelValues(t *testing.T) {
 			name:      "newline in build_time",
 			version:   "1.2.3",
 			buildTime: "line one\nline two",
+			gitCommit: "abc1234",
 			expectedRawSubstrings: []string{
 				`build_time="line one\nline two"`,
 				"\n", // the surrounding metric line still ends with a real newline
@@ -62,17 +67,18 @@ func TestWriteInfoMetricEscapesLabelValues(t *testing.T) {
 			},
 		},
 		{
-			name:                  "all three specials combined",
+			name:                  "all three specials combined across all labels",
 			version:               `a"b\c`,
 			buildTime:             "x\ny",
-			expectedRawSubstrings: []string{`version="a\"b\\c"`, `build_time="x\ny"`},
+			gitCommit:             `d"e`,
+			expectedRawSubstrings: []string{`version="a\"b\\c"`, `build_time="x\ny"`, `git_commit="d\"e"`},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var b strings.Builder
-			writeInfoMetric(&b, "vote_build_info", tc.version, tc.buildTime)
+			writeInfoMetric(&b, "vote_build_info", tc.version, tc.buildTime, tc.gitCommit)
 			got := b.String()
 
 			for _, want := range tc.expectedRawSubstrings {

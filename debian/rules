@@ -24,7 +24,7 @@ override_dh_auto_configure:
 override_dh_auto_build:
 	# Build Backend
 	cd backend && go build \
-		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -s -w" \
+		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -X main.buildTime=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ") -X main.gitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -s -w" \
 		-o ../vote-server ./cmd/server
 
 	# Build Frontend (single build for both formateur & stagiaire)

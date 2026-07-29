@@ -81,11 +81,153 @@ func TestHealthCheck(t *testing.T) {
 	}
 }
 
+// TestLivezIsCheapLiveness is the D9 liveness contract: /livez returns
+// 200 the moment the HTTP server can route the request, with a small
+// payload. It must NOT fail when the hub is draining — draining is a
+// readiness concept, and a graceful drain must not get the process
+// killed by a liveness probe mid-shutdown. It also must not touch the
+// store or metrics (those would make it expensive and could hang).
+func TestLivezIsCheapLiveness(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	srv := NewServer(cfg, h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/livez", nil)
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("Expected 200 from /livez, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); !strings.Contains(got, `"alive"`) {
+		t.Errorf("/livez body missing status=alive: %s", got)
+	}
+
+	// Draining hub must still return 200 from /livez (liveness ≠ readiness).
+	h.Shutdown()
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/livez", nil)
+	srv.router.ServeHTTP(w2, req2)
+	if w2.Code != 200 {
+		t.Errorf("Expected /livez to stay 200 during drain (liveness), got %d", w2.Code)
+	}
+}
+
+// TestReadyzReflectsDrain is the D9 readiness contract: /readyz is 200
+// normally, 503 once the hub's context is cancelled (draining). A
+// load-balancer wired to /readyz stops routing traffic during a graceful
+// shutdown.
+func TestReadyzReflectsDrain(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	srv := NewServer(cfg, h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/readyz", nil)
+	srv.router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("Expected 200 from /readyz when healthy, got %d", w.Code)
+	}
+	if got := w.Body.String(); !strings.Contains(got, `"ready"`) {
+		t.Errorf("/readyz body missing status=ready: %s", got)
+	}
+
+	// Cancel the hub context to simulate Shutdown's drain phase.
+	h.Shutdown()
+
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/readyz", nil)
+	srv.router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected 503 from /readyz while draining, got %d (body=%s)", w2.Code, w2.Body.String())
+	}
+	if got := w2.Body.String(); !strings.Contains(got, `"draining"`) {
+		t.Errorf("/readyz body missing status=draining: %s", got)
+	}
+}
+
+// TestHealthAliasStillDrains pins the backward-compat contract for the
+// legacy /health path: external monitors and the CI wait-loop were built
+// against /health reporting 503 while draining, so the alias must keep
+// that behaviour rather than silently becoming always-200.
+func TestHealthAliasStillDrains(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	srv := NewServer(cfg, h)
+
+	h.Shutdown()
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	srv.router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("legacy /health must report 503 while draining, got %d", w.Code)
+	}
+}
+
+// TestVersionEndpoint is the D2 contract: /version returns JSON with
+// version, build_time, and git_commit. Missing values surface as the
+// literal "unknown" so the JSON shape is stable for monitors that
+// parse it (empty strings would be ambiguous). This is public — the
+// version is already exposed via the vote_build_info metric.
+func TestVersionEndpoint(t *testing.T) {
+	t.Run("populated", func(t *testing.T) {
+		cfg := &config.Config{Port: "8080"}
+		h := hub.NewHub(cfg)
+		srv := NewServer(cfg, h)
+		srv.SetBuildInfo("1.4.0", "2026-07-29T10:00:00Z", "abc1234")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/version", nil)
+		srv.router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("Expected 200, got %d", w.Code)
+		}
+		got := w.Body.String()
+		for _, want := range []string{
+			`"version":"1.4.0"`,
+			`"build_time":"2026-07-29T10:00:00Z"`,
+			`"git_commit":"abc1234"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("/version body missing %q\nbody: %s", want, got)
+			}
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Errorf("expected json content-type, got %q", ct)
+		}
+	})
+
+	t.Run("defaults_to_unknown", func(t *testing.T) {
+		cfg := &config.Config{Port: "8080"}
+		h := hub.NewHub(cfg)
+		srv := NewServer(cfg, h)
+		// No SetBuildInfo call — defaults to zero values.
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/version", nil)
+		srv.router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("Expected 200, got %d", w.Code)
+		}
+		got := w.Body.String()
+		// All three must surface as "unknown", never as empty strings,
+		// so the JSON shape is stable for parse-once monitors.
+		for _, want := range []string{`"version":"unknown"`, `"build_time":"unknown"`, `"git_commit":"unknown"`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("/version body missing default %q\nbody: %s", want, got)
+			}
+		}
+	})
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	cfg := &config.Config{Port: "8080"}
 	h := hub.NewHub(cfg)
 	srv := NewServer(cfg, h)
-	srv.SetBuildInfo("test-version", "2026-01-01")
+	srv.SetBuildInfo("test-version", "2026-01-01", "test-commit")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/metrics", nil)
@@ -113,7 +255,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		"# HELP go_goroutines",
 		"# HELP go_mem_alloc_bytes",
 		"# HELP go_gc_total",
-		`vote_build_info{version="test-version",build_time="2026-01-01"} 1`,
+		`vote_build_info{version="test-version",build_time="2026-01-01",git_commit="test-commit"} 1`,
 	}
 
 	for _, expected := range expectedMetrics {

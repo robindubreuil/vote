@@ -293,7 +293,7 @@ func TestMetricsEndpointProductCounters(t *testing.T) {
 	mgr.SubmitVote("ABC", "stagiaire001", []string{"rouge"})
 
 	srv := NewServer(cfg, h)
-	srv.SetBuildInfo("test-version", "2026-01-01")
+	srv.SetBuildInfo("test-version", "2026-01-01", "deadbeef")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/metrics", nil)
@@ -345,7 +345,7 @@ func TestMetricsEndpointLabeledSeriesExposition(t *testing.T) {
 	mgr.RemoveSession("ABC") // observe one ended session in every histogram
 
 	srv := NewServer(cfg, h)
-	srv.SetBuildInfo("test-version", "2026-01-01")
+	srv.SetBuildInfo("test-version", "2026-01-01", "deadbeef")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/metrics", nil)
@@ -373,7 +373,7 @@ func TestMetricsEndpointLabeledSeriesExposition(t *testing.T) {
 		`vote_trainees_per_session_bucket{le="1"}`,
 		`vote_trainees_per_session_bucket{le="+Inf"}`,
 		`vote_trainees_per_session_count`,
-		`vote_build_info{version="test-version",build_time="2026-01-01"}`,
+		`vote_build_info{version="test-version",build_time="2026-01-01",git_commit="deadbeef"}`,
 	}
 	for _, key := range requiredLabeledKeys {
 		// Match the key as the start of a whitespace-or-value-terminated token
@@ -432,7 +432,7 @@ func TestDashboardParseMetricsHandlesLabeledLines(t *testing.T) {
 	mgr.RemoveSession("ABC")
 
 	srv := NewServer(cfg, h)
-	srv.SetBuildInfo("v", "bt")
+	srv.SetBuildInfo("v", "bt", "gc")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/metrics", nil)
@@ -452,7 +452,7 @@ func TestDashboardParseMetricsHandlesLabeledLines(t *testing.T) {
 		{`vote_votes_per_session_bucket{le="+Inf"}`, "votes bucket +Inf"},
 		{`vote_votes_per_session_count`, "votes count"},
 		{`vote_trainees_per_session_bucket{le="1"}`, "trainees bucket le=1"},
-		{`vote_build_info{version="v",build_time="bt"}`, "build info"},
+		{`vote_build_info{version="v",build_time="bt",git_commit="gc"}`, "build info"},
 		{`vote_sessions_created_total`, "unlabeled counter"},
 	}
 	for _, c := range cases {
@@ -479,7 +479,7 @@ func TestDashboardParseMetricsHandlesLabeledLines(t *testing.T) {
 	if got := parsed[`vote_votes_per_session_bucket{le="+Inf"}`]; got != 1 {
 		t.Errorf("votes bucket +Inf: expected 1, got %v", got)
 	}
-	if got := parsed[`vote_build_info{version="v",build_time="bt"}`]; got != 1 {
+	if got := parsed[`vote_build_info{version="v",build_time="bt",git_commit="gc"}`]; got != 1 {
 		t.Errorf("build_info value: expected 1, got %v", got)
 	}
 }

@@ -97,6 +97,19 @@ Generate a strong secret:
 openssl rand -base64 32   # then export VOTE_DASHBOARD_SECRET=<that>
 ```
 
+### Health & version probes
+
+The server exposes distinct liveness and readiness endpoints (plus a public build-info endpoint) so an orchestrator or load balancer can tell "process is hung" from "process is up but draining":
+
+| Endpoint | Purpose | 200 | Non-200 |
+|----------|---------|-----|---------|
+| `GET /livez` | Liveness — is the process scheduling requests? | always, even while draining | never (the probe only fails if the server stops answering) |
+| `GET /readyz` | Readiness — should traffic be routed here? | hub healthy | `503` while draining (during graceful shutdown) |
+| `GET /health` | Legacy alias of `/readyz` with the enriched payload (`metrics` + `persistence` + `uptime_seconds`) kept for existing monitors | hub healthy | `503` while draining |
+| `GET /version` | Public build metadata JSON: `{version, build_time, git_commit}` (missing values surface as `"unknown"`) | always | — |
+
+Use `/livez` for the container `HEALTHCHECK` and liveness probes (so a graceful drain doesn't get the process killed mid-shutdown) and `/readyz` for load-balancer / readiness probes. The distroless container image runs `vote-server --health` as its `HEALTHCHECK` (an in-process GET to `/livez` on loopback) because the image ships no shell, wget, or curl.
+
 
 ## Production Build
 
