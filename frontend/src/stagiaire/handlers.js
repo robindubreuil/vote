@@ -9,7 +9,7 @@ import { getClient } from './websocket.js'
 import { Mastermind, getDifficulty, getLevelProgress, streakMultiplier } from './game.js'
 import { loadHighScore, hasSeenRules, markRulesSeen } from '@shared/game-storage.js'
 import { COLORS, escapeHtml } from '@shared/colors.js'
-import { safeLocalSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
+import { safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 
 // connectToSession function - will be set by main.js
 let connectToSessionFn = null
@@ -92,7 +92,7 @@ function renderBoard() {
   if (progEl) {
     const prog = getLevelProgress(boardState.best)
     progEl.style.width = `${prog.pct}%`
-    progEl.title = prog.toNext > 0 ? `Plus que ${prog.toNext} pts → Niveau ${boardState.level + 1}` : 'Niveau maximum'
+    progEl.title = prog.toNext > 0 ? t.stagiaire.gameLevelProgressTitle(prog.toNext, boardState.level + 1) : t.stagiaire.gameLevelMax
   }
   const streakEl = document.getElementById('gameStreak')
   if (streakEl) streakEl.textContent = String(boardState.streak)
@@ -174,7 +174,7 @@ function renderPastRow(guess, peg, codeLength, rowIndex, animate = false) {
   const slots = guess
     .map(
       (id) => `
-      <span class="game-slot game-slot-filled bg-${id}" aria-label="Couleur placée"></span>`
+      <span class="game-slot game-slot-filled bg-${id}" aria-label="${t.stagiaire.gameSlotFilled}"></span>`
     )
     .join('')
   const pegs = []
@@ -182,13 +182,13 @@ function renderPastRow(guess, peg, codeLength, rowIndex, animate = false) {
   for (let i = 0; i < peg.black; i++) {
     const cls = animate ? 'game-peg game-peg-black game-peg-pop' : 'game-peg game-peg-black'
     const style = animate ? ` style="animation-delay:${di * 80}ms"` : ''
-    pegs.push(`<span class="${cls}"${style} aria-label="Pion doré"></span>`)
+    pegs.push(`<span class="${cls}"${style} aria-label="${t.stagiaire.gamePegBlack}"></span>`)
     di++
   }
   for (let i = 0; i < peg.white; i++) {
     const cls = animate ? 'game-peg game-peg-white game-peg-pop' : 'game-peg game-peg-white'
     const style = animate ? ` style="animation-delay:${di * 80}ms"` : ''
-    pegs.push(`<span class="${cls}"${style} aria-label="Pion blanc"></span>`)
+    pegs.push(`<span class="${cls}"${style} aria-label="${t.stagiaire.gamePegWhite}"></span>`)
     di++
   }
   for (let i = 0; i < Math.max(0, codeLength - peg.black - peg.white); i++) {
@@ -209,8 +209,8 @@ function renderCurrentRow(currentRow, codeLength, rowIndex) {
   const slots = currentRow
     .map((id, i) =>
       id === null
-        ? `<span class="game-slot game-slot-empty" data-slot="${i}" role="button" tabindex="0" aria-label="Emplacement vide"></span>`
-        : `<span class="game-slot game-slot-filled bg-${id}" data-slot="${i}" role="button" tabindex="0" aria-label="Couleur placée"></span>`
+        ? `<span class="game-slot game-slot-empty" data-slot="${i}" role="button" tabindex="0" aria-label="${t.stagiaire.gameSlotEmpty}"></span>`
+        : `<span class="game-slot game-slot-filled bg-${id}" data-slot="${i}" role="button" tabindex="0" aria-label="${t.stagiaire.gameSlotFilled}"></span>`
     )
     .join('')
   return `
@@ -460,8 +460,12 @@ export function handleJoin(e) {
   state.sessionCode = code
   if (codeInput) codeInput.value = code // reflect normalized uppercase back to UI
 
-  // Sauvegarder le prénom
-  safeLocalSet('vote_stagiaire_prenom', prenom)
+  // F15: prenom is persisted in sessionStorage (not localStorage) so it
+  // is scoped to the tab — same boundary as the reclaim token and
+  // stagiaire ID. Closing the tab clears it; a different student on a
+  // shared tablet starts fresh instead of auto-joining under the
+  // previous user's name.
+  safeSessionSet('vote_stagiaire_prenom', prenom)
 
   connectToSessionFn(code)
 }
@@ -500,7 +504,7 @@ export function handleEditName(e) {
   }
 
   state.prenom = newPrenom
-  safeLocalSet('vote_stagiaire_prenom', newPrenom)
+  safeSessionSet('vote_stagiaire_prenom', newPrenom)
 
   const client = getClient()
   if (client) {

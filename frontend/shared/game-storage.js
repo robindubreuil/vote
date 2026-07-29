@@ -69,10 +69,19 @@ export function saveStreak(n) {
   }
 }
 
-export function _resetForTests() {
-  safeLocalRemove(HIGH_SCORE_KEY)
-  safeLocalRemove(SEEN_RULES_KEY)
-  safeLocalRemove(STREAK_KEY)
-}
-
-export const _constants = { HIGH_SCORE_KEY, SEEN_RULES_KEY, STREAK_KEY }
+// F17: test-only surface is gated behind `import.meta.env.DEV`. In
+// production builds Vite statically replaces the flag with `false` and
+// Rollup's dead-code elimination collapses this to `export const _test =
+// null`, so the helper (a) is not in the shipped bundle and (b) cannot
+// be invoked from the console to wipe a user's high score. Vitest runs
+// in dev mode, so tests still see the live object.
+export const _test = import.meta.env.DEV
+  ? {
+      resetForTests() {
+        safeLocalRemove(HIGH_SCORE_KEY)
+        safeLocalRemove(SEEN_RULES_KEY)
+        safeLocalRemove(STREAK_KEY)
+      },
+      constants: { HIGH_SCORE_KEY, SEEN_RULES_KEY, STREAK_KEY }
+    }
+  : null

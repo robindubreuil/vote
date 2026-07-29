@@ -29,43 +29,43 @@ export function renderLayout(app) {
       <div class="game-frame">
         <div class="game-hud">
           <div class="game-hud-stat">
-            <span class="game-hud-label">${t.stagiaire?.gameBest || 'Record'}</span>
+            <span class="game-hud-label">${t.stagiaire.gameBest}</span>
             <span class="game-hud-value" id="gameBest">0</span>
           </div>
           <div class="game-hud-stat game-hud-stat-level">
-            <span class="game-hud-label">${t.stagiaire?.gameLevel || 'Niveau'}</span>
+            <span class="game-hud-label">${t.stagiaire.gameLevel}</span>
             <span class="game-hud-value" id="gameLevel">1</span>
             <div class="game-hud-progress"><div class="game-hud-progress-bar" id="gameLevelProgress"></div></div>
           </div>
           <div class="game-hud-stat">
-            <span class="game-hud-label">${t.stagiaire?.gameStreak || 'Série'}</span>
+            <span class="game-hud-label">${t.stagiaire.gameStreak}</span>
             <span class="game-hud-value">
               <span id="gameStreak">0</span><span class="game-mult-badge" id="gameMultBadge" hidden></span>
             </span>
           </div>
           <div class="game-hud-stat">
-            <span class="game-hud-label">${t.stagiaire?.gameAttempts || 'Coups restants'}</span>
+            <span class="game-hud-label">${t.stagiaire.gameAttempts}</span>
             <span class="game-hud-value" id="gameAttempts">8</span>
           </div>
-          <button type="button" class="btn btn-secondary btn-small game-rules-btn" id="gameRulesBtn" aria-label="${t.stagiaire?.gameHowToPlay || 'Comment jouer'}">
+          <button type="button" class="btn btn-secondary btn-small game-rules-btn" id="gameRulesBtn" aria-label="${t.stagiaire.gameHowToPlay}">
             ?
           </button>
-          <button type="button" class="btn btn-secondary btn-small game-quit-btn" id="gameQuitBtn" aria-label="${t.stagiaire?.quitGame || 'Quitter'}">
-            ${t.stagiaire?.quitGame || 'Quitter'}
+          <button type="button" class="btn btn-secondary btn-small game-quit-btn" id="gameQuitBtn" aria-label="${t.stagiaire.quitGame}">
+            ${t.stagiaire.quitGame}
           </button>
         </div>
         <div class="game-board-wrap">
-          <ol class="game-board" id="gameBoard" aria-label="Plateau de jeu"></ol>
-          <div class="game-palette" id="gamePalette" aria-label="Palette de couleurs"></div>
+          <ol class="game-board" id="gameBoard" aria-label="${t.stagiaire.gameBoardAriaLabel}"></ol>
+          <div class="game-palette" id="gamePalette" aria-label="${t.stagiaire.gamePaletteAriaLabel}"></div>
           <div class="game-actions">
-            <button type="button" class="btn btn-secondary" id="gameClearBtn">${t.stagiaire?.gameClear || 'Effacer'}</button>
-            <button type="button" class="btn btn-primary btn-large" id="gameSubmitBtn">${t.stagiaire?.gameValidate || 'Valider'}</button>
+            <button type="button" class="btn btn-secondary" id="gameClearBtn">${t.stagiaire.gameClear}</button>
+            <button type="button" class="btn btn-primary btn-large" id="gameSubmitBtn">${t.stagiaire.gameValidate}</button>
           </div>
         </div>
         <div class="game-overlay-screen" id="gamePauseScreen" hidden>
-          <div class="game-screen-title">${t.stagiaire?.gamePaused || 'Pause'}</div>
-          <button type="button" class="btn btn-primary" id="gameResumeBtn">${t.stagiaire?.gameResume || 'Reprendre'}</button>
-          <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromPauseBtn">${t.stagiaire?.quitGame || 'Quitter'}</button>
+          <div class="game-screen-title">${t.stagiaire.gamePaused}</div>
+          <button type="button" class="btn btn-primary" id="gameResumeBtn">${t.stagiaire.gameResume}</button>
+          <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromPauseBtn">${t.stagiaire.quitGame}</button>
         </div>
         <div class="game-overlay-screen" id="gameOverScreen" hidden>
           <div class="game-screen-levelup" id="gameLevelUp" hidden></div>
@@ -74,23 +74,23 @@ export function renderLayout(app) {
           <div class="game-screen-score" id="gameOverScore"></div>
           <div class="game-screen-best" id="gameOverBest" hidden></div>
           <div class="game-screen-secret" id="gameOverSecret"></div>
-          <button type="button" class="btn btn-primary btn-large" id="gameRestartBtn">${t.stagiaire?.gameNewGame || 'Nouvelle partie'}</button>
-          <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromOverBtn">${t.stagiaire?.quitGame || 'Quitter'}</button>
+          <button type="button" class="btn btn-primary btn-large" id="gameRestartBtn">${t.stagiaire.gameNewGame}</button>
+          <button type="button" class="btn btn-secondary btn-small" id="gameQuitFromOverBtn">${t.stagiaire.quitGame}</button>
         </div>
         <div class="game-overlay-screen" id="gameRulesScreen" hidden>
-          <div class="game-screen-title">${t.stagiaire?.gameRulesTitle || 'Comment jouer'}</div>
+          <div class="game-screen-title">${t.stagiaire.gameRulesTitle}</div>
           <ul class="game-rules-list">
-            ${(t.stagiaire?.gameRules || []).map((r) => `<li>${r}</li>`).join('')}
+            ${t.stagiaire.gameRules.map((r) => `<li>${r}</li>`).join('')}
           </ul>
           <div class="game-peg-example">
-            <span class="game-peg game-peg-black" aria-label="Pion doré"></span>
-            <span class="game-peg-label">bonne couleur, bonne position</span>
+            <span class="game-peg game-peg-black" aria-label="${t.stagiaire.gamePegBlack}"></span>
+            <span class="game-peg-label">${t.stagiaire.gamePegBlackDesc}</span>
           </div>
           <div class="game-peg-example">
-            <span class="game-peg game-peg-white" aria-label="Pion blanc"></span>
-            <span class="game-peg-label">bonne couleur, mauvaise position</span>
+            <span class="game-peg game-peg-white" aria-label="${t.stagiaire.gamePegWhite}"></span>
+            <span class="game-peg-label">${t.stagiaire.gamePegWhiteDesc}</span>
           </div>
-          <button type="button" class="btn btn-primary" id="gameRulesCloseBtn">OK</button>
+          <button type="button" class="btn btn-primary" id="gameRulesCloseBtn">${t.stagiaire.gameRulesOk}</button>
         </div>
       </div>
     </div>

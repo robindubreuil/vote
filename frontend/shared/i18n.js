@@ -8,8 +8,18 @@ export const t = {
     cancel: 'Annuler',
     save: 'Enregistrer',
     confirm: 'Confirmer',
+    // Anonymous stagiaire fallback (used when a stagiaire has no name
+    // yet, e.g. mid-join or in the leaderboard). Lives under common
+    // because both formateur and stagiaire bundles reach for it (F9).
+    anonymous: 'Anonyme',
     unexpectedError: 'Une erreur inattendue est survenue',
-    sessionError: 'Session interrompue — rechargez la page si le problème persiste'
+    sessionError: 'Session interrompue — rechargez la page si le problème persiste',
+    // PWA toasts (pwa.js). Inlined in the code before F9; now centralised
+    // so a wording change is a one-line edit (F9).
+    pwaUpdateAvailable: 'Une nouvelle version est disponible.',
+    pwaReload: 'Recharger',
+    pwaClose: 'Fermer',
+    pwaOffline: 'Hors ligne — les votes ne sont pas reçus.'
   },
   stagiaire: {
     // From frontend-stagiaire main.js
@@ -36,6 +46,13 @@ export const t = {
     codeRequired: 'Le code session est requis',
     invalidCode: 'Le code doit contenir 3 lettres',
     connectionError: 'Erreur de connexion',
+    // Server-sent French sentinel for "reclaim token rejected" (S6/S12).
+    // Kept in sync with backend/internal/vote/errors.go:ErrReclaimUnauthorized.
+    // The websocket layer compares the incoming message against this
+    // string so it can transparently retry as a fresh identity. Centralising
+    // it here means a wording change is a two-file edit instead of a
+    // silent break (F9).
+    sessionExpired: 'Session expirée — veuillez recréer votre identité',
     leaveSession: 'Voulez-vous vraiment quitter cette session ?',
     leaveSessionTitle: 'Quitter la session',
     leave: 'Quitter',
@@ -69,7 +86,21 @@ export const t = {
       'Pion blanc = bonne couleur, mauvaise position.',
       'Moins vous utilisez de coups, plus vous marquez de points.'
     ],
-    gameHowToPlay: 'Comment jouer ?'
+    gameHowToPlay: 'Comment jouer ?',
+    // Game board a11y labels (F9). Previously inlined as aria-label
+    // strings inside handlers.js / renderers.js — centralising them
+    // here means a screen-reader wording tweak is one edit.
+    gameBoardAriaLabel: 'Plateau de jeu',
+    gamePaletteAriaLabel: 'Palette de couleurs',
+    gameSlotEmpty: 'Emplacement vide',
+    gameSlotFilled: 'Couleur placée',
+    gamePegBlack: 'Pion doré',
+    gamePegWhite: 'Pion blanc',
+    gamePegBlackDesc: 'bonne couleur, bonne position',
+    gamePegWhiteDesc: 'bonne couleur, mauvaise position',
+    gameRulesOk: 'OK',
+    gameLevelProgressTitle: (toNext, level) => `Plus que ${toNext} pts → Niveau ${level}`,
+    gameLevelMax: 'Niveau maximum'
   },
   formateur: {
     // From frontend-formateur main.js
@@ -99,7 +130,6 @@ export const t = {
     leave: 'Quitter',
     availableColors: 'Couleurs disponibles',
     votes: 'votes',
-    anonymous: 'Anonyme',
     online: 'En ligne',
     offline: 'Hors ligne',
     connectionAid: 'Aide à la connexion',

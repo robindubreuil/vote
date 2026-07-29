@@ -252,11 +252,15 @@ export function deserializePresets(jsonText) {
   return { ok: true, imported, skipped }
 }
 
-// Test-only: clear everything. Used by unit tests; not exported through
-// the public surface used by the UI.
-export function _resetForTests() {
-  safeLocalRemove(PRESETS_KEY)
-  safeLocalRemove(LAST_CONFIG_KEY)
-}
-
-export const _constants = { PRESETS_KEY, LAST_CONFIG_KEY, SCHEMA_VERSION, MAX_PRESETS }
+// F17: test-only surface is gated behind `import.meta.env.DEV`. See
+// game-storage.js for the rationale (bundle bloat + console-callable
+// surface). Vitest sees the live object; production sees `null`.
+export const _test = import.meta.env.DEV
+  ? {
+      resetForTests() {
+        safeLocalRemove(PRESETS_KEY)
+        safeLocalRemove(LAST_CONFIG_KEY)
+      },
+      constants: { PRESETS_KEY, LAST_CONFIG_KEY, SCHEMA_VERSION, MAX_PRESETS }
+    }
+  : null

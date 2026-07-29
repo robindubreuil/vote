@@ -33,14 +33,21 @@ self.addEventListener('install', (event) => {
   // Pre-cache the formateur shell so the very first offline load works
   // immediately after install. Hashed build assets are picked up lazily
   // by the fetch handler (stale-while-revalidate).
+  //
+  // Per-promise `.catch(() => {})` plus Promise.all is used here instead
+  // of the ES2020 "settled" Promise combinator, so the SW stays runnable
+  // on Chromium 79 and older WebView shells (F13). A single failed
+  // cache.add (e.g. icon-512 missing on first install) does not block
+  // install.
   event.waitUntil(
     (async () => {
       const cache = await caches.open(SHELL_CACHE)
-      await Promise.allSettled([
-        cache.add(new Request(SHELL_URL, { cache: 'reload' })),
-        cache.add(new Request('/manifest.webmanifest', { cache: 'reload' })),
-        cache.add(new Request('/icons/icon-192.png', { cache: 'reload' })),
-        cache.add(new Request('/icons/icon-512.png', { cache: 'reload' }))
+      const safeAdd = (req) => cache.add(req).catch(() => {})
+      await Promise.all([
+        safeAdd(new Request(SHELL_URL, { cache: 'reload' })),
+        safeAdd(new Request('/manifest.webmanifest', { cache: 'reload' })),
+        safeAdd(new Request('/icons/icon-192.png', { cache: 'reload' })),
+        safeAdd(new Request('/icons/icon-512.png', { cache: 'reload' }))
       ])
       await self.skipWaiting()
     })()

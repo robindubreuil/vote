@@ -9,11 +9,13 @@ vi.stubGlobal('localStorage', {
   clear: () => store.clear()
 })
 
-import { loadHighScore, saveHighScore, resetHighScore, loadStreak, hasSeenRules, _resetForTests } from './game-storage.js'
+import { loadHighScore, saveHighScore, resetHighScore, loadStreak, hasSeenRules, _test } from './game-storage.js'
+
+const { resetForTests } = _test
 
 describe('game-storage', () => {
   beforeEach(() => {
-    _resetForTests()
+    resetForTests()
   })
 
   describe('loadHighScore', () => {
@@ -129,13 +131,13 @@ describe('game-storage', () => {
       })
     })
 
-    it('_resetForTests does not throw when removeItem throws', () => {
+    it('resetForTests does not throw when removeItem throws', () => {
       const original = localStorage.removeItem
       localStorage.removeItem = () => {
         throw new DOMException('The operation is insecure.', 'SecurityError')
       }
       try {
-        expect(() => _resetForTests()).not.toThrow()
+        expect(() => resetForTests()).not.toThrow()
       } finally {
         localStorage.removeItem = original
       }

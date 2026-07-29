@@ -22,13 +22,14 @@ const {
   setLastConfig,
   serializePresets,
   deserializePresets,
-  _resetForTests,
-  _constants
+  _test
 } = await import('./presets.js')
+
+const { resetForTests, constants: _constants } = _test
 
 beforeEach(() => {
   store.clear()
-  _resetForTests()
+  resetForTests()
 })
 
 describe('getLastConfig / setLastConfig', () => {
@@ -387,13 +388,13 @@ describe('read-throws resilience (F2)', () => {
     })
   })
 
-  it('_resetForTests does not throw when removeItem throws', () => {
+  it('resetForTests does not throw when removeItem throws', () => {
     const original = localStorage.removeItem
     localStorage.removeItem = () => {
       throw new DOMException('The operation is insecure.', 'SecurityError')
     }
     try {
-      expect(() => _resetForTests()).not.toThrow()
+      expect(() => resetForTests()).not.toThrow()
     } finally {
       localStorage.removeItem = original
     }
