@@ -1,9 +1,9 @@
 // Service worker registration with an update-available toast.
 // Production only — Vite HMR and a caching SW fight each other in dev.
 
-const UPDATE_TOAST_ID = 'pwa-update-toast'
+import { t } from './i18n.js'
 
-let updateAvailable = false
+const UPDATE_TOAST_ID = 'pwa-update-toast'
 
 export function initPWA() {
   if (!('serviceWorker' in navigator)) return
@@ -50,7 +50,6 @@ export function initPWA() {
 
   // Offline indicator: brief toast when the network drops mid-session.
   window.addEventListener('offline', () => {
-    updateAvailable = true
     showOfflineToast()
   })
   window.addEventListener('online', () => hideOfflineToast())
@@ -63,9 +62,9 @@ function showUpdateToast(registration) {
   toast.className = 'pwa-toast pwa-toast--update'
   toast.setAttribute('role', 'status')
   toast.innerHTML = `
-    <span class="pwa-toast-text">Une nouvelle version est disponible.</span>
-    <button type="button" class="pwa-toast-action">Recharger</button>
-    <button type="button" class="pwa-toast-close" aria-label="Fermer">×</button>
+    <span class="pwa-toast-text">${t.common.pwaUpdateAvailable}</span>
+    <button type="button" class="pwa-toast-action">${t.common.pwaReload}</button>
+    <button type="button" class="pwa-toast-close" aria-label="${t.common.pwaClose}">×</button>
   `
   document.body.appendChild(toast)
 
@@ -88,12 +87,10 @@ function showOfflineToast() {
   toast.id = OFFLINE_TOAST_ID
   toast.className = 'pwa-toast pwa-toast--offline'
   toast.setAttribute('role', 'alert')
-  toast.innerHTML = `<span class="pwa-toast-text">Hors ligne — les votes ne sont pas reçus.</span>`
+  toast.innerHTML = `<span class="pwa-toast-text">${t.common.pwaOffline}</span>`
   document.body.appendChild(toast)
 }
 
 function hideOfflineToast() {
   document.getElementById(OFFLINE_TOAST_ID)?.remove()
 }
-
-export const _test = { updateAvailable }

@@ -1,6 +1,7 @@
 import { VoteClient } from '@shared/websocket-client.js'
 import { getWebSocketURL } from '@shared/config.js'
 import { showError } from '@shared/ui.js'
+import { t } from '@shared/i18n.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 import { pauseGameExternal, teardownGame } from './handlers.js'
@@ -116,15 +117,20 @@ function handleMessage(msg) {
       break
 
     case 'error': {
-      let errorMessage = msg.message || 'Erreur de connexion'
+      let errorMessage = msg.message || t.stagiaire.connectionError
       if (errorMessage === 'Session not found') {
-        errorMessage = 'Session introuvable'
+        errorMessage = t.stagiaire.sessionNotFound
       }
       // S6/S12: the server rejected the reclaim token (or the ID is
       // stale post-restart). Drop the cached credentials and retry
       // once as a fresh identity. Without this, the auto-reconnect
       // loop would keep resending the same bad ID forever.
-      if (errorMessage === 'Session expirée — veuillez recréer votre identité') {
+      //
+      // F9: compare against the i18n sentinel (kept in sync with the
+      // server's UserFacingError mapping in backend/internal/vote/
+      // errors.go) instead of an inline literal — a wording change
+      // is now a two-file edit instead of a silent break.
+      if (errorMessage === t.stagiaire.sessionExpired) {
         delete state.stagiaireId
         delete state.reclaimToken
         safeSessionRemove('vote_stagiaire_id')

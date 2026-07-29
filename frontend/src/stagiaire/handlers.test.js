@@ -605,3 +605,74 @@ describe('stagiaire handlers — submit / join / leave', () => {
     })
   })
 })
+
+// =====================================================================
+// F15: prenom is now persisted in sessionStorage (not localStorage) so
+// closing the tab clears it and a different student on a shared tablet
+// starts fresh instead of auto-joining under the previous user's name.
+// Same boundary as the reclaim token (S6/S12) and the cached session
+// code.
+// =====================================================================
+
+describe('stagiaire handlers — F15 prenom persistence', () => {
+  let connectSpy
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = '<div id="app"></div>'
+    renderLayout(document.getElementById('app'))
+
+    state.appState = AppState.JOINING
+    state.prenom = ''
+    state.sessionCode = ''
+    state.selectedColors = new Set()
+    state.prenomEdit = false
+    state.connected = false
+
+    sessionStorage.clear()
+    localStorage.clear()
+
+    connectSpy = vi.fn()
+    setConnectToSession(connectSpy)
+    // handleEditName path: getClient() returns an object with .send.
+    mockGetClient.mockReturnValue({ send: vi.fn(() => true) })
+  })
+
+  function fillJoinForm({ prenom, code }) {
+    render() // ensures the JOINING form (#prenom, #sessionCode) exists
+    const p = document.getElementById('prenom')
+    const c = document.getElementById('sessionCode')
+    if (prenom !== undefined) p.value = prenom
+    if (code !== undefined) c.value = code
+    return { p, c }
+  }
+
+  function submitEvent() {
+    return new Event('submit', { bubbles: true, cancelable: true })
+  }
+
+  it('handleJoin writes the prenom to sessionStorage, not localStorage', () => {
+    fillJoinForm({ prenom: 'Camille', code: 'ABC' })
+    handleJoin(submitEvent())
+
+    expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBe('Camille')
+    expect(localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
+  })
+
+  it('handleEditName updates sessionStorage, not localStorage', () => {
+    // Enter edit-name modal with an existing prenom.
+    state.appState = AppState.WAITING
+    state.prenom = 'Old'
+    state.prenomEdit = true
+    state.sessionCode = 'ABC'
+    state.connected = true
+    render()
+
+    const input = document.getElementById('editPrenom')
+    input.value = 'New'
+    handleEditName(submitEvent())
+
+    expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBe('New')
+    expect(localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
+  })
+})

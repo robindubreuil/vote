@@ -4,6 +4,7 @@ import { showError, hideError } from '@shared/ui.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { createSessionPublisher } from '@shared/session-sync.js'
 import { CONSTANTS } from '@shared/config.js'
+import { t } from '@shared/i18n.js'
 import { state, resetTrainerState } from './state.js'
 import {
   renderFullLayout,
@@ -21,7 +22,6 @@ import {
 import { startTimer, stopTimer, updateVoteResults } from './utils.js'
 import { users } from '@shared/icons.js'
 import { showToast } from '@shared/ui.js'
-import { t } from '@shared/i18n.js'
 import { applyLastConfigIfAvailable } from './handlers.js'
 import { safeSessionGet, safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 
@@ -46,7 +46,7 @@ function publishState() {
     state.competitive && state.stagiaires.length > 0
       ? state.stagiaires
           .filter((s) => s.connected)
-          .map((s) => ({ name: s.name || 'Anonyme', score: (s.score || 0) + (s.gameScore || 0) }))
+          .map((s) => ({ name: s.name || t.common.anonymous, score: (s.score || 0) + (s.gameScore || 0) }))
           .sort((a, b) => b.score - a.score)
           .slice(0, 3)
       : null

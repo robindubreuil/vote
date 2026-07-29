@@ -1,89 +1,14 @@
 import { COLORS, escapeHtml, sanitizeColor } from '@shared/colors.js'
 import { icons } from '@shared/icons.js'
-import { guardDynamicImport } from '@shared/error-boundary.js'
 import { state } from './state.js'
+import { getColorCounts } from './vote-data.js'
+import { renderCombinationsHTML, renderStagiairesVotesHTML } from './renderers.js'
 
-/**
- * Calculate vote counts per color
- * @returns {Object.<string, number>} Counts by color ID
- */
-export function getColorCounts() {
-  const counts = {}
-  state.stagiaires.forEach((s) => {
-    if (s.vote) {
-      s.vote.forEach((colorId) => {
-        counts[colorId] = (counts[colorId] || 0) + 1
-      })
-    }
-  })
-  return counts
-}
-
-/**
- * Calculate vote combinations
- * @returns {Array<{colors: string[], count: number}>} Sorted combinations by count desc
- */
-export function getCombinations() {
-  const comboMap = new Map()
-
-  state.stagiaires.forEach((s) => {
-    if (s.vote && s.vote.length > 0) {
-      const key = s.vote.slice().sort().join('+')
-      comboMap.set(key, (comboMap.get(key) || 0) + 1)
-    }
-  })
-
-  return Array.from(comboMap.entries())
-    .map(([key, count]) => ({
-      colors: key ? key.split('+') : [],
-      count
-    }))
-    .sort((a, b) => b.count - a.count)
-}
-
-/**
- * Sort stagiaires by vote status and name
- * Non-voters first, then by combination popularity, then by name
- * @param {Array} stagiaires
- * @returns {Array} Sorted array
- */
-export function sortStagiaires(stagiaires) {
-  // Calculate popularity of each combination (among voters)
-  const comboPopularity = new Map()
-  stagiaires.forEach((s) => {
-    if (s.vote && s.vote.length > 0) {
-      const key = s.vote.slice().sort().join('+')
-      comboPopularity.set(key, (comboPopularity.get(key) || 0) + 1)
-    }
-  })
-
-  return [...stagiaires].sort((a, b) => {
-    const aHasVoted = a.vote && a.vote.length > 0
-    const bHasVoted = b.vote && b.vote.length > 0
-
-    // Non-voters first
-    if (aHasVoted !== bHasVoted) {
-      return aHasVoted ? 1 : -1
-    }
-
-    // If both voted, sort by combination popularity
-    if (aHasVoted && bHasVoted) {
-      const keyA = a.vote.slice().sort().join('+')
-      const keyB = b.vote.slice().sort().join('+')
-      const popularityA = comboPopularity.get(keyA) || 0
-      const popularityB = comboPopularity.get(keyB) || 0
-
-      if (popularityB !== popularityA) {
-        return popularityB - popularityA
-      }
-    }
-
-    // Same status: sort by name
-    const nameA = (a.name || 'Anonyme').toLowerCase()
-    const nameB = (b.name || 'Anonyme').toLowerCase()
-    return nameA.localeCompare(nameB)
-  })
-}
+// Re-export the data helpers from their new home in `vote-data.js` so
+// existing call sites (formateur/main.test.js, etc.) keep working
+// without touching their imports. New code should import directly from
+// `./vote-data.js`.
+export { getColorCounts, getCombinations, sortStagiaires } from './vote-data.js'
 
 /**
  * Update color bars with optimized DOM manipulation
@@ -186,6 +111,12 @@ export function stopTimer() {
 
 /**
  * Update vote results display
+ *
+ * F14: previously this reached into `renderers.js` via a dynamic
+ * import on every call. `renderers.js` statically imports the data
+ * helpers from `vote-data.js` (extracted from this module), so the
+ * static import below no longer forms a cycle and a failed chunk load
+ * can no longer silently stall the vote panel.
  */
 export function updateVoteResults() {
   // Count votes from stagiaires
@@ -204,23 +135,13 @@ export function updateVoteResults() {
   // Optimized update of color bars
   updateColorBars(activeColors, colorCounts, maxCount)
 
-  // Update combinations and stagiaires lists via dynamic import. A failed
-  // chunk load (network drop, SW cache miss) previously stalled the panel
-  // silently; guardDynamicImport surfaces a toast and re-throws so callers
-  // can recover.
-  guardDynamicImport(import('./renderers.js'), 'formateur renderers')
-    .then(({ renderCombinationsHTML, renderStagiairesVotesHTML }) => {
-      const combinationsList = document.querySelector('.combinations-list')
-      if (combinationsList) {
-        combinationsList.innerHTML = renderCombinationsHTML()
-      }
+  const combinationsList = document.querySelector('.combinations-list')
+  if (combinationsList) {
+    combinationsList.innerHTML = renderCombinationsHTML()
+  }
 
-      const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
-      if (stagiairesVotesList) {
-        stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
-      }
-    })
-    .catch(() => {
-      // Already surfaced by guardDynamicImport; nothing more to do here.
-    })
+  const stagiairesVotesList = document.querySelector('.stagiaires-votes-list')
+  if (stagiairesVotesList) {
+    stagiairesVotesList.innerHTML = renderStagiairesVotesHTML()
+  }
 }

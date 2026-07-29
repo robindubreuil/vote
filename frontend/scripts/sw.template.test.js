@@ -29,3 +29,30 @@ describe('service worker navigation scope (FH5)', () => {
     expect(navigateBlock[0]).toMatch(/\breturn\b/)
   })
 })
+
+// F13 regression guard: the SW is shipped untranspiled (scripts/gen-sw.js
+// only bakes in the version, it does not pass the file through esbuild),
+// so any ES2020-only syntax or runtime primitive breaks older Chromium
+// shells silently. Promise.allSettled is ES2020; optional chaining is
+// ES2020 too. The build's `target: 'es2019'` covers the Vite-built app
+// chunks but does NOT cover this file, so we pin the source.
+describe('service worker avoids ES2020-only primitives (F13)', () => {
+  it('does not use Promise.allSettled', () => {
+    expect(template).not.toMatch(/Promise\.allSettled/)
+  })
+
+  it('does not use optional chaining', () => {
+    expect(template).not.toMatch(/\?\./)
+  })
+
+  it('does not use nullish coalescing', () => {
+    expect(template).not.toMatch(/\?\?/)
+  })
+
+  it('uses Promise.all with per-promise catch for pre-cache', () => {
+    // The pre-cache step uses Promise.all (ES2016) with per-promise
+    // `.catch(() => {})` so a single missing icon doesn't fail install.
+    expect(template).toMatch(/Promise\.all\(/)
+    expect(template).toMatch(/cache\.add\(req\)\.catch\(\(\)\s*=>\s*\{\}\)/)
+  })
+})

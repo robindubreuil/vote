@@ -19,8 +19,9 @@ import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog } from '@s
 import { t } from '@shared/i18n.js'
 import { createListenerTracker } from '@shared/dom/listeners.js'
 import { listPresets } from '@shared/presets.js'
+import { formatConnectedCount } from '@shared/utils/format.js'
 import { state } from './state.js'
-import { getCombinations, sortStagiaires, getColorCounts } from './utils.js'
+import { getCombinations, sortStagiaires, getColorCounts } from './vote-data.js'
 
 // Three listenership lifetimes:
 //   appTracker     — page-lifetime (escape shortcut). Survives session
@@ -472,7 +473,7 @@ export function renderConfigHTML() {
   return `
     <div class="card">
       <h2 class="card-title">${t.formateur.configTitle}</h2>
-      <div class="config-info" aria-live="polite" data-testid="connected-count">${users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${state.connectedCount > 1 ? 's' : ''} connecté${state.connectedCount > 1 ? 's' : ''}</div>
+      <div class="config-info" aria-live="polite" data-testid="connected-count">${users(' class="icon icon-sm"')} ${formatConnectedCount(state.connectedCount)}</div>
 
       ${renderPresetsSectionHTML()}
 
@@ -754,7 +755,7 @@ function renderCompetitiveSectionHTML(activeColors) {
       const voteScoreText = entry.voteScore >= 0 ? `+${entry.voteScore}` : String(entry.voteScore)
       return `
       <li class="scoreboard-row">
-        <span class="scoreboard-name">${escapeHtml(entry.name || t.formateur.anonymous)}</span>
+        <span class="scoreboard-name">${escapeHtml(entry.name || t.common.anonymous)}</span>
         <span class="scoreboard-vote">${voteDisplay}</span>
         <span class="scoreboard-votescore ${voteScoreClass}">${voteScoreText}</span>
       </li>
@@ -865,7 +866,7 @@ export function renderStagiairesVotesHTML() {
 
   return sorted
     .map((s) => {
-      const displayName = s.name || t.formateur.anonymous
+      const displayName = s.name || t.common.anonymous
       const hasVoted = s.vote && s.vote.length > 0
       const isBlank = s.vote?.includes('blank')
       const isConnected = s.connected

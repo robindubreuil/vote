@@ -6,7 +6,7 @@ import { state } from './state.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { CONSTANTS } from '@shared/config.js'
 import { getSessionCodeFromURL } from '@shared/utils/url.js'
-import { safeLocalGet, safeSessionGet } from '@shared/utils/safe-storage.js'
+import { safeSessionGet } from '@shared/utils/safe-storage.js'
 import { installGlobalErrorHandlers } from '@shared/error-boundary.js'
 
 // Élément DOM principal
@@ -50,7 +50,7 @@ function init() {
     state.reclaimToken = savedToken
   }
 
-  const savedPrenom = safeLocalGet('vote_stagiaire_prenom')
+  const savedPrenom = safeSessionGet('vote_stagiaire_prenom')
   if (savedPrenom) {
     state.prenom = savedPrenom
   }

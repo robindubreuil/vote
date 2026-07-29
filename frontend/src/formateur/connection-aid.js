@@ -4,6 +4,7 @@ import { t } from '@shared/i18n.js'
 import { vote } from '@shared/icons.js'
 import { renderFooterHTML } from '@shared/ui.js'
 import { createSessionSubscriber } from '@shared/session-sync.js'
+import { formatConnectedCount } from '@shared/utils/format.js'
 import { buildJoinURL } from './connection-aid-url.js'
 import { escapeHtml } from '@shared/colors.js'
 
@@ -137,8 +138,7 @@ function updateCountDisplay(state) {
     return
   }
 
-  const s = state.count > 1 ? 's' : ''
-  text.textContent = `${state.count} stagiaire${s} connecté${s}`
+  text.textContent = formatConnectedCount(state.count)
   dot.className = 'aid-count-dot ' + (state.connected ? 'live' : 'stale')
 }
 
@@ -158,7 +158,7 @@ function updateLeaderboard(state) {
       (entry, i) => `
     <li class="aid-leaderboard-row rank-${i + 1}">
       <span class="aid-leaderboard-rank">${i + 1}</span>
-      <span class="aid-leaderboard-name">${escapeHtml(entry.name || 'Anonyme')}</span>
+      <span class="aid-leaderboard-name">${escapeHtml(entry.name || t.common.anonymous)}</span>
       <span class="aid-leaderboard-score">${entry.score}</span>
     </li>
   `

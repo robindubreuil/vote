@@ -253,4 +253,18 @@ export class Mastermind {
   }
 }
 
-export const _test = { computePegs, sanitizePalette, defaultPalette, DEFAULT_CODE_LENGTH, getDifficulty, getLevelProgress, streakMultiplier, DIFFICULTY_TIERS }
+// F17: internal helpers exposed for unit tests only. Gated behind
+// `import.meta.env.DEV` so production bundles ship `null` here and the
+// console surface is closed. Vitest sees the live object.
+export const _test = import.meta.env.DEV
+  ? {
+      computePegs,
+      sanitizePalette,
+      defaultPalette,
+      DEFAULT_CODE_LENGTH,
+      getDifficulty,
+      getLevelProgress,
+      streakMultiplier,
+      DIFFICULTY_TIERS
+    }
+  : null
