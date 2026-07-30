@@ -34,6 +34,23 @@ const (
 	trainerTakeoverCloseDelay = 50 * time.Millisecond
 )
 
+// updateTrainerFn is a test seam over VoteManager.UpdateTrainer so the
+// R5 fallback path (UpdateTrainer fails because the Manager session was
+// reaped between GetSession and UpdateTrainer) can be exercised
+// deterministically without provoking a real concurrency race.
+// Production never reassigns it.
+var updateTrainerFn = func(m *vote.Manager, sessionID, trainerID string) error {
+	return m.UpdateTrainer(sessionID, trainerID)
+}
+
+// createSessionFn is a test seam over VoteManager.CreateSession so the
+// R5 defensive rollback (both UpdateTrainer and the CreateSession
+// fallback fail) can be exercised deterministically. Production never
+// reassigns it.
+var createSessionFn = func(m *vote.Manager, sessionID, trainerID string) (*vote.Session, error) {
+	return m.CreateSession(sessionID, trainerID)
+}
+
 type SessionConnections struct {
 	Trainer    *Client
 	Stagiaires map[string]*Client
@@ -385,7 +402,7 @@ func (h *Hub) registerClient(client *Client) {
 				Stagiaires: make(map[string]*Client),
 			}
 			h.Connections[client.SessionID] = conns
-			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
+			if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session",
 					append([]any{"error", err}, client.logAttrs()...)...)
 				delete(h.Connections, client.SessionID)
@@ -422,18 +439,31 @@ func (h *Hub) registerClient(client *Client) {
 
 		conns.Trainer = client
 		if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
-			if _, err := h.VoteManager.CreateSession(client.SessionID, client.ID); err != nil {
+			if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session",
 					append([]any{"error", err}, client.logAttrs()...)...)
 				conns.Trainer = nil
 				queueErr(client, "Impossible de créer la session")
 				return
 			}
-		} else {
-			if err := h.VoteManager.UpdateTrainer(client.SessionID, client.ID); err != nil {
-				slog.Error("Failed to update trainer",
-					append([]any{"error", err}, client.logAttrs()...)...)
-				queueErr(client, "Impossible de rejoindre la session")
+		} else if err := updateTrainerFn(h.VoteManager, client.SessionID, client.ID); err != nil {
+			// R5: UpdateTrainer can return ErrSessionNotFound when the
+			// session is reaped between the GetSession check above and
+			// the UpdateTrainer call (cleanupLoop, concurrent reaper,
+			// etc.). Without recovery, conns.Trainer stays set with no
+			// Manager session underneath: every later op returns
+			// ErrSessionNotFound, and cleanupLoop can't reap the entry
+			// because conns.Trainer != nil. Fall back to CreateSession
+			// (the !ok branch's path) so the trainer keeps a working
+			// session; if CreateSession also fails, roll conns.Trainer
+			// back so cleanupLoop can reap.
+			slog.Warn("UpdateTrainer failed; falling back to CreateSession",
+				append([]any{"error", err}, client.logAttrs()...)...)
+			if _, cerr := createSessionFn(h.VoteManager, client.SessionID, client.ID); cerr != nil {
+				slog.Error("Failed to create session after UpdateTrainer fallback",
+					append([]any{"error", cerr}, client.logAttrs()...)...)
+				conns.Trainer = nil
+				queueErr(client, "Impossible de créer la session")
 				return
 			}
 		}
@@ -924,9 +954,12 @@ func buildScoreboard(stagiaires map[string]string, votes map[string][]string, sc
 		}
 		return entries[i].Name < entries[j].Name
 	})
-	for i := range entries {
-		entries[i].Rank = i + 1
-	}
+	// R4: competition ranks (tied TotalScores share a rank, the next
+	// lower score skips) so a reconnecting trainer sees the same ranks
+	// that RevealAnswers assigned at reveal. The previous ordinal loop
+	// (i+1) made a tied class flip between "1er, 1er, 3e" at reveal and
+	// "1er, 2e, 3e" on trainer reconnect.
+	vote.AssignCompetitionRanks(entries)
 	return entries
 }
 

@@ -418,6 +418,10 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	client := hub.NewClient(s.hub, conn, clientIP)
 	client.ID = clientID
+	// R1: the server-minted ID is the connection's immutable identity.
+	// handleStagiaireJoin resets c.ID to OriginalID at the top of every
+	// attempt so a reclaim-rejection retry can't reuse a stale presented ID.
+	client.OriginalID = clientID
 	// B7: propagate the per-request ID so hub log lines can be
 	// correlated with the HTTP access line that recorded the WS
 	// upgrade. Read from the gin context set by requestIDMiddleware;

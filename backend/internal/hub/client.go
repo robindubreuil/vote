@@ -57,6 +57,16 @@ type Client struct {
 	Name      string
 	SessionID string
 	Type      string
+	// OriginalID is the immutable server-generated identity minted at the WS
+	// handshake. It never changes for the lifetime of the connection, even
+	// if a later stagiaire_join presents a stale ID that overwrites c.ID.
+	// handleStagiaireJoin resets c.ID = OriginalID at the top so each
+	// attempt starts from the server-minted identity; without this, a
+	// reclaim-rejection retry (which sends an empty stagiaireId) would
+	// skip the ID-resolution guard and re-take the reclaim path with the
+	// stale ID + empty token — a tight, throttled-only-by-the-rate-cap
+	// message loop (R1).
+	OriginalID string
 	// RequestID is the HTTP X-Request-ID captured at the WS handshake
 	// (B7). It tags every log line emitted on behalf of this client so
 	// an operator can correlate a classroom flap end-to-end: HTTP
@@ -376,6 +386,19 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 	if msg.Name != "" && !vote.IsValidName(msg.Name) {
 		c.SendErrorWithBackoff("Nom invalide")
 		return
+	}
+
+	// R1: start every attempt from the immutable server-generated
+	// identity when the WS handshake populated it. A prior attempt may
+	// have overwritten c.ID with a presented stagiaireId (line below);
+	// without this reset, the reclaim-rejection retry — which sends an
+	// empty stagiaireId after the frontend drops the cached credentials
+	// — skips the ID-resolution guard and re-enters JoinStagiaire with
+	// the stale ID + empty token, looping forever. The OriginalID !=
+	// "" guard keeps test fixtures that bypass handleWebSocket (and so
+	// never set OriginalID) working unchanged.
+	if c.OriginalID != "" {
+		c.ID = c.OriginalID
 	}
 
 	c.Type = "stagiaire"

@@ -482,19 +482,25 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 	// computeRank will produce on reconnect. The previous ordinal
 	// assignment (i+1) broke ties alphabetically, so a student tied for
 	// first could see "2e" at reveal then "1er" after a reconnect.
-	assignCompetitionRanks(entries)
+	AssignCompetitionRanks(entries)
 
 	session.LastActivity = time.Now().Unix()
 	return entries, nil
 }
 
-// assignCompetitionRanks sets Rank on a slice pre-sorted by (TotalScore
+// AssignCompetitionRanks sets Rank on a slice pre-sorted by (TotalScore
 // DESC, tiebreaker ASC) using competition ranking: entries that tie on
 // TotalScore share a rank, and the next lower score's rank reflects the
 // number of entries strictly ahead rather than i+1. This matches the
 // on-the-fly computation in hub.computeRank so a client sees the same
-// rank at reveal and on reconnect (BL2).
-func assignCompetitionRanks(entries []ScoreEntry) {
+// rank at reveal and on reconnect (BL2). R4: exported so the hub's
+// buildScoreboard (which feeds trainer reconnect) uses the same ranking
+// as RevealAnswers — previously it assigned ordinal ranks, so a tied
+// trainer view flipped between "1er, 2e, 3e" (reconnect) and "1er, 1er,
+// 3e" (reveal).
+//
+// Precondition: entries is sorted by (TotalScore DESC, Name ASC).
+func AssignCompetitionRanks(entries []ScoreEntry) {
 	for i := range entries {
 		if i > 0 && entries[i].TotalScore == entries[i-1].TotalScore {
 			entries[i].Rank = entries[i-1].Rank

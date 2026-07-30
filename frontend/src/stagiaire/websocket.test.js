@@ -62,7 +62,7 @@ vi.mock('@shared/game-storage.js', () => ({
 
 const { state, AppState } = await import('./state.js')
 const { renderLayout } = await import('./renderers.js')
-const { initClient, connectToSession, getClient } = await import('./websocket.js')
+const { initClient, connectToSession, getClient, _test } = await import('./websocket.js')
 
 describe('stagiaire websocket — message handling', () => {
   beforeEach(() => {
@@ -72,6 +72,8 @@ describe('stagiaire websocket — message handling', () => {
     teardownSpy.mockClear()
     resetHighScoreSpy.mockClear()
     saveStreakSpy.mockClear()
+    // R1: reset the per-connection reclaim-retry guard between cases.
+    _test.resetReclaimRetryGuard()
 
     document.body.innerHTML = '<div id="app"></div>'
     renderLayout(document.getElementById('app'))
@@ -305,6 +307,94 @@ describe('stagiaire websocket — message handling', () => {
         message: 'Session expirée — veuillez recréer votre identité'
       })
       expect(capturedClient.sent).toHaveLength(0)
+    })
+
+    it('R1: reclaim-rejection retries at most once per WS connection', () => {
+      // A second rejection on the same connection must NOT resend —
+      // without the one-shot guard, a partial sessionStorage failure
+      // (stale ID + missing token) loops forever, throttled only by
+      // the per-client rate cap. The guard resets on connect() so a
+      // legitimate reconnect can retry once.
+      state.sessionCode = 'ABC'
+      state.prenom = 'Marie'
+      state.stagiaireId = 'stale'
+      state.reclaimToken = 'stale-tok'
+
+      initClient()
+      capturedClient.sent.length = 0
+
+      // First rejection: drops credentials + retries once as fresh.
+      capturedClient.fireMessage({
+        type: 'error',
+        message: 'Session expirée — veuillez recréer votre identité'
+      })
+      expect(capturedClient.sent).toHaveLength(1)
+
+      // Second rejection on the same connection: must NOT retry.
+      capturedClient.fireMessage({
+        type: 'error',
+        message: 'Session expirée — veuillez recréer votre identité'
+      })
+      expect(capturedClient.sent).toHaveLength(1)
+    })
+
+    it('R1: reclaim-retry guard resets on connectToSession (new connection lifecycle)', () => {
+      state.sessionCode = 'ABC'
+      state.prenom = 'Marie'
+      state.stagiaireId = 'stale'
+      state.reclaimToken = 'stale-tok'
+
+      initClient()
+      capturedClient.sent.length = 0
+
+      // First rejection: retry once.
+      capturedClient.fireMessage({
+        type: 'error',
+        message: 'Session expirée — veuillez recréer votre identité'
+      })
+      expect(capturedClient.sent).toHaveLength(1)
+
+      // A fresh connect() (real reconnect) re-arms the guard.
+      connectToSession('ABC')
+
+      capturedClient.sent.length = 0
+      capturedClient.fireMessage({
+        type: 'error',
+        message: 'Session expirée — veuillez recréer votre identité'
+      })
+      expect(capturedClient.sent).toHaveLength(1)
+    })
+
+    it('R1: reclaim-rejection with used-up guard surfaces the error to the user', () => {
+      // The whole point of the one-shot guard: when retry can't fix it
+      // (e.g. server wiped the identity), the user sees the error
+      // instead of a silent infinite loop.
+      state.sessionCode = 'ABC'
+      state.prenom = 'Marie'
+      state.stagiaireId = 'stale'
+      state.reclaimToken = 'stale-tok'
+
+      document.body.insertAdjacentHTML('beforeend', '<div class="error-message" style="display:none"></div>')
+      const errEl = document.querySelector('.error-message')
+
+      initClient()
+      capturedClient.sent.length = 0
+
+      // First rejection: retry once, error suppressed.
+      capturedClient.fireMessage({
+        type: 'error',
+        message: 'Session expirée — veuillez recréer votre identité'
+      })
+      expect(capturedClient.sent).toHaveLength(1)
+      expect(errEl.textContent).toBe('')
+
+      // Second rejection: no retry, error surfaces.
+      capturedClient.fireMessage({
+        type: 'error',
+        message: 'Session expirée — veuillez recréer votre identité'
+      })
+      expect(capturedClient.sent).toHaveLength(1)
+      expect(errEl.textContent).toBe('Session expirée — veuillez recréer votre identité')
     })
 
     it('a generic error renders without crashing', () => {
