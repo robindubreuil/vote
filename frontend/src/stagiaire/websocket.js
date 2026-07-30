@@ -1,7 +1,7 @@
 import { VoteClient } from '@shared/websocket-client.js'
 import { getWebSocketURL } from '@shared/config.js'
 import { showError } from '@shared/ui.js'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
 import { pauseGameExternal, teardownGame } from './handlers.js'
@@ -126,9 +126,9 @@ function handleMessage(msg) {
       // once as a fresh identity. Without this, the auto-reconnect
       // loop would keep resending the same bad ID forever.
       //
-      // F9: compare against the i18n sentinel (kept in sync with the
-      // server's UserFacingError mapping in backend/internal/vote/
-      // errors.go) instead of an inline literal — a wording change
+      // F9/F19: compare against the strings.js sentinel (kept in sync
+      // with the server's UserFacingError mapping in backend/internal/
+      // vote/errors.go) instead of an inline literal — a wording change
       // is now a two-file edit instead of a silent break.
       if (errorMessage === t.stagiaire.sessionExpired) {
         delete state.stagiaireId

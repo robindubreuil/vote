@@ -7,15 +7,18 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pwaSrc = readFileSync(join(__dirname, 'shared', 'pwa.js'), 'utf8')
 
-// F9: pwa.js hardcoded four French strings ("Une nouvelle version…",
+// F9 + F19: pwa.js hardcoded four French strings ("Une nouvelle version…",
 // "Recharger", aria-label="Fermer", "Hors ligne — les votes ne sont
 // pas reçus."). Even for a French-only app, `t` is the single point
 // for typo fixes. The fix routes the toast text through t.common.*
 // keys; these tests pin the contract so a future edit can't silently
-// inline the literals again.
-describe('pwa.js i18n consolidation (F9)', () => {
-  it('imports t from ./i18n.js', () => {
-    expect(pwaSrc).toMatch(/from\s+['"]\.\/i18n\.js['"]/)
+// inline the literals again. The module was renamed i18n.js →
+// strings.js in F19 (there is no locale system and never was one; the
+// old name implied i18n machinery that doesn't exist).
+describe('pwa.js strings consolidation (F9 / F19)', () => {
+  it('imports t from ./strings.js (renamed from i18n.js in F19)', () => {
+    expect(pwaSrc).toMatch(/from\s+['"]\.\/strings\.js['"]/)
+    expect(pwaSrc).not.toMatch(/from\s+['"]\.\/i18n\.js['"]/)
   })
 
   it('renders the update toast text from t.common.pwaUpdateAvailable', () => {

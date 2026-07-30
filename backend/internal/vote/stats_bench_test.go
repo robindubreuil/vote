@@ -57,4 +57,3 @@ func BenchmarkCounterReadHeavy(b *testing.B) {
 	close(stop)
 	_ = sink
 }
-

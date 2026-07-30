@@ -1,5 +1,5 @@
 import { showToast } from './ui.js'
-import { t } from './i18n.js'
+import { t } from './strings.js'
 
 // Module-level guard so a burst of failures doesn't stack a wall of
 // toasts. The first failure surfaces immediately; subsequent ones within

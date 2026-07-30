@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { t } from './i18n.js'
+import { t } from './strings.js'
 
 // F9: hardcoded French strings bypassed `t` in ~15 sites (pwa.js,
 // game aria-labels, 'Anonyme', 'Session expirée...'). Centralising
 // them in `t` is only useful if the keys actually exist and the
 // call sites use them — these tests pin the contract so a future
 // refactor can't silently drop a key.
-describe('i18n keys (F9)', () => {
+//
+// F19: the module was renamed i18n.js → strings.js. There is no locale
+// system and never was one; the i18n name implied machinery (locale
+// switcher, pluralization rules, message catalogs) that doesn't exist.
+// `strings.js` describes what the module actually is: a single French
+// string catalog consumed via the `t` export.
+describe('strings keys (F9 / F19)', () => {
   it('exposes the shared anonymous fallback from t.common', () => {
     expect(t.common.anonymous).toBe('Anonyme')
   })

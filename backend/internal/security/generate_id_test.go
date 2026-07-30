@@ -67,22 +67,75 @@ func TestGenerateIDCharsetUniformity(t *testing.T) {
 	}
 }
 
-// TestGenerateIDRecoverableFromEntropyFailure pins the B4 fallback: if
-// the system CSPRNG returns an error, GenerateID falls back to
-// generateTimestampID rather than returning a zero-value or panicking.
-// We can't easily force crypto/rand.Read to fail without an injection
-// seam, so we cover the equivalent fallback by exercising
-// generateTimestampID directly — the contract is that GenerateID returns
-// it verbatim on rand failure.
-func TestGenerateIDFallbackProducesValidID(t *testing.T) {
-	id := generateTimestampID()
-	if len(id) != clientIDLength {
-		t.Fatalf("fallback ID length: got %d, want %d", len(id), clientIDLength)
+// TestGenerateIDPanicsOnCSPRNGFailure pins the B14 fail-closed contract.
+// The previous implementation fell back to generateTimestampID on a
+// rand.Read error, which silently degraded uniformity and (for
+// GenerateToken) collapsed S1/S12 security. We now panic. The seam
+// (randRead) is restored in a defer so a t.Fatal in one case doesn't
+// poison the package-level variable for the rest of the suite.
+func TestGenerateIDPanicsOnCSPRNGFailure(t *testing.T) {
+	orig := randRead
+	randRead = func(b []byte) (int, error) {
+		return 0, errTestCSPRNG
 	}
-	for _, r := range id {
-		if !strings.ContainsRune(clientIDCharset, r) {
-			t.Fatalf("fallback ID %q has out-of-charset byte %q", id, r)
+	defer func() { randRead = orig }()
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("GenerateID should panic on CSPRNG failure")
 		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "client ID") {
+			t.Fatalf("panic should name the context, got: %v", r)
+		}
+	}()
+	_ = GenerateID()
+}
+
+// TestGenerateTokenPanicsOnCSPRNGFailure pins the B14 fail-closed
+// contract for security-critical tokens. The previous time-derived
+// fallback was predictable within time.Now().UnixNano() resolution and
+// silently enabled token forgery when /dev/urandom was unavailable.
+func TestGenerateTokenPanicsOnCSPRNGFailure(t *testing.T) {
+	orig := randRead
+	randRead = func(b []byte) (int, error) {
+		return 0, errTestCSPRNG
+	}
+	defer func() { randRead = orig }()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("GenerateToken should panic on CSPRNG failure")
+		}
+	}()
+	_ = GenerateToken()
+}
+
+// TestGenerateTokenProducesURLEncodedSecret asserts the happy path still
+// produces a base64url token of the documented entropy budget. A
+// regression that changed the byte length would silently shrink the
+// guess-resistance of every trainer/reclaim token.
+func TestGenerateTokenProducesURLEncodedSecret(t *testing.T) {
+	const n = 100
+	seen := make(map[string]struct{}, n)
+	for i := 0; i < n; i++ {
+		tok := GenerateToken()
+		// base64url of 32 bytes = 43 chars (no padding). Reject any
+		// other length or non-url-safe character.
+		if len(tok) != 43 {
+			t.Fatalf("token length: got %d, want 43 (32 bytes base64url)", len(tok))
+		}
+		for _, r := range tok {
+			const urlsafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+			if !strings.ContainsRune(urlsafe, r) {
+				t.Fatalf("token %q contains non-base64url char %q", tok, r)
+			}
+		}
+		seen[tok] = struct{}{}
+	}
+	if len(seen) != n {
+		t.Errorf("expected %d unique tokens, got %d (RNG may be broken)", n, len(seen))
 	}
 }
 
@@ -97,7 +150,7 @@ func BenchmarkGenerateID(b *testing.B) {
 	}
 }
 
-// BenchmarkGenerateIDParallel exercises the path under contention (many
+// BenchmarkIDParallel exercises the path under contention (many
 // goroutines hitting crypto/rand concurrently, as a reconnect storm
 // would). The batched read also reduces lock contention on the kernel
 // CSPRNG.

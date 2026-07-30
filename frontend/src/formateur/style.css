@@ -1347,6 +1347,15 @@
   border-color: var(--danger-color);
 }
 
+/* F22: fullscreen toggle rejection (user-gesture rule, iframe
+ * permissions policy). Mirrors the copy button's error affordance so
+ * the operator sees the browser blocked the toggle rather than a
+ * silent no-op. */
+.aid-fullscreen-btn.error {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--danger-color);
+}
+
 .aid-divider {
   width: min(60vw, 360px);
   height: 1px;

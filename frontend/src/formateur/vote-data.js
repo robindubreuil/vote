@@ -14,7 +14,7 @@
 // effects — which keeps them trivially unit-testable.
 
 import { COLORS } from '@shared/colors.js'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { state } from './state.js'
 
 /**

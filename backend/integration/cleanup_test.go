@@ -17,9 +17,14 @@ import (
 
 // TestSessionCleanup verifies that sessions are properly cleaned up after timeout.
 func TestSessionCleanup(t *testing.T) {
+	// D17: bind the listener up front and serve it on the same listener
+	// so the port in cfg.Port is exactly the port the server accepts on
+	// (no getFreePort TOCTOU window).
+	listener, port := newBoundListener(t)
+
 	// 1. Setup server with short timeout
 	cfg := &config.Config{
-		Port:            getFreePort(t),
+		Port:            port,
 		SessionTimeout:  1 * time.Second,        // Very short timeout
 		CleanupInterval: 500 * time.Millisecond, // Run cleanup frequently
 		PingInterval:    30 * time.Second,
@@ -40,7 +45,7 @@ func TestSessionCleanup(t *testing.T) {
 
 	srv := server.NewServer(cfg, h)
 	go func() {
-		if err := srv.Run(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			t.Logf("Server run error: %v", err)
 		}
 	}()

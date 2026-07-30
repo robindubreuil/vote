@@ -1,13 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// Mock the toast + i18n so we can assert the boundary calls showToast with
-// the right key, without depending on real DOM toast plumbing.
+// Mock the toast + strings catalog so we can assert the boundary calls
+// showToast with the right key, without depending on real DOM toast
+// plumbing.
 const showToastSpy = vi.fn()
 vi.mock('./ui.js', () => ({
   showToast: (...args) => showToastSpy(...args)
 }))
-vi.mock('./i18n.js', () => ({
+vi.mock('./strings.js', () => ({
   t: { common: { unexpectedError: 'Une erreur inattendue est survenue' } }
 }))
 

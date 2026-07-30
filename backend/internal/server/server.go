@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -256,16 +257,32 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) Run() error {
+	addr := net.JoinHostPort(s.config.Host, s.config.Port)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("server: listen on %s: %w", addr, err)
+	}
+	return s.Serve(l)
+}
+
+// Serve starts the HTTP server on an already-bound listener. The caller
+// owns the listener (and is responsible for closing it on shutdown —
+// Shutdown closes the inner http.Server's conns but not the listener
+// itself). Exposed so callers that need a race-free port can bind
+// net.Listen("tcp", ":0") themselves and read l.Addr() without the
+// TOCTOU window that getFreePort+ListenAndServe would otherwise leave
+// (D17: a port freed by getFreePort can be grabbed by another process
+// in the gap before ListenAndServe rebinds it; binding once and serving
+// the same listener eliminates the race entirely).
+func (s *Server) Serve(l net.Listener) error {
 	s.srv = &http.Server{
-		Addr:         net.JoinHostPort(s.config.Host, s.config.Port),
 		Handler:      s.router,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
 	}
-
-	slog.Info("Server starting", "port", s.config.Port)
-	if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	slog.Info("Server starting", "addr", l.Addr().String())
+	if err := s.srv.Serve(l); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

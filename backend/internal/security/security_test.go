@@ -2,9 +2,16 @@ package security
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
+
+// errTestCSPRNG is the deterministic error returned by the randRead seam
+// in the B14 panic tests. A typed sentinel (rather than errors.New in
+// each test) makes the assertion intent clearer and avoids allocating a
+// fresh error per call from the seam.
+var errTestCSPRNG = errors.New("simulated CSPRNG failure (test)")
 
 func TestCheckJoinRateLimit(t *testing.T) {
 	sec := NewSecurity(context.Background(), 0)
@@ -130,19 +137,6 @@ func TestShutdown(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	// We can't verify easily that the goroutine stopped without a waitgroup or channel in Security struct
 	// But we ensure it doesn't panic
-}
-
-func TestGenerateTimestampID(t *testing.T) {
-	id1 := generateTimestampID()
-	time.Sleep(time.Millisecond) // Ensure time difference
-	id2 := generateTimestampID()
-
-	if id1 == id2 {
-		t.Error("Timestamp IDs should be unique over time")
-	}
-	if len(id1) == 0 {
-		t.Error("ID should not be empty")
-	}
 }
 
 func TestSessionCreateRate(t *testing.T) {

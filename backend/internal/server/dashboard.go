@@ -343,9 +343,16 @@ let lastFetchOk = null;
 // regardless of whether anyone had the dashboard open) and seeds the local
 // snapshot store, so trends reflect all usage since the data dir was created —
 // not just the periods this browser tab was open.
+// HISTORY_LIMIT mirrors dashboardHistoryDefaultLimit in auth.go (7 days
+// of 5-min samples = 2016). Kept in sync deliberately: the server seeds
+// exactly this many samples, and the local store keeps the same window
+// in localStorage so a tab open across the weekly boundary doesn't lose
+// resolution. Change both together.
+const HISTORY_LIMIT = 2016;
+
 async function seedFromServer() {
   try {
-    const res = await fetch('/dashboard/history?limit=2016', { cache: 'no-store' });
+    const res = await fetch('/dashboard/history?limit=' + HISTORY_LIMIT, { cache: 'no-store' });
     if (!res.ok) return;
     const samples = await res.json();
     if (!Array.isArray(samples) || samples.length === 0) return;

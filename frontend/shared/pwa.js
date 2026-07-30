@@ -1,7 +1,7 @@
 // Service worker registration with an update-available toast.
 // Production only — Vite HMR and a caching SW fight each other in dev.
 
-import { t } from './i18n.js'
+import { t } from './strings.js'
 
 const UPDATE_TOAST_ID = 'pwa-update-toast'
 

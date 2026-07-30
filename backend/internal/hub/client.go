@@ -17,8 +17,39 @@ const (
 	// messages: vote_received + connected_count per vote) fits with
 	// headroom even if the trainer's writePump briefly stalls (CC1).
 	ClientSendBufferSize = 512
-	pongWait             = 70 * time.Second
-	MaxGameScore         = 100000
+
+	// pongWait is the deadline the server waits between client pongs
+	// before treating the WebSocket as dead. It MUST be greater than
+	// Config.PingInterval (30s): the server sends a ping every
+	// PingInterval, and pongWait allows one missed pong cycle plus
+	// network RTT. The standard gorilla/websocket pattern sizes this
+	// as ~2× PingInterval + slack; 70s = 2×30s + 10s slack covers a
+	// classroom wifi flap that drops one ping but recovers before the
+	// next. Tightening it below PingInterval would evict healthy
+	// clients on every cycle; loosening it delays reaping dead conns,
+	// which keeps their Send buffers and goroutines alive (and skews
+	// /metrics connected counts).
+	pongWait = 70 * time.Second
+
+	// maxMessageBytes bounds a single inbound WebSocket frame. The
+	// protocol's largest message is a vote with a handful of colours
+	// and an optional name — well under 200 bytes. 4 KiB leaves room
+	// for future fields while bounding the allocation a hostile or
+	// buggy client can force the server to make per message (a frame
+	// larger than this is rejected by gorilla/websocket before any
+	// handler runs, so JSON unmarshal never sees oversized arrays/maps
+	// that would OOM the readPump goroutine). Referenced by the
+	// audit-notes invariant `client.go:76, 4096 bytes`.
+	maxMessageBytes = 4096
+
+	// MaxGameScore is the server-side clamp on report_game_score values
+	// before they enter a session's GameScores map (and thus the
+	// competitive leaderboard). 100k is comfortably above the
+	// theoretical max the mini-game can produce (perfect solve + every
+	// time bonus ≈ 1880) so a legitimate client can never hit it, while
+	// a scripted client sending e.g. math.MaxInt32 is rejected before
+	// it poisons the ranking.
+	MaxGameScore = 100000
 )
 
 type Client struct {
@@ -133,7 +164,7 @@ func (c *Client) readPump() {
 		}
 	}()
 
-	c.Conn.SetReadLimit(4096)
+	c.Conn.SetReadLimit(maxMessageBytes)
 	if err := c.Conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
 		slog.Error("Failed to set read deadline", append([]any{"error", err}, c.logAttrs()...)...)
 		return

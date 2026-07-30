@@ -18,6 +18,20 @@ import (
 const (
 	maxCodeRetries = 100
 	maxIDRetries   = 1000
+
+	// trainerTakeoverCloseDelay bounds how long the outgoing trainer's
+	// connection is left open after a successful takeover. The warning
+	// message ("New trainer connection detected…") is queued via the
+	// pendingSend flush the instant h.mu is released, but the trainer's
+	// writePump still needs a scheduling slice to actually drain the
+	// Send channel onto the wire. Closing the conn immediately would
+	// truncate the warning (S1): the displaced trainer would see a
+	// bare disconnect with no clue that a new tab took over, and might
+	// think the server crashed. 50ms is empirically enough for a
+	// writePump parked on the Send channel to wake and flush one frame
+	// on any realistic classroom network; a hard cap also bounds how
+	// long the old connection lingers as a stale goroutine.
+	trainerTakeoverCloseDelay = 50 * time.Millisecond
 )
 
 type SessionConnections struct {
@@ -399,7 +413,7 @@ func (h *Hub) registerClient(client *Client) {
 			// captured before the swap drops silently instead of pushing
 			// onto the stale Send channel.
 			old.markClosing()
-			time.AfterFunc(50*time.Millisecond, func() {
+			time.AfterFunc(trainerTakeoverCloseDelay, func() {
 				if old.Conn != nil {
 					old.Conn.Close()
 				}
