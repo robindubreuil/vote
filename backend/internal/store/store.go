@@ -12,9 +12,14 @@
 //     reconstruct usage trends since the process first ran.
 //
 // Security: the directory is created 0700 and files 0600, owned by the service
-// user. counters.json is written via temp-file + rename (atomic, no half-writes,
-// no symlink races). stats.jsonl is O_APPEND line-oriented so partial lines can
-// be skipped on read. No other process should write these files.
+// user. counters.json is written via temp-file + rename (atomic visibility,
+// no half-writes, no symlink races) and additionally fsync'd — both the temp
+// file (so the bytes are durable before the rename) and the containing
+// directory (so the rename itself is durable). stats.jsonl is O_APPEND
+// line-oriented so partial lines can be skipped on read; it is intentionally
+// not fsync'd because it is a lossy history where "worst-case crash loses at
+// most one interval" is the documented guarantee. No other process should
+// write these files.
 package store
 
 import (
@@ -23,6 +28,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -127,10 +133,24 @@ func New(dir string) (*Store, error) {
 // Dir returns the on-disk data directory.
 func (s *Store) Dir() string { return s.dir }
 
-// SaveCounters atomically writes the current cumulative counters (and the
-// histogram distributions). The write is temp-file + rename, so a crash never
-// leaves a partially-written counters.json and readers always see either the
-// old or the new complete file.
+// SaveCounters atomically and durably writes the current cumulative counters
+// (and the histogram distributions). The write is temp-file → fsync → rename
+// → fsync(dir): readers always see either the old or the new complete file
+// (atomic visibility), and a power loss in any window cannot leave
+// counters.json empty or referring to unwritten extents (crash-durability).
+//
+// R21: the prior os.WriteFile + os.Rename path was atomic at the
+// directory-entry level only — a successful Rename says nothing about whether
+// the data blocks were flushed, so a crash between Rename returning and the
+// kernel flushing could leave counters.json empty or backed by unwritten
+// extents. The full portable durability recipe (fsync the temp before the
+// rename so the bytes are committed, fsync the directory after so the rename
+// metadata is committed) closes that window. The cost is two extra fsyncs
+// per flush; counters.json is rewritten once per VOTE_STATS_INTERVAL (default
+// 5m) and on graceful shutdown, so the steady-state cost is ~12 fsyncs/hour —
+// negligible on any disk that isn't pure SD card. stats.jsonl stays
+// un-fsynced because it is an append-only lossy history where losing the
+// tail sample on crash is the documented contract.
 func (s *Store) SaveCounters(c Counters) error {
 	if !validCounters(c) {
 		return fmt.Errorf("store: invalid counters")
@@ -143,10 +163,48 @@ func (s *Store) SaveCounters(c Counters) error {
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("store: write %s: %w", countersFile+".tmp", err)
 	}
+	if err := syncPath(tmp); err != nil {
+		return fmt.Errorf("store: fsync %s: %w", countersFile+".tmp", err)
+	}
 	if err := os.Rename(tmp, s.countersPath); err != nil {
 		return fmt.Errorf("store: rename %s: %w", countersFile, err)
 	}
+	if err := syncDir(s.dir); err != nil {
+		// The rename has already happened — readers see the new file. A
+		// directory-fsync failure means the rename itself might not survive
+		// a crash, but it doesn't compromise the current process or any
+		// concurrent reader. Surface it so the operator sees the FS fault
+		// rather than silently depending on a durability we couldn't give.
+		return fmt.Errorf("store: fsync dir after counters rename: %w", err)
+	}
 	return nil
+}
+
+// syncPath fsyncs the file at path. Used to commit the temp file's data
+// blocks before the rename that makes it visible as counters.json.
+func syncPath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// syncDir fsyncs the directory at path, committing any recent rename/create
+// metadata. The portable durability recipe requires this after a rename: a
+// successful rename makes the new name visible but does not guarantee the
+// directory entry change is on stable storage. On Linux, NetworkFS, and most
+// POSIX filesystems this is the only way to make a rename crash-durable.
+func syncDir(path string) error {
+	// O_RDONLY opens the directory inode for fsync without attempting to
+	// read entries; fsync of a dir fd is the standard durability primitive.
+	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 // LoadCounters reads the persisted counters and histograms. Missing file →
@@ -426,8 +484,19 @@ func valid(s Sample) bool {
 // validHistogram enforces the Prometheus cumulative-bucket invariants: total
 // count non-negative, bucket counts non-negative and monotonically
 // non-decreasing, and no bucket holds more observations than the total.
+//
+// R20: Sum is also checked for finiteness. A NaN/Inf sum (disk corruption,
+// manual editing, or accumulated R19 damage) unmarshals cleanly and would
+// otherwise pass every other check, propagate through addLocked
+// (x + NaN = NaN) and surface in /metrics as `..._sum NaN`, which breaks
+// the dashboard's SVG sparkline renderer and most alerting rules.
+// LoadCounters already rejects the whole file on validation failure, which
+// is the right recovery (start fresh).
 func validHistogram(h Histogram) bool {
 	if h.Count < 0 {
+		return false
+	}
+	if math.IsNaN(h.Sum) || math.IsInf(h.Sum, 0) {
 		return false
 	}
 	var prev int64

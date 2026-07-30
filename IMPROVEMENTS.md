@@ -164,13 +164,13 @@ slots.
 
 ---
 
-## Session 25 — Persistence & metrics robustness
+## Session 25 — Persistence & metrics robustness  ✓
 
 Three low-risk integrity fixes in `stats.go` / `store.go`, all about
 histogram/counter correctness across clock jumps, corrupted state files, and
 crash durability. Coherent cluster, isolated from the rest of the codebase.
 
-- [ ] **R19** [Medium] Negative durations poison the session-duration histogram
+- [x] **R19** [Medium] Negative durations poison the session-duration histogram
   persistently. `observeEndedSession` computes lifetime as
   `time.Since(time.Unix(createdAt, 0))` (`stats.go:239-244`); `time.Unix(...)`
   returns a `Time` with **no monotonic component**, so `time.Since` falls back to
@@ -178,38 +178,54 @@ crash durability. Coherent cluster, isolated from the rest of the codebase.
   manual `date -s` yields a negative value; `Observe` then adds it to every
   finite bucket and to `Sum`, `validHistogram` still passes, the poisoned state
   flushes to `counters.json`, restores on reboot, and never self-heals short of
-  deleting the file. **Fix:** bound-check `d >= 0` before observing; optionally
-  also reject `v < 0` inside `Observe` to defend the invariant for any caller.
-- [ ] **R20** [Low] `validHistogram` does not validate `Sum`; NaN/Inf propagates
+  deleting the file. **Fix:** bound-check `d >= 0` before observing in
+  `observeEndedSession` (so a future-negative lifetime doesn't even bump the
+  count); also reject `v < 0` (and NaN/Inf) inside `Observe` to defend the
+  invariant for any caller and to keep the count/sum consistent if a future
+  code path bypasses the `observeEndedSession` short-circuit.
+- [x] **R20** [Low] `validHistogram` does not validate `Sum`; NaN/Inf propagates
   to `/metrics`. `validHistogram` (`store.go:429-441`) enforces count/bucket
   invariants but never inspects `Sum`. A `counters.json` whose `sum` field is
   `NaN`/`+Inf`/`-Inf` (disk corruption, manual editing, or accumulated R19
-  damage) unmarshals cleanly, passes validation, restores via `addLocked`
-  (`stats.go:124-130` does `h.sum += snap.Sum` → `x + NaN = NaN`), and surfaces in
-  `/metrics` as `..._sum NaN`, which breaks the in-tree dashboard's SVG sparkline
-  renderer (`dashboard.go:174` assumes finite values) and most alerting rules.
-  **Fix:** `if math.IsNaN(h.Sum) || math.IsInf(h.Sum, 0) { return false }` in
-  `validHistogram` — `LoadCounters` already rejects the whole file on validation
-  failure, which is the right recovery (start fresh).
-- [ ] **R21** [Low] `SaveCounters` / `AppendSample` perform no `fsync`; the
+  damage) restores via `addLocked` (`stats.go:124-130` does `h.sum += snap.Sum`
+  → `x + NaN = NaN`) and surfaces in `/metrics` as `..._sum NaN`, which breaks
+  the in-tree dashboard's SVG sparkline renderer (`dashboard.go:174` assumes
+  finite values) and most alerting rules. (Go's stdlib `encoding/json` rejects
+  NaN/Inf at both marshal and unmarshal time, so the JSON path can't deliver
+  them today — but `validHistogram` is also the pre-write gate in `SaveCounters`
+  and the documented last-line guard should the decoder ever change.) **Fix:**
+  `if math.IsNaN(h.Sum) || math.IsInf(h.Sum, 0) { return false }` in
+  `validHistogram` — `LoadCounters` and `SaveCounters` both already react to
+  validation failure correctly (start fresh / refuse to write).
+- [x] **R21** [Low] `SaveCounters` / `AppendSample` perform no `fsync`; the
   durability contract is overstated. `os.WriteFile` + `os.Rename` (counters) and
   `O_APPEND` Write (stats log) never `Sync()` (`store.go:134-150, 200-261`).
   Atomicity is at the **directory-entry** level only: a successful `Rename`
   doesn't mean the data blocks are durable, so a power loss in the window between
   `Rename` returning and the kernel flushing can leave `counters.json` empty or
   referring to unwritten extents. CLAUDE.md and `store.go:14-17` claim "atomic,
-  no half-writes" — true at the rename level but overstated as durability. **Fix:
-  (a)** correct the comments to distinguish "atomic visibility" from
-  "crash-durability" (README's "worst-case crash loses at most one interval" is
-  the real guarantee), or **(b)** add `f.Sync()` between WriteFile and Rename for
-  `counters.json` only if true durability is wanted (accepting the per-flush I/O
-  cost — keep `stats.jsonl` un-fsynced since it's an append-only lossy history).
-- [ ] Tests: `TestObserveEndedSessionIgnoresNegativeDuration` (R19 — fake a
-  `createdAt` in the future; assert no bucket/sum mutation), `TestObserveRejectsNegative`
-  (R19 — if `Observe` gets the guard), `TestValidHistogramRejectsNaNSum` /
-  `TestValidHistogramRejectsInfSum` (R20 — assert `LoadCounters` discards the
-  file and starts fresh), a doc/comment assertion or no-op for R21. `go test
-  -race ./...` green.
+  no half-writes" — true at the rename level but overstated as durability.
+  **Fix (b), full portable durability recipe:** `SaveCounters` now does
+  temp-write → `f.Sync()` (commit the bytes) → rename → `syncDir` (commit the
+  rename metadata). Cost is two extra fsyncs per flush; counters.json is
+  rewritten once per `VOTE_STATS_INTERVAL` (default 5m) and on graceful
+  shutdown, so steady-state cost is ~12 fsyncs/hour — negligible. `stats.jsonl`
+  stays un-fsynced (append-only lossy history; "worst-case crash loses at most
+  one interval" is the documented contract). Package doc and `SaveCounters` doc
+  corrected to distinguish "atomic visibility" from "crash-durability".
+- [x] Tests: `TestObserveRejectsNegative` / `TestObserveRejectsNonFinite`
+  (R19 — `Observe` guard), `TestObserveEndedSessionIgnoresNegativeDuration`
+  (R19 — caller short-circuit, asserts the histogram stays untouched while
+  sibling histograms still record) + `TestObserveEndedSessionRecordsPositiveDuration`
+  (R19 happy-path guard against over-suppression),
+  `TestValidHistogramRejectsNaNSum` / `TestValidHistogramRejectsInfSum`
+  (R20 — direct predicate unit tests, ±Inf subtests) +
+  `TestValidHistogramAcceptsFiniteSum` (R20 — no over-suppression) +
+  `TestSaveCountersRejectsNaNSumBeforeWrite` (R20 — pre-write gate refuses to
+  write and leaves no file), `TestSaveCountersRemovesTempFile` +
+  `TestSyncDirAndSyncPathHelpersRun` + `TestSaveCountersDocAssertsDurabilityRecipe`
+  (R21 — temp file cleaned, helpers wired, doc contract guards the recipe).
+  `go test -race ./...` green; `npm test` green (572); `npm run lint` clean.
 
 ---
 

@@ -1,8 +1,10 @@
 package vote
 
 import (
+	"math"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCounterIncrement(t *testing.T) {
@@ -405,5 +407,107 @@ func TestCounterConcurrentAdd(t *testing.T) {
 	wg.Wait()
 	if want := int64(goroutines * perG); c.Value() != want {
 		t.Errorf("expected %d, got %d", want, c.Value())
+	}
+}
+
+// TestObserveRejectsNegative is the R19 regression at the Observe boundary:
+// a negative value (the kind produced by time.Since(time.Unix(...)) after a
+// backward NTP step / VM clock snap) must be rejected outright rather than
+// poison Sum and every cumulative bucket. Without the guard a single
+// negative observation persists indefinitely via counters.json.
+func TestObserveRejectsNegative(t *testing.T) {
+	h := NewHistogram([]float64{1, 5, 10})
+	h.Observe(3)  // legitimate baseline: fills le=5 and le=10
+	h.Observe(-7) // must be dropped
+	h.Observe(-0.1)
+
+	snap := h.Snapshot()
+	if snap.Count != 1 {
+		t.Errorf("negative observation must not bump count: got %d, want 1", snap.Count)
+	}
+	if snap.Sum != 3 {
+		t.Errorf("negative observation must not corrupt sum: got %v, want 3", snap.Sum)
+	}
+	// Only the legit observation at v=3 should fill buckets: le=1 stays 0
+	// (3 > 1), le=5 and le=10 each get 1 (3 ≤ 5 and 3 ≤ 10).
+	want := []struct {
+		le    float64
+		count int64
+	}{
+		{1, 0}, {5, 1}, {10, 1},
+	}
+	for i, w := range want {
+		if snap.Buckets[i].Count != w.count {
+			t.Errorf("bucket le=%v: got count %d, want %d (negative obs must not fill any bucket)",
+				w.le, snap.Buckets[i].Count, w.count)
+		}
+	}
+}
+
+// TestObserveRejectsNonFinite confirms the Observe guard also rejects NaN
+// and Inf. These would otherwise propagate into Sum (x + NaN = NaN) and
+// break Prometheus's exposition format; the same defect validHistogram's
+// R20 guard catches on restore is closed at the source.
+func TestObserveRejectsNonFinite(t *testing.T) {
+	h := NewHistogram([]float64{1, 5, 10})
+	h.Observe(math.NaN())
+	h.Observe(math.Inf(1))
+	h.Observe(math.Inf(-1))
+
+	snap := h.Snapshot()
+	if snap.Count != 0 {
+		t.Errorf("non-finite observations must not bump count: got %d", snap.Count)
+	}
+	if snap.Sum != 0 {
+		t.Errorf("non-finite observations must not corrupt sum: got %v", snap.Sum)
+	}
+	for _, b := range snap.Buckets {
+		if b.Count != 0 {
+			t.Errorf("non-finite observation must not fill any bucket: le=%v count=%d", b.LE, b.Count)
+		}
+	}
+}
+
+// TestObserveEndedSessionIgnoresNegativeDuration is the R19 regression at
+// the caller: observeEndedSession derives session lifetime from a wall-clock
+// subtraction (time.Since over time.Unix, no monotonic component). A
+// backward clock snap can produce a future createdAt and thus a negative
+// lifetime; the histogram must stay untouched (count not even bumped).
+func TestObserveEndedSessionIgnoresNegativeDuration(t *testing.T) {
+	stats := NewProductStats()
+
+	// createdAt 1 hour in the future → time.Since is negative.
+	stats.observeEndedSession(time.Now().Add(time.Hour).Unix(), 0, 0)
+
+	dur := stats.SessionDurationSecs.Snapshot()
+	if dur.Count != 0 {
+		t.Errorf("negative lifetime must not observe: count=%d", dur.Count)
+	}
+	if dur.Sum != 0 {
+		t.Errorf("negative lifetime must not poison sum: sum=%v", dur.Sum)
+	}
+	// VotesPerSession / TraineesPerSession are independent of createdAt and
+	// must still record their (non-negative) values.
+	if vps := stats.VotesPerSession.Snapshot(); vps.Count != 1 {
+		t.Errorf("VotesPerSession must still observe: count=%d", vps.Count)
+	}
+	if tps := stats.TraineesPerSession.Snapshot(); tps.Count != 1 {
+		t.Errorf("TraineesPerSession must still observe: count=%d", tps.Count)
+	}
+}
+
+// TestObserveEndedSessionRecordsPositiveDuration is the R19 happy path: a
+// legitimate past createdAt still lands in the histogram, confirming the
+// guard didn't accidentally over-suppress.
+func TestObserveEndedSessionRecordsPositiveDuration(t *testing.T) {
+	stats := NewProductStats()
+	stats.observeEndedSession(time.Now().Add(-30*time.Minute).Unix(), 4, 12)
+
+	dur := stats.SessionDurationSecs.Snapshot()
+	if dur.Count != 1 {
+		t.Fatalf("expected 1 observation, got %d", dur.Count)
+	}
+	if dur.Sum <= 0 {
+		t.Errorf("expected positive duration sum, got %v", dur.Sum)
 	}
 }

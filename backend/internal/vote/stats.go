@@ -2,6 +2,7 @@ package vote
 
 import (
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,7 +68,19 @@ func NewHistogram(buckets []float64) *Histogram {
 // highest LE down so that, even under a racy reader that bypassed the
 // mutex, an in-flight Observe would leave the lower (cumulatively-larger)
 // buckets already incremented — belt-and-suspenders alongside the lock.
+//
+// R19: negative observations are rejected outright. The primary caller
+// (observeEndedSession) derives its value from a wall-clock subtraction
+// that can go negative on an NTP step / VM clock snap; a single negative
+// observation would otherwise poison Sum, every cumulative bucket, and
+// the persisted counters.json (which never self-heals — see R20's NaN
+// guard in validHistogram is the only thing that catches accumulated
+// damage after the fact). Rejecting at the source keeps the invariants
+// intact for every caller.
 func (h *Histogram) Observe(v float64) {
+	if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.count++
@@ -236,9 +249,18 @@ func bucketLEs(bs []HistogramBucket) []float64 {
 
 // observeEndedSession records distribution metrics for a session that is being
 // torn down. Called under the Manager's write lock from the removal paths.
+//
+// R19: session lifetime is derived from createdAt via wall-clock arithmetic
+// (time.Since over a time.Unix value carries no monotonic component), so a
+// backward NTP step / VM suspend-resume clock snap / manual `date -s` yields
+// a negative duration. Observe now rejects negatives internally, but we
+// also short-circuit here so a future-negative lifetime doesn't even bump
+// the count (which Observe's guard alone would still do as a no-op sample).
 func (s *ProductStats) observeEndedSession(createdAt int64, voteCount, traineeCount int) {
 	if createdAt > 0 {
-		s.SessionDurationSecs.Observe(time.Since(time.Unix(createdAt, 0)).Seconds())
+		if d := time.Since(time.Unix(createdAt, 0)).Seconds(); d >= 0 {
+			s.SessionDurationSecs.Observe(d)
+		}
 	}
 	s.VotesPerSession.Observe(float64(voteCount))
 	s.TraineesPerSession.Observe(float64(traineeCount))
