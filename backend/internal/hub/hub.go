@@ -614,6 +614,28 @@ func (h *Hub) registerClient(client *Client) {
 			return
 		}
 
+		// R16: a *Client that re-joins under a different stagiaireId
+		// would otherwise leave its prior slot in conns.Stagiaires
+		// pointing at the same pointer forever. Client.ID is mutable
+		// across stagiaire_join messages on one connection (R1 resets
+		// it to OriginalID, then a presented-and-known stagiaireId
+		// overwrites it); registerClient only cleaned the *current* ID
+		// slot and unregisterClient only deletes the *current* ID. So a
+		// client registering as B after joining as A left
+		// conns.Stagiaires["A"] → same *Client — inflating
+		// connected_count (a phantom the trainer can never clear) and
+		// leaking a MaxClientsPerSession slot per cycle. A malicious
+		// client cycling stolen (id, token) pairs could exhaust the cap
+		// and block legitimate joins with "Session complète". The scan
+		// runs BEFORE the cap check so the count reflects reality, and
+		// it is O(N) per join where N is bounded by the cap (the common
+		// case has zero matches).
+		for id, c := range conns.Stagiaires {
+			if c == client && id != client.ID {
+				delete(conns.Stagiaires, id)
+			}
+		}
+
 		// S7: per-session client cap. Counts the trainer slot too so the
 		// effective stagiaire limit is cap-1; the trainer is always
 		// allowed to reclaim their own session regardless. A zero or
@@ -630,17 +652,21 @@ func (h *Hub) registerClient(client *Client) {
 			// arbiter (under the session lock). The advisory check in
 			// handleStagiaireJoin handles the common case; this catches
 			// the TOCTOU race. S6/S12: it is also the sole authority
-			// for reclaim-token validation. B3: every manager error
+			// for reclaim-token validation. S15: it also authoritatively
+			// rejects reclaim-rename collisions. B3: every manager error
 			// routes through UserFacingError so the wire stays French
 			// and no internal entity name leaks into a classroom toast.
 			queueErr(client, vote.UserFacingError(err))
 			return
 		}
 
-		if old, ok := conns.Stagiaires[client.ID]; ok {
-			// CL1: flag the outgoing client so any in-flight broadcast
-			// captured before the swap drops silently instead of pushing
-			// onto the stale Send channel.
+		// CL1: flag an outgoing client that held this same ID (a
+		// different connection reconnecting by ID) so any in-flight
+		// broadcast captured before the swap drops silently instead of
+		// pushing onto the stale Send channel. R16: skip when the slot
+		// already belongs to this same *Client (a same-ID re-register is
+		// a no-op reconnect and must not close the client's own conn).
+		if old, ok := conns.Stagiaires[client.ID]; ok && old != client {
 			old.markClosing()
 			if old.Conn != nil {
 				old.Conn.Close()

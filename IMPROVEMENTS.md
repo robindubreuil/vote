@@ -119,7 +119,7 @@ shape (re-check the element after it's in the DOM / check the send return value)
 
 ---
 
-## Session 24 — Identity & registration invariants
+## Session 24 — Identity & registration invariants  ✓
 
 Two state-invariant violations in the join/register path, both missed by prior
 sessions that touched neighbouring code. They share the join→`registerClient`
@@ -127,7 +127,7 @@ area, so fixing them together keeps the invariant reasoning local. Both are
 correctness bugs that degrade ranking/leaderboard integrity or leak resource-cap
 slots.
 
-- [ ] **S15** [Medium] The reclaim-rename path skips the authoritative
+- [x] **S15** [Medium] The reclaim-rename path skips the authoritative
   name-collision check (CC2 residual). CC2 added an under-lock normalised-name
   collision check, but only on the **fresh-join** branch (`manager.go:206-213`).
   The reclaim branch (existing `stagiaireID` + valid token) overwrites
@@ -141,7 +141,7 @@ slots.
   shared helper and run it on both branches — including before the reclaim-path
   rename, excluding the reclaimer's own `stagiaireID`, returning `ErrNameInUse`
   on collision.
-- [ ] **R16** [Medium] Stale `conns.Stagiaires` entry when a connection re-joins
+- [x] **R16** [Medium] Stale `conns.Stagiaires` entry when a connection re-joins
   under a different ID. `Client.ID` is mutable across `stagiaire_join` messages
   on the same connection (`client.go:400-434`: reset to `OriginalID`, then
   overwritten to a presented `stagiaireId`). `registerClient` only cleans the
@@ -155,7 +155,7 @@ slots.
   before assigning the new slot, scan for any prior registration of `client`
   under a different ID and delete it (O(N) per join is fine — N is bounded by the
   cap and the common case has zero matches).
-- [ ] Tests: `TestJoinStagiaireReclaimRenameRejectsCollision` (S15 — two clients
+- [x] Tests: `TestJoinStagiaireReclaimRenameRejectsCollision` (S15 — two clients
   racing a reclaim-rename to the same normalised name; the second is rejected
   under the lock), `TestRegisterClientRemovesPriorIDSlot` (R16 — same `*Client`
   re-registered under a new ID; assert the old slot is gone and
