@@ -3,6 +3,8 @@ package server
 import (
 	"strings"
 	"testing"
+
+	"vote-backend/internal/vote"
 )
 
 // TestWriteInfoMetricEscapesLabelValues is the B6 regression test: a
@@ -127,4 +129,80 @@ func TestEscapeLabelValueNoAllocOnCleanInput(t *testing.T) {
 	// the fast path. We can't compare pointers portably across versions,
 	// but the length+contents equality above plus the ContainsAny guard
 	// in the implementation is sufficient.
+}
+
+// TestFormatLE pins the two rendering branches of a Prometheus histogram
+// bucket bound. The integer branch (e.g. 60 → "60") is exercised
+// end-to-end by the histogram output tests in dashboard_test.go; the
+// non-integer branch (e.g. 0.5 → "0.5") was previously uncovered because
+// every shipped histogram uses integer bounds. B13: a future histogram
+// with fractional bounds (latency-in-seconds with a 0.5s bucket, p99
+// estimates, etc.) must render via strconv.FormatFloat with the shortest
+// representation that round-trips ('g', precision -1), not the default
+// %g verb that would otherwise emit exponential notation for small
+// values. The table also pins the +Inf sentinel — formatLE is never
+// called with +Inf (the caller emits that bucket separately) but the
+// test documents the contract.
+func TestFormatLE(t *testing.T) {
+	cases := []struct {
+		name string
+		v    float64
+		want string
+	}{
+		{"zero", 0, "0"},
+		{"positive integer", 60, "60"},
+		{"large integer", 3600, "3600"},
+		{"one half", 0.5, "0.5"},
+		{"quarter", 0.25, "0.25"},
+		{"tenth", 0.1, "0.1"},
+		{"sub-millisecond seconds", 0.001, "0.001"},
+		{"two point five", 2.5, "2.5"},
+		{"integer-valued float", 100.0, "100"},
+		{"negative", -1, "-1"}, // not a valid LE but the formatter shouldn't special-case it
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := formatLE(c.v)
+			if got != c.want {
+				t.Errorf("formatLE(%v): got %q, want %q", c.v, got, c.want)
+			}
+		})
+	}
+}
+
+// TestFormatLEExpositionInContext renders a real histogram through
+// writeHistogram with a fractional bucket bound to assert the non-integer
+// branch integrates cleanly into the wire format: the `le="0.5"` label
+// must appear on its own line with the count, and must not leak exponent
+// notation or a trailing ".0" that the integer branch avoids.
+func TestFormatLEExpositionInContext(t *testing.T) {
+	var b strings.Builder
+	writeHistogram(&b, "vote_latency_seconds", "test histogram with fractional bucket",
+		vote.HistogramSnapshot{
+			Count: 3,
+			Sum:   1.5,
+			Buckets: []vote.HistogramBucket{
+				{LE: 0.5, Count: 1},
+				{LE: 1.0, Count: 2},
+				{LE: 2.5, Count: 3},
+			},
+		})
+	out := b.String()
+	for _, want := range []string{
+		`vote_latency_seconds_bucket{le="0.5"} 1`,
+		`vote_latency_seconds_bucket{le="1"} 2`,
+		`vote_latency_seconds_bucket{le="2.5"} 3`,
+		`vote_latency_seconds_bucket{le="+Inf"} 3`,
+		`vote_latency_seconds_count 3`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\ngot:\n%s", want, out)
+		}
+	}
+	// The fractional 0.5 must NOT be rendered as "5e-01" or "0.50".
+	for _, bad := range []string{`le="5e-01"`, `le="0.50"`, `le="0.5e+00"`} {
+		if strings.Contains(out, bad) {
+			t.Errorf("output should not contain %q, got:\n%s", bad, out)
+		}
+	}
 }

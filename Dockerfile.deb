@@ -1,0 +1,47 @@
+# D14: build environment for producing architecture-tagged Debian packages
+# of vote-server. Used by release.yml's build-deb matrix so a single tag
+# push produces both amd64 and arm64 .debs.
+#
+# Why a container instead of native cross-compile: dpkg-buildpackage (and
+# debhelper) only know how to produce a package for the host architecture
+# of the process running them. Cross-building debs requires multiarch
+# wiring that is heavier than emulation for a project whose only
+# arch-specific artifact is one statically-linked Go binary. By running
+# the entire dpkg-buildpackage pipeline under QEMU for arm64, we reuse
+# debian/rules unchanged and get a correctly-tagged package for free
+# (dpkg --print-architecture returns the emulated arch, so the resulting
+# .deb is named vote_<version>_arm64.deb automatically).
+#
+# Base: golang:1.24 (Debian bookworm). Bookworm ships nodejs 18, but the
+# frontend's Vite 8 / vitest 4 require node 20+ (engines); we layer node
+# 22 from NodeSource so `npm ci` resolves. The image is multi-arch
+# (manifest list), so buildx --platform linux/arm64 selects the arm64
+# variant and QEMU emulates it on the amd64 runner.
+#
+# The image is NOT pinned to a digest because (a) it is a build tool,
+# not a runtime — its compromise cannot affect the shipped server, only
+# the build; and (b) Dependabot cannot bump build-tool image digests
+# reliably across arch matrixes. The runtime images (Dockerfile) ARE
+# digest-pinned (D16).
+
+FROM golang:1.24-bookworm
+
+# Build dependencies for dpkg-buildpackage. debhelper-compat 13 matches
+# debian/compat (implicit via debhelper-compat in Build-Depends).
+# brotli is needed by frontend/scripts/compress-assets.js to emit the
+# .br sidecars. git is needed by debian/rules (gitCommit ldflag) and by
+# the NodeSource installer (verifies the apt repo).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        debhelper-compat \
+        fakeroot \
+        brotli \
+        git \
+        ca-certificates \
+        curl \
+        xz-utils \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src

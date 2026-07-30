@@ -1,6 +1,6 @@
 import { VERSION } from './version.js'
 import { escapeHtml } from './colors.js'
-import { t } from './i18n.js'
+import { t } from './strings.js'
 
 /**
  * Generates the common footer HTML containing author info, license, and version.

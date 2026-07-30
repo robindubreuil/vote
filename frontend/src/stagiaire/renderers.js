@@ -1,7 +1,7 @@
 import { vote, hourglass, pencil, check, stop, gamepad } from '@shared/icons.js'
 import { COLORS, escapeHtml } from '@shared/colors.js'
 import { renderFooterHTML, renderSessionCodeButton } from '@shared/ui.js'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { createListenerTracker } from '@shared/dom/listeners.js'
 import { state, AppState } from './state.js'
 

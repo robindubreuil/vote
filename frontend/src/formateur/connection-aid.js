@@ -1,6 +1,6 @@
 import './style.css'
 import QRCode from 'qrcode'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { vote } from '@shared/icons.js'
 import { renderFooterHTML } from '@shared/ui.js'
 import { createSessionSubscriber } from '@shared/session-sync.js'
@@ -188,16 +188,50 @@ function flashCopyButton(btn, ok) {
 
 /**
  * Toggle fullscreen on the document root.
+ *
+ * F22: requestFullscreen / exitFullscreen return Promises that must be
+ * handled — an unhandled rejection surfaces in the console as a noisy
+ * "Unhandled promise rejection" and, in some browsers, fires a
+ * window-level `unhandledrejection` event that the global error
+ * boundary (F11) would surface as a misleading toast. The common
+ * rejection cause is user-gesture rules (the browser requires the call
+ * to originate from a click; a programmatic toggle or one fired from a
+ * keyboard shortcut on a frame without focus can be rejected) or a
+ * permissions policy (e.g. `allowfullscreen` absent on an iframe).
+ *
+ * On rejection we flip the fullscreen button into an error state for a
+ * beat so the operator sees the attempt failed (their mental model is
+ * "I pressed F, nothing happened" — the flash confirms the keypress
+ * registered and tells them the browser blocked it, not that the app
+ * is dead).
  */
 function toggleFullscreen() {
+  const btn = document.getElementById('aidFullscreenBtn')
   try {
+    let p
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen?.()
+      p = document.documentElement.requestFullscreen?.()
     } else {
-      document.exitFullscreen?.()
+      p = document.exitFullscreen?.()
     }
-  } catch {
-    /* ignore */
+    if (p && typeof p.catch === 'function') {
+      p.catch((err) => {
+        console.warn('Fullscreen toggle rejected:', err)
+        if (btn) {
+          btn.classList.add('error')
+          window.setTimeout(() => btn.classList.remove('error'), 1500)
+        }
+      })
+    }
+  } catch (err) {
+    // Synchronous throw (older browser without optional-chaining guard
+    // or a SecurityError before the promise is returned). Same feedback
+    // path as the rejection branch.
+    console.warn('Fullscreen toggle threw:', err)
+    if (btn) {
+      btn.classList.add('error')
+      window.setTimeout(() => btn.classList.remove('error'), 1500)
+    }
   }
 }
 

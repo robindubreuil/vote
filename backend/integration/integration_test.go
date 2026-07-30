@@ -34,8 +34,14 @@ type TestServer struct {
 func NewTestServer(t *testing.T) *TestServer {
 	t.Helper()
 
-	// Get a free port
-	port := getFreePort(t)
+	// D17: bind the listener up front and serve it directly. The prior
+	// getFreePort+ListenAndServe path had a TOCTOU window: another
+	// process could grab the port between the probe close and the
+	// server's rebind, making the test flaky on busy CI machines.
+	// Binding once on ":0" and reading l.Addr() eliminates the race;
+	// the same listener is then handed to srv.Serve, so the port the
+	// test advertises is exactly the port the server accepts on.
+	l, port := newBoundListener(t)
 
 	// Create test config
 	cfg := &config.Config{
@@ -68,11 +74,12 @@ func NewTestServer(t *testing.T) *TestServer {
 	// Create server
 	srv := server.NewServer(cfg, h)
 
-	// Start server in background
+	// Start server in background, serving the pre-bound listener so the
+	// port in cfg.Port is the port actually accepting connections.
 	_, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		if err := srv.Run(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
 			t.Logf("Server run error: %v", err)
 		}
 	}()
@@ -122,21 +129,18 @@ func (ts *TestServer) BaseURL() string {
 	return ts.baseURL
 }
 
-// getFreePort returns an available port on localhost.
-func getFreePort(t *testing.T) string {
+// newBoundListener opens a listener on a kernel-assigned port and
+// returns both the listener (already bound) and the port string. D17:
+// closing the listener and rebinding the same port (the old
+// getFreePort+ListenAndServe pattern) left a TOCTOU window; callers
+// that need a free port for their own Server should use this and pass
+// the listener to srv.Serve rather than reading the port and calling
+// srv.Run.
+func newBoundListener(t *testing.T) (net.Listener, string) {
 	t.Helper()
-
-	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	l, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
-		t.Fatalf("Failed to resolve tcp address: %v", err)
+		t.Fatalf("Failed to bind test listener: %v", err)
 	}
-
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to listen on tcp: %v", err)
-	}
-	defer l.Close()
-
-	port := l.Addr().(*net.TCPAddr).Port
-	return fmt.Sprintf("%d", port)
+	return l, fmt.Sprintf("%d", l.Addr().(*net.TCPAddr).Port)
 }

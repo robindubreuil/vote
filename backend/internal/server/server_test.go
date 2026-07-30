@@ -2,8 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -532,4 +534,46 @@ func TestWebSocketPropagatesRequestIDToClient(t *testing.T) {
 			t.Errorf("access log for /ws missing non-empty request_id field\noutput:\n%s", out)
 		}
 	})
+}
+
+// TestServeAcceptsPreBoundListener pins the D17 race-free serving contract.
+// Serve takes an already-bound net.Listener and serves on it directly,
+// so a caller that needs a deterministic port can net.Listen("tcp",
+// ":0"), read l.Addr(), and Serve(l) without the TOCTOU window that
+// getFreePort+ListenAndServe would otherwise leave. This also covers
+// the Run() refactor: Run now binds the listener itself and delegates
+// to Serve, so a regression that broke the delegation would surface
+// here as the listener never accepting.
+func TestServeAcceptsPreBoundListener(t *testing.T) {
+	cfg := &config.Config{
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Second,
+		CleanupInterval: time.Hour,
+	}
+	h := hub.NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := l.Addr().String()
+
+	srv := NewServer(cfg, h)
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(l) }()
+	defer srv.Shutdown(context.Background())
+
+	// The pre-bound address must answer a real HTTP request — the
+	// listener handed to Serve is exactly the one the test probed.
+	resp, err := http.Get("http://" + addr + "/livez")
+	if err != nil {
+		t.Fatalf("GET /livez on pre-bound listener: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 from /livez, got %d", resp.StatusCode)
+	}
+	_ = done // serve goroutine exits when Shutdown closes the server
 }

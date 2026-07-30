@@ -27,6 +27,32 @@ const (
 	// second produce identical tokens — so revoking one would revoke
 	// both, and the S4 revocation test can't distinguish them.
 	dashboardNonceBytes = 16
+
+	// dashboardHistoryDefaultLimit is the default tail length returned
+	// by /dashboard/history when no ?limit is supplied. Sized to one
+	// week of 5-min samples (7 days × 288 samples/day = 2016): long
+	// enough to spot weekly usage cycles, bounded so the JSON payload
+	// stays well under a megabyte even on a long-running server. The
+	// client-side seed (dashboard.go seedFromServer) requests the same
+	// count so the two stay in sync — keep both updated together.
+	dashboardHistoryDefaultLimit = 2016
+
+	// dashboardHistoryMaxLimit is the hard cap applied to any client-
+	// supplied ?limit. 20000 samples ≈ 69 days at 5-min cadence, which
+	// bounds the worst-case response to a few MB regardless of how far
+	// back the operator scrolls the trend chart. Above this the
+	// dashboard switches to the /dashboard/history scrollback UI rather
+	// than loading everything in one request.
+	dashboardHistoryMaxLimit = 20000
+
+	// dashboardLoginRetryAfter is the seconds value sent in the
+	// Retry-After header when the login endpoint is throttled by the
+	// per-IP join-rate limiter. Matches the limiter's windowed backoff
+	// (a failed attempt under backoff rejects for ≥1s and up to 5min);
+	// 60s is the conservative mid-point a browser or curl will honour
+	// before retrying, keeping dash-key brute-force attempts rate-
+	// limited at the same cadence as session-code enumeration.
+	dashboardLoginRetryAfter = "60"
 )
 
 // dashboardAuth holds the configuration for the cookie auth scheme. A zero
@@ -200,7 +226,7 @@ func (s *Server) handleDashboardLogin(c *gin.Context) {
 
 	dashKey := "dash:" + c.ClientIP()
 	if !s.hub.Security.CheckJoinRateLimit(dashKey) {
-		c.Header("Retry-After", "60")
+		c.Header("Retry-After", dashboardLoginRetryAfter)
 		c.Data(http.StatusTooManyRequests, "text/html; charset=utf-8", []byte(loginFailedHTML))
 		return
 	}
@@ -247,13 +273,12 @@ func (s *Server) handleDashboardHistory(c *gin.Context) {
 		c.JSON(http.StatusOK, []any{})
 		return
 	}
-	limit := 2016 // 7 days * 288 samples/day at 5-min cadence
-	const maxLimit = 20000
+	limit := dashboardHistoryDefaultLimit
 	if q := c.Query("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 {
 			limit = n
-			if limit > maxLimit {
-				limit = maxLimit
+			if limit > dashboardHistoryMaxLimit {
+				limit = dashboardHistoryMaxLimit
 			}
 		}
 	}

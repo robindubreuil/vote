@@ -128,11 +128,47 @@ fmt:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Formatting code...$(COLOR_RESET)"
 	cd $(BINARY_PATH) && $(GOCMD) fmt ./...
 
+## fmt-check: Verify gofmt cleanliness without modifying files (CI gate)
+.PHONY: fmt-check
+fmt-check:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Checking gofmt...$(COLOR_RESET)"
+	@out=$$(cd $(BINARY_PATH) && gofmt -l .); \
+	if [ -n "$$out" ]; then \
+		echo "$(COLOR_YELLOW)The following files need gofmt:$(COLOR_RESET)"; \
+		echo "$$out"; \
+		exit 1; \
+	fi
+	@echo "gofmt: clean"
+
 ## vet: Run go vet
 .PHONY: vet
 vet:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running go vet...$(COLOR_RESET)"
 	cd $(BINARY_PATH) && $(GOCMD) vet ./...
+
+## vuln: Run govulncheck (backend) + npm audit (frontend, prod deps only)
+## Mirrors the CI security job (D6). govulncheck is precise — only
+## reports vulns in actually-called code. Requires `go install golang.org/x/vuln/cmd/govulncheck@latest`.
+.PHONY: vuln
+vuln:
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Scanning backend for vulnerabilities...$(COLOR_RESET)"
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		cd $(BINARY_PATH) && govulncheck ./...; \
+	else \
+		echo "$(COLOR_YELLOW)govulncheck not installed. Install with:$(COLOR_RESET)"; \
+		echo "  go install golang.org/x/vuln/cmd/govulncheck@latest"; \
+		exit 1; \
+	fi
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Auditing frontend production dependencies...$(COLOR_RESET)"
+	cd frontend && npm audit --omit=dev --audit-level=high || true
+
+## check: One-shot pre-push gate — fmt-check + vet + backend tests + frontend lint/test
+.PHONY: check
+check: fmt-check vet
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running backend tests (-race)...$(COLOR_RESET)"
+	cd $(BINARY_PATH) && $(GOTEST) -race ./...
+	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running frontend lint + tests...$(COLOR_RESET)"
+	cd frontend && npm run lint && npm test
 
 ## clean: Clean build artifacts
 .PHONY: clean

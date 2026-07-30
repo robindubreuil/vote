@@ -367,9 +367,13 @@ func TestScenarioConcurrentVotes(t *testing.T) {
 
 // TestScenarioSessionTimeout tests session cleanup after timeout.
 func TestScenarioSessionTimeout(t *testing.T) {
+	// D17: bind the listener up front to close the getFreePort TOCTOU
+	// window. The listener is served by srv.Serve directly.
+	listener, port := newBoundListener(t)
+
 	// Use short timeout for testing
 	cfg := &config.Config{
-		Port:            getFreePort(t),
+		Port:            port,
 		SessionTimeout:  500 * time.Millisecond,
 		CleanupInterval: 100 * time.Millisecond,
 		PingInterval:    30 * time.Second,
@@ -392,7 +396,7 @@ func TestScenarioSessionTimeout(t *testing.T) {
 	srv := server.NewServer(cfg, h)
 
 	go func() {
-		srv.Run()
+		srv.Serve(listener)
 	}()
 
 	time.Sleep(100 * time.Millisecond)

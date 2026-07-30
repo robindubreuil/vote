@@ -591,3 +591,88 @@ func TestShouldUseSecureCookie(t *testing.T) {
 		})
 	}
 }
+
+// TestPurgeRevokedDropsExpiredEntries pins the S4 lazy-eviction contract.
+// purgeRevoked runs on every logout and drops revoked entries whose
+// recorded time is older than maxAge — the underlying cookie would be
+// expired by then anyway, so keeping them wastes memory. Without this
+// sweep a long-running server's revocation set would grow unbounded
+// (one entry per logout forever). The test backdates some entries past
+// the cutoff, leaves others inside the window, and asserts exactly the
+// expired subset is reclaimed while fresh entries still block their
+// cookies.
+func TestPurgeRevokedDropsExpiredEntries(t *testing.T) {
+	const maxAge = time.Hour
+	a := newDashboardAuth("purge-secret", maxAge)
+
+	now := time.Now()
+	// Three revoked cookies: one well past maxAge, one just past, one
+	// fresh. We write them directly into the map (bypassing revoke,
+	// which stamps time.Now) so we can backdate deterministically.
+	a.revoked["old-cookie"] = now.Add(-2 * maxAge)            // 2h ago: expired
+	a.revoked["edge-cookie"] = now.Add(-maxAge - time.Second) // 1h+1s: expired
+	a.revoked["fresh-cookie"] = now                           // exactly now: within window
+
+	a.purgeRevoked()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.revoked["old-cookie"]; ok {
+		t.Error("entry 2×maxAge old should have been purged")
+	}
+	if _, ok := a.revoked["edge-cookie"]; ok {
+		t.Error("entry just past maxAge should have been purged")
+	}
+	if _, ok := a.revoked["fresh-cookie"]; !ok {
+		t.Error("fresh entry within maxAge must be retained")
+	}
+	if len(a.revoked) != 1 {
+		t.Errorf("expected exactly 1 retained entry, got %d: %+v", len(a.revoked), a.revoked)
+	}
+}
+
+// TestPurgeRevokedEmptyAndIdempotent asserts the no-op paths: an empty
+// set and a set with only-fresh entries both leave the map untouched,
+// and calling purge repeatedly is safe (logout fires it every time).
+func TestPurgeRevokedEmptyAndIdempotent(t *testing.T) {
+	a := newDashboardAuth("purge-secret", time.Hour)
+
+	// Empty set: must not panic, must stay empty.
+	a.purgeRevoked()
+	if len(a.revoked) != 0 {
+		t.Errorf("empty purge should leave 0 entries, got %d", len(a.revoked))
+	}
+
+	// Only-fresh set: nothing to evict.
+	a.revoked["fresh"] = time.Now()
+	a.purgeRevoked()
+	a.purgeRevoked() // idempotent repeat
+	if len(a.revoked) != 1 {
+		t.Errorf("fresh-only set should retain 1 entry after repeated purge, got %d", len(a.revoked))
+	}
+}
+
+// TestPurgeRevokedRespectsMaxAgeChange pins that the eviction cutoff
+// tracks a.maxAge, not a hardcoded constant. An operator who shortens
+// VOTE_DASHBOARD_MAX_AGE expects the revocation window to follow (so
+// memory frees faster), and a subsequent restart with a longer maxAge
+// must not prematurely drop entries that are now within the new window.
+func TestPurgeRevokedRespectsMaxAgeChange(t *testing.T) {
+	longLived := newDashboardAuth("s", 24*time.Hour)
+	longLived.revoked["c"] = time.Now().Add(-2 * time.Hour) // 2h old
+	longLived.purgeRevoked()
+	longLived.mu.Lock()
+	if _, ok := longLived.revoked["c"]; !ok {
+		t.Error("2h-old entry must survive under a 24h maxAge")
+	}
+	longLived.mu.Unlock()
+
+	shortLived := newDashboardAuth("s", 1*time.Hour)
+	shortLived.revoked["c"] = time.Now().Add(-2 * time.Hour) // 2h old
+	shortLived.purgeRevoked()
+	shortLived.mu.Lock()
+	if _, ok := shortLived.revoked["c"]; ok {
+		t.Error("2h-old entry must be purged under a 1h maxAge")
+	}
+	shortLived.mu.Unlock()
+}

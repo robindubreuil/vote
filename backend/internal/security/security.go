@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"sync"
@@ -341,6 +342,30 @@ func (s *Security) cleanup() {
 	}
 }
 
+// randRead is a package-level seam over crypto/rand.Read so the
+// CSPRNG-failure paths (which now panic, B14) can be exercised in tests
+// without provoking a real kernel-entropy fault. Production code never
+// reassigns it; the only writer besides tests is the init below.
+var randRead = rand.Read
+
+// failCSPRNG panics with a distinct, greppable message when the kernel
+// CSPRNG is unavailable. B14: the previous GenerateID/GenerateToken
+// implementations fell back to a time-derived value when /dev/urandom
+// was unavailable, which silently collapsed S1 (trainer-takeover token)
+// and S6/S12 (stagiaire reclaim token) — an attacker who could predict
+// the fallback could forge either token. A server that cannot draw
+// secrets from the kernel CSPRNG is in a degenerate state that should
+// not be papered over; fail loud so the operator sees it immediately
+// rather than serving with forgeable tokens. On every supported target
+// (Linux, macOS, Windows, BSD) /dev/urandom blocks only briefly at
+// early boot and otherwise never fails, so this path is effectively
+// unreachable in practice.
+func failCSPRNG(context string, err error) {
+	slog.Error("CSPRNG unavailable, refusing to serve with predictable secrets",
+		"context", context, "error", err)
+	panic(fmt.Sprintf("security: CSPRNG read failed for %s: %v", context, err))
+}
+
 // GenerateID returns a clientIDLength-character identifier drawn uniformly
 // from clientIDCharset. The charset length (36) does not divide 256, so a
 // naive byte%36 mapping introduces a tiny modulo bias toward the first
@@ -357,6 +382,12 @@ func (s *Security) cleanup() {
 // B4: the previous implementation called rand.Int(rand.Reader, big.NewInt(36))
 // once per character — 12 syscalls + 12 big.Int allocations on every
 // WebSocket connection. rand.Read batches those into ~1 syscall.
+//
+// B14: a CSPRNG read failure now panics rather than falling back to a
+// predictable timestamp-derived ID. /dev/urandom failures are
+// effectively unreachable on supported targets; when they do happen the
+// process is in a state where serving — even non-secret IDs — would
+// hide a serious kernel-level fault.
 func GenerateID() string {
 	// len(clientIDCharset) is 36 here; we spell the numeric invariants
 	// out as literals so the const declarations stay untyped and the
@@ -373,9 +404,8 @@ func GenerateID() string {
 	// the common path is a single syscall (12 chars, ~1.6% reject rate
 	// per char → ~12.2 bytes needed → 16 is comfortable headroom).
 	buf := make([]byte, clientIDLength+4)
-	if _, err := rand.Read(buf); err != nil {
-		slog.Error("Error generating random ID", "error", err)
-		return generateTimestampID()
+	if _, err := randRead(buf); err != nil {
+		failCSPRNG("client ID", err)
 	}
 
 	out := make([]byte, clientIDLength)
@@ -386,9 +416,8 @@ func GenerateID() string {
 				// Batched buffer exhausted (vanishingly rare). Top up
 				// one byte at a time until we draw an unbiased value.
 				topup := make([]byte, 1)
-				if _, err := rand.Read(topup); err != nil {
-					slog.Error("Error generating random ID", "error", err)
-					return generateTimestampID()
+				if _, err := randRead(topup); err != nil {
+					failCSPRNG("client ID topup", err)
 				}
 				buf = append(buf, topup[0])
 			}
@@ -403,27 +432,21 @@ func GenerateID() string {
 	return string(out)
 }
 
-func generateTimestampID() string {
-	nano := time.Now().UnixNano()
-	b := make([]byte, clientIDLength)
-	for i := range b {
-		b[i] = clientIDCharset[(i+int(nano))%len(clientIDCharset)]
-		nano >>= 4
-	}
-	return string(b)
-}
-
 // GenerateToken returns a base64url-encoded cryptographically-random token.
 // Used for per-session trainer tokens that gate takeover of an active
-// trainer connection. Falls back to a time-derived value only if the system
-// CSPRNG is unavailable, matching GenerateID's resilience contract.
+// trainer connection (S1) and for per-stagiaire reclaim tokens (S6/S12).
+//
+// B14: the previous implementation fell back to a time-derived value
+// when the CSPRNG was unavailable. That fallback was predictable within
+// the resolution of time.Now().UnixNano(), so an attacker who observed
+// one token (the trainer token is sent in the session_created payload)
+// could forge the other and bypass the takeover gate entirely. We now
+// panic on CSPRNG failure — a server that cannot draw secrets from the
+// kernel should not serve.
 func GenerateToken() string {
 	b := make([]byte, trainerTokenBytes)
-	if _, err := rand.Read(b); err != nil {
-		slog.Error("Error generating trainer token, using weak fallback", "error", err)
-		for i := range b {
-			b[i] = byte(time.Now().UnixNano() >> (uint(i) % 63))
-		}
+	if _, err := randRead(b); err != nil {
+		failCSPRNG("trainer token", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }

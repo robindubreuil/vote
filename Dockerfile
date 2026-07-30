@@ -1,4 +1,12 @@
-FROM golang:1.24-alpine AS backend-builder
+# D16: base images pinned to immutable manifest-list digests so a tag
+# re-point (e.g. golang:1.24-alpine silently moving to a new minor, or
+# a registry compromise substituting a malicious image) can't change
+# what we pull. The digests below are manifest-list digests (one entry
+# per CPU arch) so buildx multi-platform builds still resolve to the
+# right variant per platform. Dependabot's `docker` ecosystem bumps the
+# tags + digests together on a weekly cadence — when it does, verify
+# the changelog of the bumped tag before merging.
+FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS backend-builder
 RUN apk add --no-cache git
 WORKDIR /build
 COPY backend/go.mod backend/go.sum ./
@@ -14,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # COPY it in with nonroot ownership — distroless has no shell to mkdir.
 RUN mkdir -p -m 0700 /build/varlib
 
-FROM node:22-alpine AS frontend-builder
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS frontend-builder
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -30,7 +38,7 @@ RUN npm run build
 # Because distroless has no shell, HEALTHCHECK cannot use wget/curl; the
 # server binary self-probes via `vote-server --health` (an HTTP GET to
 # /livez on loopback) so the probe needs no extra tooling in the image.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
 
 # Distroless has no shell, so the FHS data dir cannot be mkdir'd at image
 # build time here. It is created in the builder stage (which has a shell)

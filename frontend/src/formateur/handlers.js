@@ -9,7 +9,7 @@ import {
   serializePresets,
   deserializePresets
 } from '@shared/presets.js'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { state } from './state.js'
 import { renderMainContent, attachConfigListeners } from './renderers.js'
 import { getClient } from './websocket.js'

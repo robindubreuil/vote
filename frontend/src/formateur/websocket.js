@@ -4,7 +4,7 @@ import { showError, hideError } from '@shared/ui.js'
 import { validateSessionCode } from '@shared/validation.js'
 import { createSessionPublisher } from '@shared/session-sync.js'
 import { CONSTANTS } from '@shared/config.js'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { state, resetTrainerState } from './state.js'
 import {
   renderFullLayout,

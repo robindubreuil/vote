@@ -16,7 +16,7 @@ import {
   checkPlain
 } from '@shared/icons.js'
 import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog } from '@shared/ui.js'
-import { t } from '@shared/i18n.js'
+import { t } from '@shared/strings.js'
 import { createListenerTracker } from '@shared/dom/listeners.js'
 import { listPresets } from '@shared/presets.js'
 import { formatConnectedCount } from '@shared/utils/format.js'
