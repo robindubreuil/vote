@@ -1545,6 +1545,20 @@
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
+.scoreboard-row.rank-2 .scoreboard-rank { color: #cbd5e1; opacity: 1; }
+.scoreboard-row.rank-3 .scoreboard-rank { color: #d39b6a; opacity: 1; }
+.scoreboard-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0 0.6rem 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.5;
+}
+.scoreboard-header .scoreboard-vote { visibility: hidden; }
 .scoreboard-rank {
   font-weight: 700;
   font-variant-numeric: tabular-nums;

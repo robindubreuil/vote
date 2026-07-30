@@ -5,311 +5,396 @@ doable with high quality inside one conversation.
 
 Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 
-Sessions 1–21 (audit rounds 1, 2 & 3) are archived in
+Sessions 1–26 (audit rounds 1, 2, 3 & 4) are archived in
 [`IMPROVEMENTS-DONE.md`](./IMPROVEMENTS-DONE.md). The findings below are
-**audit round 4** — a fresh end-to-end pass over the now-hardened codebase. Round
-4 surfaced a small number of residual issues that survived the prior sessions;
-they cluster naturally into five conversation-sized sessions. Item codes keep
-their category prefix (S = security, F = frontend, R = round-3 residual backend,
-B = backend) and continue each series (the archived log ends at S12, F22, R14),
-so there is no code collision with anything already done.
+**audit round 5** — a fresh end-to-end pass over the now-hardened codebase. Round
+5 surfaced a small number of residual issues; they cluster into four
+conversation-sized sessions. Item codes keep their category prefix (S = security,
+F = frontend, R = backend reliability/correctness, A = accessibility, X = XSS,
+P = performance, D = deploy/infra, CI = continuous integration, M = docs) and
+continue each series (the archived log ends at S16, F25, R21, D18), so there is
+no code collision with anything already done.
 
 ---
 
-## Session 22 — Trainer auth-chain hardening  ✓
+## Session 27 — Trainer competitive display & preset completeness
 
-The headline of round 4. Two coupled bugs in the trainer-join path that together
-collapse S1's takeover protection. S14 makes live-session discovery cheap; S13
-is the payoff. Both touch `security.go` + `hub.go` + the join handlers, so fixing
-them together keeps the auth-chain reasoning in one head.
+The headline of round 5. Two coupled frontend gaps that together make the
+trainer's own view of competitive mode *less* informative than the classroom
+projector — and break the round-trip of the answer key through presets. Both
+touch the formateur handlers/renderers/presets cluster, so fixing them together
+keeps the competitive-display reasoning in one head.
 
-- [x] **S13** [High] Post-disconnect trainer hijack using only the public session
-  code. The S1 trainer-token gate (`hub.go:418-438`) runs *only* when
-  `conns.Trainer != nil`. Once the trainer's `readPump` exits,
-  `unregisterClient` sets `conns.Trainer = nil` (`hub.go:706`), opening an empty
-  slot any client with the **public** 3-char code (printed in every stagiaire's
-  QR) can claim with no token. Worse, the recovery path re-emits the original
-  token to the claimant (`hub.go:479-483`), and `CreateSession` mints it once and
-  never rotates it — so the attacker now holds the same token as the legitimate
-  trainer and can take it back indefinitely. CLAUDE.md's "the legitimate trainer
-  can always take it back" assurance is false against a malicious stagiaire
-  during a classroom wifi flap (they gain full session control: see every
-  individual vote, reveal/change answers, start/close votes). **Fix:** require
-  the trainer token whenever one has been minted for the session (always true
-  post-`CreateSession`), even on the empty-slot recovery path; stop re-emitting
-  `trainerToken` to unauthenticated claimants (an empty slot + no token should
-  behave like `ErrSessionNotFound`, not a free takeover).
-- [x] **S14** [Medium] Per-message join attempts bypass the exponential backoff
-  (S2 residual). `CheckJoinRateLimit` — the backoff *enforcer* — is called in
-  exactly two places: the WS upgrade (`server.go:389`) and dashboard login
-  (`auth.go:245`). It is **never** called inside `handleTrainerJoin` /
-  `handleStagiaireJoin`; `SendErrorWithBackoff` only *accumulates* backoff state
-  (`LastBackoffUntil`) that nothing on an established connection reads. The only
-  in-connection bound is the per-client message rate (10/s, burst 20). A single
-  upgraded WebSocket can probe `stagiaire_join` / `trainer_join` against
-  arbitrary codes at 10/s — the ~12,167-code space is enumerable in ~20 min from
-  one connection (the oracle: `"Session introuvable"` vs proceeds). Live codes
-  feed S13. **Fix:** call `CheckJoinRateLimit(c.IP)` at the top of both join
-  handlers (before the advisory lookups), backing off on rejection — or block
-  re-join attempts on a connection whose IP is already in backoff.
-- [x] Tests: `TestEmptyTrainerSlotRequiresToken` (S13 — drain the trainer via
-  `readPump` exit, assert a tokenless `trainer_join` is rejected, assert the
-  legit-token holder still recovers), `TestTrainerTokenNeverReEmittedToTokenlessClaim`
-  (S13 — recovery path does not hand out the token to an unauthenticated
-  claimant), `TestJoinHandlerEnforcesBackoff` (S14 — prime an IP into backoff,
-  assert `stagiaire_join`/`trainer_join` messages on an established connection
-  are rejected while the IP is in the backoff window). `go test -race ./...`
-  green.
-
----
-
-## Session 23 — Frontend trainer event-wiring  ✓
-
-Two independent bugs where formateur buttons don't behave, both invisible to the
-existing tests because they mock out the piece that fails in production. Same
-file cluster (`formateur/websocket.js`, `handlers.js`, `renderers.js`), same fix
-shape (re-check the element after it's in the DOM / check the send return value).
-
-- [x] **F23** [High] Formateur header buttons (`#leaveSessionBtn`,
-  `#openConnectionAidBtn`) never receive click listeners in production. In the
-  `session_created` handler, `renderFullLayout` emits an **empty**
-  `<header id="app-header">` (`renderers.js:157`), then `attachHeaderListeners`
-  runs (`websocket.js:133`) querying both buttons — they're `null`, so nothing
-  binds (`renderers.js:220,232` are `if`-guarded). Only afterward does
-  `updateHeader` (`websocket.js:155` → `renderers.js:198-210`) inject the
-  buttons. On the reload-with-saved-session path it's worse: `app-content`
-  already exists so the `if (!app-content)` block is skipped and
-  `attachHeaderListeners` is **never called at all** (`main.js:78-81`). Result:
-  the "Quitter" button and, critically, the QR / "Aide à la connexion"
-  classroom-display button are dead for the entire session — a documented
-  headline feature is unreachable via UI, and the aid button has no keyboard
-  alternative. Tests missed it: `websocket.test.js` mocks `updateHeader`
-  (`:52`), `renderers.test.js` pre-populates the header via `buildAppShell`
-  (`:48-58`), inverting the production ordering. **Fix:** `updateHeader` now
-  calls `attachHeaderListeners` after every fresh markup injection (the
-  className fast-path returns early so there's no double-bind); the leave
-  handler is registered once at module level (`registerHeaderLeaveHandler` from
-  `main.js`) so it doesn't need to be threaded through every call site;
-  `attachHeaderListeners` is self-cleaning (wipes `sessionTracker` first) so
-  repeated injections can't accumulate stale references.
-- [x] **F24** [Medium] Formateur action handlers silently swallow clicks when the
-  WS is down. All four trainer actions (`startVote` / `closeVote` /
-  `revealAnswers` / `resetVote`) gate only on `if (!client)` then call
-  `client.send(...)` and **ignore its return value** (`handlers.js:188-256`).
-  Contrast the stagiaire side (`stagiaire/handlers.js:630-644`) which checks
-  `const success = client.send(...)` and restores the button + `showError` on
-  false. The buttons are disabled at render via `${!isConnected ? 'disabled' :
-  ''}`, but `onStatusChange` only calls `updateHeader` + `updateConnectionBanner`
-  + `publishState` — it never re-renders the config/vote card. During a
-  mid-session wifi flap the buttons keep their pre-drop enabled state; a click
-  silently drops, no error shows, and the trainer proceeds believing the vote is
-  closed/started/revealed while the message was never sent. **Fix:** all four
-  handlers now capture `const ok = client.send(...)` and call `showError` on
-  false (mirrors `submitVote`); additionally `onStatusChange` calls the new
-  `updateActionButtonsState()` which cheaply toggles `disabled` on the action
-  buttons so their state tracks `state.connected` live (non-disruptive —
-  preserves in-progress label edits / preset form).
-- [x] Tests: `formateur/websocket.test.js` (+`updateHeader` runs on the reload
-  path so buttons get bound, +`updateActionButtonsState` fires on status change,
-  F23/F24), `formateur/handlers.test.js` (new — each action handler shows
-  `showError` and sends exactly once when `client.send` returns false, F24),
-  `formateur/renderers.test.js` (+`updateHeader` re-attaches on fresh inject +
-  idempotent fast-path + no double-bind across injections, +`updateActionButtonsState`
-  live disabled tracking, F23/F24). `npm test` green (572); `npm run build` clean.
+- [x] **F26** [High] Trainer scoreboard shows only per-round `voteScore`, hides
+  `totalScore` / `rank` / `gameScore`. `renderScoreboardHTML`
+  (`frontend/src/formateur/renderers.js:802-834`) sorts by `b.voteScore -
+  a.voteScore` and renders only `<span class="scoreboard-votescore">…</span>`.
+  The backend's `ScoreEntry` (`backend/internal/vote/manager.go:421-428`) ships
+  `voteScore`, `totalScore`, `gameScore`, `rank` per row; the renderer ignores
+  three of the four fields. Dead CSS (`.scoreboard-row.rank-1`,
+  `.scoreboard-rank` at `frontend/src/formateur/style.css:1544-1555`) confirms
+  the rank column was intended but never wired. Competitive mode is cumulative
+  across rounds (CLAUDE.md), yet the trainer's screen shows a per-round number
+  that resets every round, while the classroom aid view
+  (`frontend/src/formateur/connection-aid.js:156-166`, fed by the publisher at
+  `frontend/src/formateur/websocket.js:50`) correctly sums `(score || 0) +
+  (gameScore || 0)`. R4 (DONE) fixed the backend's rank assignment; the
+  frontend display was never updated to consume it. **Fix:** sort by
+  `entry.totalScore + (entry.gameScore || 0)` (or just `entry.totalScore` — it
+  already includes `gameScore`), emit `<li class="scoreboard-row
+  rank-${entry.rank}">` + `<span class="scoreboard-rank">${entry.rank}</span>`,
+  and surface `totalScore` alongside (or instead of) `voteScore`.
+- [x] **F27** [Medium] `correctColors` never persisted in presets / last-config
+  (v3 schema is half-wired). CLAUDE.md documents preset schema `_v: 3` as
+  "added competitive, allowBlank, **correctColors**". `shared/presets.js:66-68`
+  `sanitizeConfig` reads and validates `correctColors`. But every save/restore
+  site omits it: `confirmSavePreset` (`frontend/src/formateur/handlers.js:53-60`)
+  passes only `selectedColors / colorLabels / multipleChoice / gameEnabled /
+  competitive / allowBlank`; `setLastConfig` (the `startVote` handler at
+  `:194-202`) is the same; `applyPreset` (`:72-85`) and
+  `applyLastConfigIfAvailable` (`:172-186`) don't restore it into
+  `state.correctColors`. The v3 migration is incomplete — schema supports a field
+  the UI never writes or reads. A trainer who saves a preset expects the answer
+  key to round-trip; instead they must re-select the correct colors every time
+  they apply the preset. R14 (DONE) made re-reveal work *within* a session; this
+  finding extends it *across* sessions. **Fix:** plumb
+  `correctColors: Array.from(state.correctColors)` through `savePreset` /
+  `setLastConfig`, and `state.correctColors = new Set(preset.config.correctColors
+  || [])` through both restore sites.
+- [ ] Tests: `formateur/renderers.test.js` (+scoreboard sorts by totalScore,
+  +renders `rank-N` row class, +renders `totalScore` column, F26);
+  `formateur/handlers.test.js` + `shared/presets.test.js` (+savePreset +
+  setLastConfig carry `correctColors`, +applyPreset +
+  applyLastConfigIfAvailable restore `state.correctColors`, +round-trip via
+  sanitizeConfig, F27). `npm test` green; `npm run lint` clean; `npm run build`
+  clean.
 
 ---
 
-## Session 24 — Identity & registration invariants  ✓
+## Session 28 — Frontend send-result guards & accessibility cluster
 
-Two state-invariant violations in the join/register path, both missed by prior
-sessions that touched neighbouring code. They share the join→`registerClient`
-area, so fixing them together keeps the invariant reasoning local. Both are
-correctness bugs that degrade ranking/leaderboard integrity or leak resource-cap
-slots.
+Two reinforcing themes: a handful of `client.send(...)` call sites still discard
+the return value (F24's pattern, missed in the stagiaire rename path), and the
+vote UI carries ARIA contracts it doesn't fully honour. All findings are
+isolated frontend edits with no backend coupling, so they bundle cleanly into
+one polish session.
 
-- [x] **S15** [Medium] The reclaim-rename path skips the authoritative
-  name-collision check (CC2 residual). CC2 added an under-lock normalised-name
-  collision check, but only on the **fresh-join** branch (`manager.go:206-213`).
-  The reclaim branch (existing `stagiaireID` + valid token) overwrites
-  `session.Stagiaires[stagiaireID] = name` directly (`manager.go:198`) with no
-  re-check; the only guard is the advisory `IsNameInUse` check in the client
-  goroutine (`client.go:439-446`), exactly the TOCTOU pattern CC2 was built to
-  eliminate. Two stagiaires can end up sharing a normalised name, breaking the
-  uniqueness invariant that gates ranking / leaderboard tie-breakers (`Sort by
-  Name ASC` + `AssignCompetitionRanks`) and showing two indistinguishable rows in
-  the trainer view. **Fix:** extract the `NormalizeName` collision loop into a
-  shared helper and run it on both branches — including before the reclaim-path
-  rename, excluding the reclaimer's own `stagiaireID`, returning `ErrNameInUse`
-  on collision.
-- [x] **R16** [Medium] Stale `conns.Stagiaires` entry when a connection re-joins
-  under a different ID. `Client.ID` is mutable across `stagiaire_join` messages
-  on the same connection (`client.go:400-434`: reset to `OriginalID`, then
-  overwritten to a presented `stagiaireId`). `registerClient` only cleans the
-  *current* ID slot (`hub.go:595-604`); `unregisterClient` only deletes the
-  *current* ID (`hub.go:710-711`). A client that registers as ID B after joining
-  as ID A leaves `conns.Stagiaires["A"]` → same `*Client` forever — inflating
-  `connected_count` (a phantom connected stagiaire the trainer can never clear)
-  and leaking a `MaxClientsPerSession` slot per cycle. A malicious client
-  cycling stolen `(id, token)` pairs can exhaust the session cap and block
-  legitimate joins with `"Session complète"`. **Fix:** in `registerClient`,
-  before assigning the new slot, scan for any prior registration of `client`
-  under a different ID and delete it (O(N) per join is fine — N is bounded by the
-  cap and the common case has zero matches).
-- [x] Tests: `TestJoinStagiaireReclaimRenameRejectsCollision` (S15 — two clients
-  racing a reclaim-rename to the same normalised name; the second is rejected
-  under the lock), `TestRegisterClientRemovesPriorIDSlot` (R16 — same `*Client`
-  re-registered under a new ID; assert the old slot is gone and
-  `connected_count` doesn't double-count; assert the cap isn't exhausted by
-  cycling). `go test -race ./...` green.
-
----
-
-## Session 25 — Persistence & metrics robustness  ✓
-
-Three low-risk integrity fixes in `stats.go` / `store.go`, all about
-histogram/counter correctness across clock jumps, corrupted state files, and
-crash durability. Coherent cluster, isolated from the rest of the codebase.
-
-- [x] **R19** [Medium] Negative durations poison the session-duration histogram
-  persistently. `observeEndedSession` computes lifetime as
-  `time.Since(time.Unix(createdAt, 0))` (`stats.go:239-244`); `time.Unix(...)`
-  returns a `Time` with **no monotonic component**, so `time.Since` falls back to
-  wall-clock arithmetic. A backward NTP step / VM suspend-resume clock snap /
-  manual `date -s` yields a negative value; `Observe` then adds it to every
-  finite bucket and to `Sum`, `validHistogram` still passes, the poisoned state
-  flushes to `counters.json`, restores on reboot, and never self-heals short of
-  deleting the file. **Fix:** bound-check `d >= 0` before observing in
-  `observeEndedSession` (so a future-negative lifetime doesn't even bump the
-  count); also reject `v < 0` (and NaN/Inf) inside `Observe` to defend the
-  invariant for any caller and to keep the count/sum consistent if a future
-  code path bypasses the `observeEndedSession` short-circuit.
-- [x] **R20** [Low] `validHistogram` does not validate `Sum`; NaN/Inf propagates
-  to `/metrics`. `validHistogram` (`store.go:429-441`) enforces count/bucket
-  invariants but never inspects `Sum`. A `counters.json` whose `sum` field is
-  `NaN`/`+Inf`/`-Inf` (disk corruption, manual editing, or accumulated R19
-  damage) restores via `addLocked` (`stats.go:124-130` does `h.sum += snap.Sum`
-  → `x + NaN = NaN`) and surfaces in `/metrics` as `..._sum NaN`, which breaks
-  the in-tree dashboard's SVG sparkline renderer (`dashboard.go:174` assumes
-  finite values) and most alerting rules. (Go's stdlib `encoding/json` rejects
-  NaN/Inf at both marshal and unmarshal time, so the JSON path can't deliver
-  them today — but `validHistogram` is also the pre-write gate in `SaveCounters`
-  and the documented last-line guard should the decoder ever change.) **Fix:**
-  `if math.IsNaN(h.Sum) || math.IsInf(h.Sum, 0) { return false }` in
-  `validHistogram` — `LoadCounters` and `SaveCounters` both already react to
-  validation failure correctly (start fresh / refuse to write).
-- [x] **R21** [Low] `SaveCounters` / `AppendSample` perform no `fsync`; the
-  durability contract is overstated. `os.WriteFile` + `os.Rename` (counters) and
-  `O_APPEND` Write (stats log) never `Sync()` (`store.go:134-150, 200-261`).
-  Atomicity is at the **directory-entry** level only: a successful `Rename`
-  doesn't mean the data blocks are durable, so a power loss in the window between
-  `Rename` returning and the kernel flushing can leave `counters.json` empty or
-  referring to unwritten extents. CLAUDE.md and `store.go:14-17` claim "atomic,
-  no half-writes" — true at the rename level but overstated as durability.
-  **Fix (b), full portable durability recipe:** `SaveCounters` now does
-  temp-write → `f.Sync()` (commit the bytes) → rename → `syncDir` (commit the
-  rename metadata). Cost is two extra fsyncs per flush; counters.json is
-  rewritten once per `VOTE_STATS_INTERVAL` (default 5m) and on graceful
-  shutdown, so steady-state cost is ~12 fsyncs/hour — negligible. `stats.jsonl`
-  stays un-fsynced (append-only lossy history; "worst-case crash loses at most
-  one interval" is the documented contract). Package doc and `SaveCounters` doc
-  corrected to distinguish "atomic visibility" from "crash-durability".
-- [x] Tests: `TestObserveRejectsNegative` / `TestObserveRejectsNonFinite`
-  (R19 — `Observe` guard), `TestObserveEndedSessionIgnoresNegativeDuration`
-  (R19 — caller short-circuit, asserts the histogram stays untouched while
-  sibling histograms still record) + `TestObserveEndedSessionRecordsPositiveDuration`
-  (R19 happy-path guard against over-suppression),
-  `TestValidHistogramRejectsNaNSum` / `TestValidHistogramRejectsInfSum`
-  (R20 — direct predicate unit tests, ±Inf subtests) +
-  `TestValidHistogramAcceptsFiniteSum` (R20 — no over-suppression) +
-  `TestSaveCountersRejectsNaNSumBeforeWrite` (R20 — pre-write gate refuses to
-  write and leaves no file), `TestSaveCountersRemovesTempFile` +
-  `TestSyncDirAndSyncPathHelpersRun` + `TestSaveCountersDocAssertsDurabilityRecipe`
-  (R21 — temp file cleaned, helpers wired, doc contract guards the recipe).
-  `go test -race ./...` green; `npm test` green (572); `npm run lint` clean.
+- [ ] **F28** [Medium] Stagiaire `handleEditName` ignores `client.send` return
+  value (F24 leftover). `frontend/src/stagiaire/handlers.js:549-553` sets
+  `state.pendingRename = newPrenom` BEFORE `client.send({ type: 'update_name',
+  ... })` and discards the return value. If send returns false (WS dropped in
+  the click-to-send window), `pendingRename` stays set, no `name_updated` will
+  ever arrive to clear it, and the modal gives no signal that the rename failed
+  — the user sits on a frozen form. F24 (DONE) fixed exactly this pattern in the
+  formateur action handlers by capturing `const ok = client.send(...)` and
+  calling `showError` on false. The stagiaire rename path was missed. R8 (DONE)
+  added the `pendingRename` routing but didn't add the send-result guard.
+  **Fix:** capture the return; on false, clear `state.pendingRename`, surface a
+  connection message in the inline error slot (`#edit-name-error`), keep the
+  modal open with the user's input preserved (mirror the R8 rejection path).
+- [ ] **A1** [Medium] `showConfirmDialog` declares `aria-modal="true"` but never
+  inerts/hides the background. `frontend/shared/ui.js:90-100`; CSS at
+  `frontend/shared/styles/base.css:551-616`. The overlay covers the viewport and
+  `body.confirm-lock` scroll-locks the body, but background content is not
+  marked `inert` or `aria-hidden`. The Tab handler (`ui.js:135-147`) only wraps
+  between the dialog's own buttons. `aria-modal="true"` is supposed to make AT
+  treat other content as non-existent, but NVDA/JAWS/VoiceOver in browse mode
+  widely ignore it without explicit sibling `aria-hidden` or `inert`. SR users
+  can virtual-cursor into the background app and trigger confusing
+  announcements mid-dialog. Session 8 (DONE) tested the focus-trap Tab wrap but
+  not background semantic isolation. **Fix:** on open, set `inert` (or
+  `aria-hidden="true"`) on `<main id="app-content">` and the header; remove on
+  `resolveConfirm`. `inert` is supported in all current evergreen browsers
+  (Chrome 102+, Firefox 112+, Safari 15.5+) — well within the F13 baseline.
+- [ ] **A2** [Medium] Multi-choice vote: duplicate tab stops (native checkbox +
+  tabbable label sibling). `frontend/src/stagiaire/renderers.js:386-411` +
+  `:556-572`. Each color renders a native `<input type="checkbox">` (focusable
+  by default) AND a sibling `<label for="color-X" tabindex="0">` with its own
+  keydown handler. Both are independently tabbable, so keyboard users press Tab
+  twice per color (16 stops for an 8-color palette). The label's manual keydown
+  handler duplicates the native Space/Enter behavior already provided by the
+  checkbox itself. F7 (DONE) wrapped the group in `<fieldset>`/`<legend>` but
+  didn't address the double tab stop. **Fix:** drop `tabindex="0"` from the
+  label (the native checkbox is the tab target), one line.
+- [ ] **A3** [Medium] Single-choice vote grid uses `role="radio"` but provides
+  no arrow-key navigation. `frontend/src/stagiaire/renderers.js:347-373`. Wrapper
+  has `role="radiogroup"`, each button has `role="radio"` + `aria-checked`.
+  WAI-ARIA Authoring Practices prescribe `Arrow Up/Down/Left/Right` to move
+  selection between radios within a radiogroup (Tab leaves the group). Current
+  implementation only supports Tab between buttons. The `role="radio"` semantic
+  carries an implicit contract that keyboard users will recognize from native
+  radios. F7 (DONE) switched from `aria-pressed` to `aria-checked` for the
+  correct semantics but left the keyboard interaction at odds with the role.
+  **Fix:** add an arrow-key handler on the radiogroup that moves
+  `state.selectedColors` to the next/previous color and re-renders (or focus the
+  new button). Alternatively, drop `role="radio"` and use a plain button group
+  with `aria-pressed` if Tab-only is the intended UX.
+- [ ] **X1** [Low] Unescaped `colorId` fallback in three `title="..."`
+  interpolations. `frontend/src/formateur/renderers.js:812`
+  (`renderScoreboardHTML`), `:908` (`renderCombinationsHTML`), `:972`
+  (`renderStagiairesVotesHTML`). Pattern `title="${color?.name || colorId}"`
+  interpolates `colorId` raw when `COLORS.find(...)` returns undefined. Safe
+  today — `colorId` comes from server-validated votes against `ValidColors`. But
+  F10 (DONE) hardened the parallel `style="background-color: ..."` path with
+  `sanitizeColor`; the `title="..."` path was missed. A future custom-palette
+  feature (or a tampered BroadcastChannel message in the connection-aid path)
+  could let an unsanitized ID reach the attribute and break out via
+  `"><script>`. **Fix:** `title="${escapeHtml(color?.name || colorId)}"` at all
+  three sites.
+- [ ] **P1** [Low] `WebSocket.send()` not wrapped in try/catch.
+  `frontend/shared/websocket-client.js:242-249`. `send()` checks
+  `readyState === OPEN` then calls `this.ws.send(JSON.stringify(data))`
+  unguarded. `JSON.stringify` can throw on circular references; `ws.send` can
+  throw `InvalidStateError` if the socket transitioned states between the check
+  and the call. All four stagiaire callers (handleEditName, handleSubmit,
+  report_game_score, reclaim retry) and four formateur callers assume `send`
+  returns true/false, not throws. A thrown error escapes to the click handler
+  and surfaces via the global error boundary as a misleading "unexpected error"
+  toast. **Fix:** wrap in `try { ...; return true } catch (e) {
+  console.warn(e); return false }`.
+- [ ] Tests: `stagiaire/handlers.test.js` (+handleEditName: when `client.send`
+  returns false, `pendingRename` is cleared, inline error populated, modal stays
+  open, F28), `shared/ui.test.js` (+showConfirmDialog sets `inert` on
+  `<main>`/header while open, removes on close, A1), `stagiaire/renderers.test.js`
+  (+multi-choice: single Tab stop per color after dropping `tabindex="0"`, A2; +
+  single-choice: arrow keys move selection within radiogroup, A3),
+  `formateur/renderers.test.js` (+`title=` attributes are escaped, X1),
+  `websocket-client.test.js` (+send returns false and does not throw on
+  circular-ref payload or post-check state transition, P1). `npm test` green;
+  `npm run lint` clean; `npm run build` clean.
 
 ---
 
-## Session 26 — Lower-priority cleanup  ✓
+## Session 29 — Backend handler & invariant hardening residuals
 
-The remaining round-4 findings bundled into one tidy-up session. Each is small,
-isolated, and independently verifiable.
+Four small backend fixes clustering around the hub/vote mutation handlers. All
+are defense-in-depth or invariant-polish; none is an exploitable bug today, but
+each closes a single-point inconsistency that a future refactor could turn into
+one. Same package cluster (`internal/hub/`, `internal/vote/`,
+`internal/security/`), so the lock-ordering and identity-invariant reasoning
+stays in one head.
 
-- [x] **R15** [Low/Medium] `handleWebSocket` post-upgrade ctx-race during
-  shutdown (narrows R2). R2's drain guard (`server.go:380`) only catches requests
-  that arrive *after* `h.ctx` cancels. Once a request passes the guard and
-  reaches `upgrader.Upgrade` (`server.go:426`), the conn is hijacked;
-  `http.Server.Shutdown` doesn't track hijacked conns, so `srv.Shutdown` can
-  return while `handleWebSocket`'s post-upgrade tail (`NewClient`,
-  `client.Start()` → `wg.Add(2)`) is still running. If that `wg.Add(2)` races
-  `h.wg.Wait()` at counter zero, Go panics (`sync: WaitGroup is reused before
-  previous Wait has returned`); the new client's `readPump` also isn't in the
-  `h.Connections` snapshot `Hub.Shutdown` iterates, so it blocks in
-  `ReadMessage` until `pongWait` (70 s). **Fix:** add a second guard immediately
-  before `client.Start()` — `if s.hub.Context().Err() != nil { conn.Close();
-  ReleaseIPSlot(clientIP); return }` — narrowing the race to a few instructions.
-- [x] **R17** [Low] `UpdateGameScore` skips the `GameEnabled` recheck.
-  `handleReportGameScore` does an advisory `GetGameEnabled()` check, then calls
-  `UpdateGameScore` (`client.go:687-698`); the manager method takes
-  `session.mu.Lock` but only checks `Stagiaires[id]` existence, not `GameEnabled`
-  (`manager.go:643-664`). A concurrent `ResetVote` (sets `GameEnabled=false`) in
-  the race window leaves a stale score recorded against a disabled game for the
-  session lifetime, feeding the competitive leaderboard. Every other
-  stagiaire-state mutation re-validates under the session lock; this one doesn't.
-  **Fix:** add `if !session.GameEnabled { return ErrGameDisabled }` inside
-  `UpdateGameScore` after `session.mu.Lock`, mirroring `SubmitVote` /
-  `RevealAnswers`.
-- [x] **S16** [Medium/Low] All per-IP protections collapse to a single shared
-  bucket behind the documented reverse proxy. `TrustedProxies` defaults to empty
-  (deliberate anti-spoofing), so `SetTrustedProxies([])` makes `c.ClientIP()`
-  return `RemoteAddr`, which behind the recommended Caddy deploy
-  (`reverse_proxy … localhost:8080`, `Caddyfile.example:15`) is `127.0.0.1` for
-  **every** client. With it unset, `VOTE_MAX_CONNECTIONS_PER_IP=50` becomes a
-  global 50-connection ceiling, the per-hour session cap is shared across all
-  trainers, and the S2 failed-join backoff is shared — so one attacker's
-  brute-force trips backoff that locks out every legitimate student (amplification
-  DoS). `.env.example:12` documents `TRUSTED_PROXIES=127.0.0.1` but leaves it
-  commented out, and `Caddyfile.example` never tells the operator to set it.
-  **Fix:** make `Caddyfile.example` explicitly require
-  `VOTE_TRUSTED_PROXIES=127.0.0.1` in the vote-server env (and uncomment it in
-  `.env.example` for the proxy case); optionally emit a startup `slog.Warn` if
-  `TrustedProxies` is empty while a high fraction of `ClientIP()` values are
-  loopback.
-- [x] **F25** [Low] `isPermanentlyClosed` is never surfaced to the app. After
-  `maxReconnectAttempts` (default 50 ≈ 16 h backoff), `scheduleReconnect` flips
-  `isPermanentlyClosed = true` and logs to console (`websocket-client.js:200-204`)
-  — but no callback fires. The last `onStatusChange(false)` is all the app sees,
-  so the formateur reconnect banner (`updateConnectionBanner`, gated on
-  `state.everConnected && !state.connected`) shows "Reconnexion…" **forever**
-  after the client has internally given up. Practically unreachable, but if it
-  ever triggers (server permanently moved / IP blocked) the trainer stares at a
-  "reconnecting" banner with no signal to reload. **Fix:** add an
-  `onPermanentClose` callback to the `VoteClient` options, invoke it where the
-  flag is set, and wire the formateur/stagiaire banners to swap to a
-  recoverable "Connexion perdue — rechargez la page" state.
-- [x] Tests: `TestShutdownRejectsUpgradeBetweenGuardAndStart` (R15 — under
-  `-race`, force the context to cancel after the guard but before `Start`),
-  `TestUpdateGameScoreRejectsWhenGameDisabled` +
-  `TestUpdateGameScoreRejectsConcurrentResetVote` (R17), config/docs change for
-  S16 + `TestLoopbackMonitorWarnsOnLoopbackWithoutTrustedProxies` /
-  `TestLoopbackMonitorDoesNotWarnWithTrustedProxies` /
-  `TestLoopbackMonitorRespectsMinObservations` /
-  `TestLoopbackMonitorIgnoresNonLoopbackTraffic` /
-  `TestLoopbackMonitorRearmsAfterConditionClears` /
-  `TestLoopbackMonitorIgnoresUnparsableIP` (S16), `websocket-client.test.js`
-  (+`onPermanentClose` fires once at the ceiling and on a 4xxx permanent
-  close, F25), `formateur/websocket.test.js` (+`onPermanentClose` flips
-  `permanentlyClosed` + banner re-render + clears on reconnect, F25),
-  `formateur/renderers-snapshot.test.js` (+banner swaps to the `lost` state
-  + clears the class when hidden again, F25). `go test -race ./...` green;
-  `npm test` green (578); `npm run lint` clean; `npm run build` clean.
+- [ ] **B1** [Medium] `handleUpdateName` is the only mutation handler without a
+  role gate. `backend/internal/hub/client.go:725`. All six peer handlers gate
+  (`handleStartVote:497`, `handleVote:559`, `handleCloseVote:592`,
+  `handleResetVote:605`, `handleRevealAnswers:648`, `handleReportGameScore:705`);
+  this one doesn't. Today the fallthrough is harmless
+  (`UpdateStagiaireName` returns `ErrStagiaireNotFound` for a trainer ID), but
+  it's a single-point inconsistency: a future refactor adding a code path that
+  doesn't fail on missing stagiaire would let a trainer (or pre-join anonymous
+  client) mutate stagiaire state. No test exercises the trainer-sends-
+  `update_name` case. **Fix:** add `if c.Type != "stagiaire" {
+  c.SendError(vote.ErrNotAuthorized.Error()); return }` as the first line.
+  One-line change, mirrors every other mutation handler.
+- [ ] **C1** [Low/Medium] `computeRank` returns `rank > totalStagiaires` for
+  post-reveal joiners. `backend/internal/hub/hub.go:1037-1053` (called from
+  `:732-740`). A stagiaire joining a Competitive session during `Closed+Revealed`
+  is not in `session.Scores` (populated only inside `RevealAnswers`'s Stagiaires
+  iteration). `computeRank` iterates `voteScores` (the Scores snapshot), so
+  `total = len(voteScores)` = N (pre-reveal class size, excludes joiner),
+  `rank = 1 + (scorers with score > 0)` = M+1. When all existing stagiaires
+  scored positive (common), `rank = N+1`, `total = N` → UI shows impossible
+  "rank N+1 of N". The joiner also receives `totalScore = scores[client.ID] = 0`
+  (zero-value for missing key). UX inconsistency visible in the classroom; a
+  late arrival sees a nonsensical rank until the next reveal normalizes it. No
+  test covers post-reveal join. **Fix:** derive `total` from
+  `len(session.Stagiaires)` (the live identity set, not the at-reveal snapshot).
+  For rank, either include all current Stagiaires in the iteration (read
+  `session.GetStagiaires()` once, look up each score), or simpler: if `id` not
+  in `voteScores`, return `(len(stagiaires), len(stagiaires))` — they're ranked
+  last, total reflects current class size.
+- [ ] **C3** [Low] `c.Name = msg.Name` stores untrimmed input.
+  `backend/internal/hub/client.go:731` (also
+  `backend/internal/vote/manager.go:221,237,561`). `IsValidName` (and the
+  manager's guard) trims before checking length/charset, but the original
+  (untrimmed) string is what's stored in `session.Stagiaires[id]` and `c.Name`.
+  A client sending `"  Jean  "` passes validation and is stored with whitespace.
+  Cosmetic in the UI (HTML collapses whitespace), but the stored form is the
+  canonical identity string used in `stagiaireName` broadcasts and the trainer's
+  stagiaire list. Worst case is weird whitespace in toasts/log lines. **Fix:**
+  trim once at the validation boundary (`name = strings.TrimSpace(name)` before
+  storing), at all four sites. Or have `IsValidName` return the trimmed form.
+- [ ] **R22** [Low] Rate-limit entries leak when a client cycles `stagiaireId`.
+  `backend/internal/hub/client.go:166`. `readPump`'s defer calls
+  `c.Hub.Security.RemoveMessageRate(c.ID)` — but `c.ID` is mutable across
+  `stagiaire_join` messages (R1 in DONE log resets it to `OriginalID`, then a
+  presented ID overwrites it). Only the LAST ID's entry is removed; earlier IDs
+  leave orphaned `MessageRateLimiter` entries in `Security.messageRates` until
+  the 5-min `cleanup()` GCs them. Worse: each new ID gets a fresh
+  `MaxBurstMessages=20` budget via `CheckMessageRate`, so a client scripting
+  `stagiaire_join` between message bursts effectively refreshes its quota per
+  cycle (bounded by `CheckJoinRateLimit` per IP, but the message cap is supposed
+  to be the inner defense). Memory bloat under malicious cycling (bounded by
+  per-IP cap × rate × cleanup interval — single attacker ≤ ~3 MB, not
+  catastrophic) + weakened inner rate limit. Defense-in-depth gap alongside the
+  documented R1 fix. **Fix:** either (a) remove by `OriginalID` in addition to
+  final `c.ID`, or (b) key `CheckMessageRate` by a stable per-connection
+  identifier (e.g., `OriginalID`) instead of the mutable `c.ID`.
+- [ ] Tests: `client_test.go` (+handleUpdateName rejects a trainer client with
+  `ErrNotAuthorized` and does not call `UpdateStagiaireName`, B1),
+  `hub_test.go` (+computeRank for a post-reveal joiner: total reflects current
+  Stagiaires count, rank is `total` for a scoreless joiner, C1),
+  `client_test.go`/`manager_test.go` (+name stored trimmed at all four sites,
+  C3), `client_test.go` (+cycling `stagiaireId` on one connection removes all
+  prior `messageRates` entries on disconnect; per-cycle quota no longer
+  refreshes, R22). `go test -race ./...` green.
+
+---
+
+## Session 30 — Infra, CI & docs alignment
+
+Round-5 infra findings. The deploy stack is already heavily hardened (sessions
+9/14/15/16 did D1–D18), so nothing here is High severity — these are residuals
+and post-hardening drift. All are config/docs/CI changes with no application
+code coupling, so the whole session runs without touching the Go/JS test
+surfaces and ships in one PR.
+
+- [ ] **CI1** [Medium] No CI concurrency control — wasted runner minutes, slow
+  feedback. `.github/workflows/ci.yml`, `.github/workflows/release.yml` (no
+  `concurrency:` key anywhere; verified via grep). 5 jobs run per push
+  (backend/frontend/e2e/docker/security). Pushing 3 commits to a PR launches 15
+  jobs; superseded runs are not cancelled. docker + govulncheck + e2e legs are
+  heavy; duplicate runs block the queue and burn minutes. **Fix:** add to
+  `ci.yml` (and the `ci` workflow_call) —
+  ```yaml
+  concurrency:
+    group: ${{ github.workflow }}-${{ github.ref || github.event.pull_request.number }}
+    cancel-in-progress: true
+  ```
+  Omit `cancel-in-progress` (or the whole key) in `release.yml` — tags are
+  immutable, you don't want a release run killed mid-publish.
+- [ ] **D19** [Medium] Debian maintainer scripts double-manage systemd; "don't
+  autostart" intent is false. `debian/vote.postinst:16-20` (manual `systemctl
+  enable`), `debian/vote.prerm:6-10` (manual `systemctl stop`),
+  `debian/vote.postrm:15-17` (manual `daemon-reload`) — all alongside
+  `#DEBHELPER#` (`:32`,`:22`,`:29`). With debhelper-compat 13 and a shipped
+  `.service`, `dh_installsystemd` auto-runs and injects enable/start/stop
+  snippets at `#DEBHELPER#`. The manual calls are redundant (idempotent, so
+  harmless) BUT — critically — there is no `override_dh_installsystemd
+  --no-start`. So debhelper **starts the service on `apt install`**,
+  contradicting the postinst comment "don't start it (admin will start it)".
+  Behaviour ↔ doc mismatch; the operator's first install auto-starts under the
+  default env (dev CORS origins). **Fix:** drop the manual `systemctl` calls
+  from all three scripts and let debhelper own the lifecycle. If no-autostart is
+  truly wanted, add to `rules`:
+  ```makefile
+  override_dh_installsystemd:
+  	dh_installsystemd --no-start
+  ```
+- [ ] **D20** [Medium] `ci.yml` `docker` job rebuilds cold every push + never
+  warms the release cache. `.github/workflows/ci.yml:140-141` (`docker build -t
+  vote:ci .`, legacy builder, no cache). D1 (DONE) added `cache-from/to:
+  type=gha` to `release.yml`'s buildx push, but the PR-gate docker job uses the
+  legacy builder with no cache. It pays the full multi-stage rebuild on every
+  PR, AND its layers never populate the GHA cache that `release.yml` reads — so
+  the first tag build after a code change also starts cold. **Fix:** switch to
+  `docker/setup-buildx-action` + `docker/build-push-action` with `load:true`,
+  `cache-from: type=gha`, `cache-to: type=gha,mode=max` (mirrors `release.yml`).
+  Bonus: also run the HEALTHCHECK (`docker run --rm -d …; docker inspect
+  --format=…`) instead of just `--help` (line 144) — `vote-server --health` is
+  the documented probe and is never exercised in CI.
+- [ ] **M1** [Low] README drift: runtime image documented as "Alpine", is
+  actually distroless. `README.md:17` — `**Docker**: multi-stage build (Go +
+  Node → Alpine)`. D10 (DONE) switched the runtime stage to
+  `gcr.io/distroless/static-debian12:nonroot` (~18 MB, no shell). Alpine is only
+  a transient *builder* base now. Misleading for anyone threat-modelling the
+  runtime surface or expecting `wget`/shell in the container. **Fix:** `multi-
+  stage build (Go + Node → distroless static runtime)`. The `Production Build`
+  block (line 119) and `Health & version` note (line 111) are already correct —
+  only line 17 drifted.
+- [ ] **M2** [Low] README env table missing `VOTE_MAX_SESSIONS_PER_HOUR`.
+  `README.md:72-84`. D15 (DONE) added it to `.env.example:51`, but the README
+  env reference table (which presents itself as the canonical list) omits it —
+  it lists the other three S7 caps. Inconsistent source-of-truth. **Fix:** add
+  the row (default `20`, sliding 1h window, `≤0` → hardcoded default).
+- [ ] **M3** [Low] CLAUDE.md claims `ResetVote` clears `session.Stagiaires` —
+  it doesn't (docs/code contract violation). `internal/vote/manager.go:385-419`
+  vs CLAUDE.md (two locations: the S15 note and the Stagiaire Reclaim Token
+  section). The code clears `Votes`, `LastVoteScores`, `CorrectColors`,
+  `Revealed` — but leaves `Stagiaires`, `ReclaimTokens`, `Scores`, `GameScores`
+  untouched. This is intentional (the "Cumulative: scores accumulate across
+  votes within a session" feature depends on it), so the code is correct and the
+  docs are wrong. A developer reading CLAUDE.md as the source of truth will
+  write code assuming reset = fresh identity sheet. The two CLAUDE.md claims are
+  also internally inconsistent with the "cumulative scoring" claim in the same
+  doc. **Fix:** update CLAUDE.md to say reset clears the current round's
+  votes/scores/reveal state but preserves identity (Stagiaires, ReclaimTokens,
+  cumulative Scores, GameScores) for cross-round competition; fresh-identity
+  reset requires leaving and creating a new session. No code change.
+- [ ] **D21** [Low] systemd unit: a few standard hardening directives missing.
+  `debian/vote.service:33-55`. Present hardening is excellent, but absent:
+  `CapabilityBoundingSet=` (drop all caps), `AmbientCapabilities=` (empty),
+  `PrivateDevices=true`, `UMask=0077`, `ProcSubset=pid`. A Go HTTP/WS server
+  binding >1024 needs no Linux capabilities and no `/dev`. With non-root +
+  `NoNewPrivileges` + `MemoryDenyWriteExecute` the residual risk is low, so this
+  is pure defense-in-depth — but `CapabilityBoundingSet=` is the standard
+  cap-floor and its absence is conspicuous given how thorough the rest is.
+  **Fix:** add `CapabilityBoundingSet=` `AmbientCapabilities=` `PrivateDevices=true`
+  `UMask=0077`.
+- [ ] **D22** [Low] Caddyfile missing `Permissions-Policy`.
+  `debian/Caddyfile.example:47-55` (header block). D12 (DONE) added HSTS /
+  nosniff / Referrer-Policy / X-Frame-Options. A voting app never needs
+  camera/microphone/geolocation/payment — explicitly disabling them is cheap
+  defense-in-depth against a future third-party snippet or compromised asset.
+  **Fix:** add `Permissions-Policy "camera=(), microphone=(), geolocation=(),
+  payment=()"` to the `header {}` block.
+- [ ] **D23** [Low] Non-reproducible build via `BUILD_TIME=$(date …)`.
+  `Makefile:6`, `.github/workflows/release.yml:142` (`build_time=$(date -u …)`).
+  Same source commit → different binary → different image digest, weakening the
+  cosign/SBOM/provenance supply-chain story (two builds of `v1.2.3` aren't
+  byte-identical). `version`/`gitCommit` are already stable; only the timestamp
+  varies. **Fix:** derive from the commit: `BUILD_TIME := $(shell git show -s
+  --format=%cI HEAD)` (or honour `SOURCE_DATE_EPOCH`). Timestamp stays
+  meaningful + reproducible.
+- [ ] **D24** [Low] `make build-frontend` uses `npm install`, not `npm ci
+  --ignore-scripts`. `Makefile:235`. D4 (DONE) explicitly switched
+  `debian/rules` to `npm ci --ignore-scripts` (supply-chain: no lockfile
+  mutation, no install-scripts). The Makefile target was missed — it still runs
+  `npm install` (can rewrite `package-lock.json`, runs lifecycle scripts).
+  Inconsistent contract for the same frontend build. **Fix:** `npm ci
+  --ignore-scripts && npm run build`.
+- [ ] **D25** [Low] `apk add --no-cache git` in Dockerfile backend-builder is
+  vestigial. `Dockerfile:10`. `go.mod` has no `replace`, no private modules, no
+  VCS directives (verified) — `go mod download` resolves via the module proxy
+  with `GOSUMDB`, never invoking git. `GIT_COMMIT` arrives as a build-arg
+  (`release.yml:143` / Makefile), not from a repo checkout inside the stage.
+  D16 (DONE) pinned digests but this stray dep survived. **Fix:** drop the `RUN
+  apk add …` line entirely (builder stage only; zero runtime impact, but removes
+  a build dep and one layer).
+- [ ] **D26** [Low] `make clean-deb` is incomplete. `Makefile:183-192`. Removes
+  `debian/.debhelper/`, `debhelper-build-stamp`, `files`, `debian/vote/`, but
+  not the top-level `debian/*.substvars` or `debian/*.debhelper` files.
+  Confirmed present on disk: `debian/vote.substvars`,
+  `debian/vote.postrm.debhelper` (untracked, but stale). `.dockerignore:64-65`
+  even lists these patterns — `clean-deb` just doesn't apply them. **Fix:** add
+  `rm -f debian/*.substvars debian/*.debhelper` to `clean-deb` (and align the
+  existing patterns).
+- [ ] **D27** [Low] No `.deb` install smoke-test in release.
+  `.github/workflows/release.yml:100-121` (`build-deb` builds + verifies arch,
+  never installs). A packaging-path regression (wrong install path, broken
+  systemd unit, bad perms) builds cleanly (`dpkg-buildpackage` validates
+  structure) but ships broken. The amd64 leg runs on a Debian-class runner
+  where `sudo dpkg -i vote_*.deb && systemctl start vote && curl /livez` is a
+  10-second gate. **Fix:** add an install-and-probe step on the amd64 leg after
+  the build (arm64 stays build-only since the runner can't execute the arm64
+  binary without QEMU).
+- [ ] Verification: `go build ./...` clean; `npm run build` clean (no app code
+  changed); `make clean-deb` leaves no stale `debian/*.substvars` /
+  `*.debhelper` (D26); local `dpkg-buildpackage -uc -us -b` succeeds (D19/D21);
+  `docker build` uses the GHA cache (D20). No regression against the archived
+  "things checked and found correct" list in `IMPROVEMENTS-DONE.md`.
 
 ---
 
 ## Verification checklist (per session, before marking `[x]`)
 
-- `make fmt-check` clean; `go vet ./...` clean; `go test -race ./...` green.
-- `npm run lint` clean; `npm test` green; `npm run build` clean.
+- `make fmt-check` clean; `go vet ./...` clean; `go test -race ./...` green (for
+  sessions touching Go).
+- `npm run lint` clean; `npm test` green; `npm run build` clean (for sessions
+  touching JS).
 - No regression against the archived "things checked and found correct" list in
   `IMPROVEMENTS-DONE.md` (lock ordering `h.mu → Manager.mu → Session.mu`,
   idempotent reveal reversal, atomic counter writes, constant-time token
-  compares, `SetTrustedProxies` defaulting to empty).
+  compares, `SetTrustedProxies` defaulting to empty, `escapeHtml` on every
+  user-supplied name, `sanitizeColor` at every `style="background-color:…"`
+  site, `safeLocalGet`/`safeSessionGet` wrappers used everywhere).
