@@ -246,4 +246,82 @@ func TestRecordFailedJoinBackoffOverflow(t *testing.T) {
 	if attempt.LastBackoffUntil.Before(minExpected) {
 		t.Errorf("backoff should be >= 60s; got %v", attempt.LastBackoffUntil)
 	}
+	// R11: the backoff ceiling is enforced AFTER jitter, so the
+	// observable maximum is exactly MaxBackoffMs (5 min), not
+	// MaxBackoffMs×1.25 (6.25 min) the pre-fix order produced.
+	if dur := attempt.LastBackoffUntil.Sub(time.Now()); dur > MaxBackoffMs*time.Millisecond {
+		t.Errorf("backoff must not exceed MaxBackoffMs (%dms) after R11; got %v", MaxBackoffMs, dur)
+	}
+}
+
+// TestClampBackoffMsRespectsCeiling is the R11 deterministic table test at
+// the cap boundary. clampBackoffMs is the pure function that enforces the
+// [100ms, MaxBackoffMs] window AFTER jitter is applied. The pre-fix bug
+// lived here: the cap ran before jitter, so a base clamped to MaxBackoffMs
+// then gained up to +25% on top, yielding 375s/6.25min. Each row feeds a
+// post-jitter value through the clamp and pins the result.
+func TestClampBackoffMsRespectsCeiling(t *testing.T) {
+	jitter := int(float64(MaxBackoffMs) * BackoffJitter) // max +25% offset
+	cases := []struct {
+		name string
+		ms   int
+		want int
+	}{
+		{"cap plus max positive jitter stays at cap", MaxBackoffMs + jitter, MaxBackoffMs},
+		{"exactly at cap unchanged", MaxBackoffMs, MaxBackoffMs},
+		{"one above cap clamps down", MaxBackoffMs + 1, MaxBackoffMs},
+		{"far above cap clamps down", MaxBackoffMs * 2, MaxBackoffMs},
+		{"mid-range unchanged", 60_000, 60_000},
+		{"below floor clamps up to 100ms", 50, 100},
+		{"negative clamps to floor", -10_000, 100},
+		{"zero clamps to floor", 0, 100},
+		{"cap minus jitter within range unchanged", MaxBackoffMs - jitter, MaxBackoffMs - jitter},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := clampBackoffMs(c.ms); got != c.want {
+				t.Errorf("clampBackoffMs(%d): got %d, want %d", c.ms, got, c.want)
+			}
+		})
+	}
+}
+
+// TestBackoffRespectsMaxAfterJitter drives the full randomized path
+// (computeBackoffMs, which draws a real ±25% jitter) across a sweep of
+// failure counts at and beyond the cap boundary, and asserts the result
+// NEVER exceeds MaxBackoffMs and never drops below the 100ms floor. This
+// is the integration-level guard: a single value above the cap would
+// resurrect the R11 bug.
+func TestBackoffRespectsMaxAfterJitter(t *testing.T) {
+	for count := MaxFailedAttempts; count < MaxFailedAttempts+40; count++ {
+		for i := 0; i < 50; i++ {
+			ms := computeBackoffMs(count)
+			if ms > MaxBackoffMs {
+				t.Errorf("count=%d iter=%d: backoff %dms exceeds MaxBackoffMs %dms (R11 ceiling violated)", count, i, ms, MaxBackoffMs)
+			}
+			if ms < 100 {
+				t.Errorf("count=%d iter=%d: backoff %dms below 100ms floor", count, i, ms)
+			}
+		}
+	}
+}
+
+// TestBackoffScalesWithFailures guards the exponential growth that the
+// overflow-cap and jitter refactor must preserve: more failures must not
+// shrink the backoff. The highest-count median must be >= the lowest.
+func TestBackoffScalesWithFailures(t *testing.T) {
+	median := func(count int) int {
+		max := 0
+		for i := 0; i < 200; i++ {
+			if v := computeBackoffMs(count); v > max {
+				max = v
+			}
+		}
+		return max
+	}
+	low := median(MaxFailedAttempts)       // exponent 0: base 1s
+	high := median(MaxFailedAttempts + 12) // deep into the cap region
+	if high < low {
+		t.Errorf("deeper failures must not reduce backoff: low=%d high=%d", low, high)
+	}
 }

@@ -126,32 +126,59 @@ func (s *Security) RecordFailedJoin(ip string) {
 	attempt.LastAttempt = now
 
 	if attempt.Count >= MaxFailedAttempts {
-		backoffExponent := attempt.Count - MaxFailedAttempts
-		// Cap the exponent to prevent int64 overflow around Count=56,
-		// which would wrap negative and bypass the MaxBackoffMs ceiling.
-		const maxBackoffExponent = 30
-		var backoffMs int
-		if backoffExponent > maxBackoffExponent {
-			backoffMs = MaxBackoffMs
-		} else {
-			backoffMs = BaseBackoffMs * (1 << backoffExponent)
-			if backoffMs > MaxBackoffMs {
-				backoffMs = MaxBackoffMs
-			}
-		}
-		// Add jitter to prevent timing attacks: ±25% randomization
-		jitterRange := int(float64(backoffMs) * BackoffJitter)
-		jitterOffset, err := rand.Int(rand.Reader, big.NewInt(int64(jitterRange*2+1)))
-		if err == nil {
-			jitter := int(jitterOffset.Int64()) - jitterRange
-			backoffMs += jitter
-		}
-		// Ensure backoff is at least 100ms and not negative
-		if backoffMs < 100 {
-			backoffMs = 100
-		}
-		attempt.LastBackoffUntil = now.Add(time.Duration(backoffMs) * time.Millisecond)
+		attempt.LastBackoffUntil = now.Add(time.Duration(computeBackoffMs(attempt.Count)) * time.Millisecond)
 	}
+}
+
+// computeBackoffMs returns the backoff duration in milliseconds for a given
+// failure count. The exponential base is jittered by ±25% (to defang timing
+// attacks) and then clamped to [100ms, MaxBackoffMs].
+//
+// R11: the clamp runs AFTER the jitter so the observable ceiling is exactly
+// MaxBackoffMs, not MaxBackoffMs×(1+jitter) ≈ 375s (6.25min) that the
+// documented 5min cap promised. The previous order capped the base first,
+// then added up to 75s of jitter on top of the already-capped value.
+func computeBackoffMs(count int) int {
+	backoffExponent := count - MaxFailedAttempts
+	// Cap the exponent to prevent int64 overflow around Count=56,
+	// which would wrap negative and bypass the MaxBackoffMs ceiling.
+	const maxBackoffExponent = 30
+	var baseMs int
+	if backoffExponent > maxBackoffExponent {
+		baseMs = MaxBackoffMs
+	} else {
+		baseMs = BaseBackoffMs * (1 << backoffExponent)
+	}
+	return clampBackoffMs(baseMs + jitterOffset(baseMs))
+}
+
+// jitterOffset returns a uniformly random value in [-range, +range] where
+// range = baseMs × BackoffJitter (±25%). A CSPRNG read failure yields 0
+// (no jitter) rather than blocking the rate limiter: jitter hardens timing
+// attacks but is not itself a security boundary, so degrading to no-jitter
+// is preferable to refusing to back off at all.
+func jitterOffset(baseMs int) int {
+	jitterRange := int(float64(baseMs) * BackoffJitter)
+	if jitterRange <= 0 {
+		return 0
+	}
+	offset, err := rand.Int(rand.Reader, big.NewInt(int64(jitterRange*2+1)))
+	if err != nil {
+		return 0
+	}
+	return int(offset.Int64()) - jitterRange
+}
+
+// clampBackoffMs bounds ms to the documented [100ms, MaxBackoffMs] window.
+// Pure (no I/O) so the ceiling contract can be table-tested at the boundary.
+func clampBackoffMs(ms int) int {
+	if ms > MaxBackoffMs {
+		ms = MaxBackoffMs
+	}
+	if ms < 100 {
+		ms = 100
+	}
+	return ms
 }
 
 func (s *Security) ClearFailedJoin(ip string) {

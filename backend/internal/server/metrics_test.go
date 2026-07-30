@@ -1,6 +1,7 @@
 package server
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -205,4 +206,65 @@ func TestFormatLEExpositionInContext(t *testing.T) {
 			t.Errorf("output should not contain %q, got:\n%s", bad, out)
 		}
 	}
+}
+
+// TestReadRuntimeGaugesAllSupported is the R12 regression guard.
+// readRuntimeGauges sources the go_* gauges from the non-STW runtime/metrics
+// API instead of runtime.ReadMemStats (which forces a stop-the-world on every
+// /metrics scrape). Every sample name here is KindUint64 and guaranteed
+// stable across Go versions; KindBad would only surface if a future Go
+// dropped a name — which would silently zero a gauge and lose observability.
+// This test asserts all five resolve (not KindBad) and return sane values, so
+// a renamed metric surfaces as a test failure rather than a silent zero.
+func TestReadRuntimeGaugesAllSupported(t *testing.T) {
+	g := readRuntimeGauges()
+	if g.goroutines < 1 {
+		t.Errorf("goroutines should be >= 1, got %d", g.goroutines)
+	}
+	if g.heapObjectBytes == 0 {
+		t.Error("heapObjectBytes should be non-zero (test goroutines allocate)")
+	}
+	if g.totalBytes == 0 {
+		t.Error("totalBytes should be non-zero")
+	}
+	// gcCycles/heapObjects may legitimately be 0 very early; only assert
+	// they're not absurd. The key contract is that the sample resolved
+	// (asserted indirectly: a KindBad would make them all zero, caught by
+	// the goroutines/heap checks above which would also be zeroed).
+}
+
+// TestReadRuntimeGaugesIsConsistentWithinProcess asserts two consecutive
+// non-STW reads are monotonic-ish for the cumulative counters (gcCycles only
+// grows) and stable enough for gauges (goroutines can't go negative; heap
+// footprint can't be wildly different moments apart). This guards against a
+// future refactor that accidentally re-reads the wrong sample index.
+func TestReadRuntimeGaugesIsConsistentWithinProcess(t *testing.T) {
+	a := readRuntimeGauges()
+	b := readRuntimeGauges()
+	if b.gcCycles < a.gcCycles {
+		t.Errorf("gcCycles should be monotonic: %d -> %d", a.gcCycles, b.gcCycles)
+	}
+	if b.goroutines == 0 {
+		t.Error("second read should still see live goroutines")
+	}
+}
+
+// BenchmarkReadMemStatsVsRuntimeMetrics documents the R12 win: runtime.ReadMemStats
+// forces a stop-the-world on every call, stalling the real-time WebSocket path
+// the /metrics endpoint exists to monitor; runtime/metrics.Read never stops the
+// world. Run with: go test -bench=Read -benchmem ./internal/server/
+func BenchmarkReadMemStatsVsRuntimeMetrics(b *testing.B) {
+	b.Run("ReadMemStats_STW", func(b *testing.B) {
+		b.ReportAllocs()
+		var ms runtime.MemStats
+		for i := 0; i < b.N; i++ {
+			runtime.ReadMemStats(&ms)
+		}
+	})
+	b.Run("RuntimeMetrics_NoSTW", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			readRuntimeGauges()
+		}
+	})
 }

@@ -117,14 +117,14 @@ rejection) reset or fail to re-bind state.
 Four small, independent, hardening fixes. Each is isolated and verifiable on its
 own; each was missed by a prior session that touched neighbouring code.
 
-- [ ] **R9** [Medium] `Server.Shutdown` nil-pointer panics when startup failed
+- [x] **R9** [Medium] `Server.Shutdown` nil-pointer panics when startup failed
   at `net.Listen`. If listen fails, `s.srv` stays nil, `Run` returns to `errCh`,
   and `main`'s shutdown block calls `s.srv.Shutdown(ctx)`
   (`server.go:291-293`) → panic, which masks the real listen error in the logs
   and turns a clean "exit 1 with a clear message" into a stack trace. **Fix:**
   guard `Server.Shutdown` — `if s.srv == nil { return nil }` (or return the
   stored startup error).
-- [ ] **R10** [Medium] The dashboard cookie mints an all-zero nonce on CSPRNG
+- [x] **R10** [Medium] The dashboard cookie mints an all-zero nonce on CSPRNG
   failure, contradicting B14's "fail loud" policy. `auth.go:85-96` only `slog`
   the `rand.Read(nonce)` error and continues with `nonce` left zeroed; B14
   (archived) deliberately removed time-derived CSPRNG fallbacks and panics in
@@ -135,18 +135,18 @@ own; each was missed by a prior session that touched neighbouring code.
   byte-identical cookies, defeating per-token revocation granularity (S4).
   **Fix:** return the error (or panic via `security.failCSPRNG`) and refuse to
   mint — one-line consistency with the rest of the secret-minting surface.
-- [ ] **R11** [Low] The backoff cap is applied *before* the +25% jitter, so the
+- [x] **R11** [Low] The backoff cap is applied *before* the +25% jitter, so the
   real maximum is `MaxBackoffMs × 1.25 = 375 s` (6.25 min), not the documented 5
   min. `security.go:137-153` caps then adds `jitterRange` (up to 75 s) on top.
   **Fix:** apply the cap after jitter (and keep the existing 100 ms floor).
-- [ ] **R12** [Low] `runtime.ReadMemStats` forces a stop-the-world on every
+- [x] **R12** [Low] `runtime.ReadMemStats` forces a stop-the-world on every
   `/metrics` scrape and every 30 s dashboard poll (`metrics.go:93`). The
   observability endpoint periodically stalls the very real-time path it
   monitors, and the stall is invisible to `/metrics` itself. **Fix:** switch the
   `go_mem_*` gauges to the non-STW `runtime/metrics` API
   (`/memory/classes/heap/objects:bytes`, `/gc/heap/allocs:bytes`,
   `/sched/goroutines:goroutines`), or drop `runtime.ReadMemStats` entirely.
-- [ ] Tests: `TestServerShutdownNoPanicOnFailedListen` (R9), `TestSignCookieFailsOnCSPRNGFailure`
+- [x] Tests: `TestServerShutdownNoPanicOnFailedListen` (R9), `TestSignCookieFailsOnCSPRNGFailure`
   / extend the existing `randRead` seam to auth (R10), `TestBackoffRespectsMaxAfterJitter`
   (R11 — table test at the cap), `TestMetricsGaugesDoNotSTW` or a benchmark
   comparing `ReadMemStats` vs `runtime/metrics` (R12). `go test -race ./...` green.

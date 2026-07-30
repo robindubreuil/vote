@@ -641,3 +641,72 @@ func TestShutdownRejectsNewUpgradesDuringDrain(t *testing.T) {
 		t.Errorf("expected 503 during drain, got %d", resp.StatusCode)
 	}
 }
+
+// TestServerShutdownNoPanicOnFailedListen pins the R9 contract: when Run
+// fails at net.Listen (so Serve is never called and s.srv stays nil), main's
+// shutdown block still calls srv.Shutdown unconditionally — both for the
+// signal path and the errCh path. The previous implementation dereferenced
+// s.srv and panicked, masking the real listen error in the logs and turning
+// a clean "exit 1 with a clear message" into a stack trace. A nil srv must
+// be a safe no-op.
+func TestServerShutdownNoPanicOnFailedListen(t *testing.T) {
+	cfg := &config.Config{Port: "8080"}
+	h := hub.NewHub(cfg)
+	srv := NewServer(cfg, h)
+
+	// Serve was never called, so s.srv is nil — the exact state main.go
+	// reaches when net.Listen returns an error.
+	if srv.srv != nil {
+		t.Fatalf("precondition: s.srv should be nil before Serve, got %T", srv.srv)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Shutdown must not panic when s.srv is nil, got: %v", r)
+		}
+	}()
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Errorf("Shutdown with nil s.srv should return nil, got %v", err)
+	}
+}
+
+// TestServerShutdownWorksAfterServe is the positive control for R9: once
+// Serve has run, s.srv is non-nil and Shutdown must actually drain the
+// server (return nil once the listener is closed). Together with the
+// nil-guard test this pins both branches of the guard.
+func TestServerShutdownWorksAfterServe(t *testing.T) {
+	cfg := &config.Config{
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Hour,
+		CleanupInterval: time.Hour,
+	}
+	h := hub.NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	srv := NewServer(cfg, h)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(l) }()
+
+	// Wait until ready so Shutdown has something to drain.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + l.Addr().String() + "/livez")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown after Serve should return nil, got %v", err)
+	}
+	if err := <-done; err != nil && err != http.ErrServerClosed {
+		t.Errorf("Serve should return ErrServerClosed after Shutdown, got %v", err)
+	}
+}
