@@ -356,6 +356,26 @@ func (s *Server) handleHealth(c *gin.Context) {
 }
 
 func (s *Server) handleWebSocket(c *gin.Context) {
+	// R2: drain guard. Once the hub's context is cancelled (shutdown),
+	// reject the dial before acquiring any resources or upgrading. This
+	// closes the window the OLD shutdown order left open: the hub drained
+	// while the HTTP listener was still accepting dials, so a 30-student
+	// classroom reconnecting during a deploy would upgrade successfully,
+	// call client.Start() → wg.Add(2), and race with the Hub's wg.Wait
+	// (Go forbids positive-delta Add concurrent with Wait when the
+	// counter is zero). The hijacked conn also isn't tracked by
+	// http.Server.Shutdown, so its readPump would block in ReadMessage
+	// until pongWait (70s) — a "connected" socket that delivers no state.
+	// With the new order (srv.Shutdown before h.Shutdown) the listener is
+	// already closed by the time ctx cancels, but this guard is defense in
+	// depth for any request that slipped past the listener before close.
+	if s.hub.Context().Err() != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Server is shutting down",
+		})
+		return
+	}
+
 	clientIP := c.ClientIP()
 
 	allowed := s.hub.Security.CheckJoinRateLimit(clientIP)

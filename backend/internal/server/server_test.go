@@ -577,3 +577,67 @@ func TestServeAcceptsPreBoundListener(t *testing.T) {
 	}
 	_ = done // serve goroutine exits when Shutdown closes the server
 }
+
+// TestShutdownRejectsNewUpgradesDuringDrain is the R2 drain-guard test.
+//
+// Before the fix, the hub drained while the HTTP listener was still
+// accepting dials, so a WS reconnect arriving during the drain window
+// upgraded successfully, called client.Start() → wg.Add(2), and raced
+// with the Hub's wg.Wait (Go forbids positive-delta Add concurrent with
+// Wait when the counter is zero). Worse, the hijacked conn wasn't
+// tracked by http.Server.Shutdown, so its readPump blocked in
+// ReadMessage until pongWait (70s) — a "connected" socket that
+// delivered no state, freezing a 30-student class on every deploy.
+//
+// The fix adds a drain guard at the top of handleWebSocket: if the
+// hub's context is cancelled, the dial is rejected with 503 before any
+// resource is acquired or the upgrade runs. This test cancels the hub
+// context via h.Shutdown (which, with no registered clients, returns
+// immediately — leaving the HTTP listener open, exactly the state the
+// guard must catch) and asserts a fresh dial gets 503, not an upgrade.
+func TestShutdownRejectsNewUpgradesDuringDrain(t *testing.T) {
+	cfg := &config.Config{
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Hour,
+		CleanupInterval: time.Hour,
+	}
+	h := hub.NewHub(cfg)
+	h.Run()
+
+	srv := NewServer(cfg, h)
+	ts := httptest.NewServer(srv.router)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+
+	// Sanity: a dial before drain upgrades successfully (guard does not
+	// fire while the hub context is live).
+	dialer := websocket.Dialer{HandshakeTimeout: 2 * time.Second}
+	healthy, _, err := dialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost"}})
+	if err != nil {
+		t.Fatalf("pre-drain dial should succeed: %v", err)
+	}
+	healthy.Close()
+
+	// Trigger drain. h.Shutdown cancels the hub context and waits for
+	// the runLoop/cleanupLoop goroutines. No clients are registered in
+	// hub.Connections (the sanity dial above never sent a join message),
+	// so Shutdown returns immediately. The hub context is now cancelled,
+	// but the HTTP listener (owned by httptest) is still open — exactly
+	// the state handleWebSocket's guard must catch.
+	h.Shutdown()
+
+	// A fresh request to /ws must be rejected with 503 by the drain
+	// guard BEFORE the upgrade. A plain GET (no Upgrade headers) is
+	// used so a successful guard produces a readable 503; if the guard
+	// were absent, gorilla's upgrader would return 400 for the missing
+	// Upgrade headers (see TestWebsocketConnection), not 503.
+	resp, err := http.Get(ts.URL + "/ws")
+	if err != nil {
+		t.Fatalf("GET /ws during drain: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 during drain, got %d", resp.StatusCode)
+	}
+}

@@ -1,10 +1,17 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
+	"time"
+
+	"vote-backend/internal/config"
+	"vote-backend/internal/hub"
+	"vote-backend/internal/server"
 )
 
 // TestRunHealthCheckGreen is the D10 contract: `vote-server --health`
@@ -97,4 +104,99 @@ func portFromURL(t *testing.T, raw string) string {
 func withEnvPort(t *testing.T, port string) {
 	t.Helper()
 	t.Setenv("PORT", port)
+}
+
+// trackingListener wraps a net.Listener to record the moment Close() is
+// called, so TestShutdownClosesListenerFirst can assert that the HTTP
+// listener closes BEFORE the hub context cancels.
+type trackingListener struct {
+	net.Listener
+	onClose func()
+}
+
+func (t *trackingListener) Close() error {
+	if t.onClose != nil {
+		t.onClose()
+	}
+	return t.Listener.Close()
+}
+
+// TestShutdownClosesListenerFirst is the R2 ordering contract.
+//
+// gracefulShutdown must close the HTTP listener (srv.Shutdown) BEFORE
+// cancelling the hub context (h.Shutdown). Reversing the order reopens
+// the race the rest of R2 closes: a dial accepted during drain would
+// call client.Start() → wg.Add(2) concurrent with the Hub's wg.Wait,
+// which Go forbids when the counter is zero ("sync: WaitGroup is
+// reused before previous Wait has returned").
+//
+// The test records an ordered event log: the listener's onClose fires
+// synchronously inside srv.Shutdown (which runs to completion inside
+// gracefulShutdown before h.Shutdown starts), and a background
+// goroutine records when the hub context cancels. Asserting the event
+// order is [listener, hub] pins the structural contract independent of
+// wall-clock resolution.
+func TestShutdownClosesListenerFirst(t *testing.T) {
+	cfg := &config.Config{
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Hour,
+		CleanupInterval: time.Hour,
+	}
+	h := hub.NewHub(cfg)
+	h.Run()
+
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	var (
+		orderMu sync.Mutex
+		order   []string
+	)
+	record := func(name string) {
+		orderMu.Lock()
+		order = append(order, name)
+		orderMu.Unlock()
+	}
+
+	tl := &trackingListener{Listener: raw, onClose: func() { record("listener") }}
+
+	srv := server.NewServer(cfg, h)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(tl) }()
+
+	// Wait for readiness so the readiness probe doesn't influence timing.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + raw.Addr().String() + "/livez")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Observer for the hub context cancellation. Channels synchronize
+	// the read so the test doesn't sample order before the observer
+	// goroutine has had a chance to run.
+	hubCancelled := make(chan struct{})
+	go func() {
+		<-h.Context().Done()
+		record("hub")
+		close(hubCancelled)
+	}()
+
+	gracefulShutdown(srv, h, 5*time.Second)
+	<-hubCancelled
+
+	if err := <-serveErr; err != nil && err != http.ErrServerClosed {
+		t.Logf("serve returned non-ErrServerClosed: %v", err)
+	}
+
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	if len(order) != 2 || order[0] != "listener" || order[1] != "hub" {
+		t.Errorf("expected event order [listener, hub], got %v", order)
+	}
 }

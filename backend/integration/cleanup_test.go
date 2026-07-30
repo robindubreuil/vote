@@ -50,8 +50,9 @@ func TestSessionCleanup(t *testing.T) {
 		}
 	}()
 	defer func() {
-		h.Shutdown()
+		// R2: listener before hub (mirrors main.go's gracefulShutdown).
 		srv.Shutdown(context.Background())
+		h.Shutdown()
 	}()
 
 	time.Sleep(100 * time.Millisecond) // Wait for server start

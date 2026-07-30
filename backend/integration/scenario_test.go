@@ -426,6 +426,7 @@ func TestScenarioSessionTimeout(t *testing.T) {
 		t.Error("Session should be cleaned up after timeout")
 	}
 
-	h.Shutdown()
+	// R2: listener before hub (mirrors main.go's gracefulShutdown).
 	srv.Shutdown(context.Background())
+	h.Shutdown()
 }

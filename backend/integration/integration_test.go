@@ -101,16 +101,21 @@ func NewTestServer(t *testing.T) *TestServer {
 }
 
 // Close gracefully shuts down the test server.
+//
+// R2: the order mirrors main.go's gracefulShutdown — srv.Shutdown BEFORE
+// h.Shutdown. Closing the HTTP listener first stops new WS dials from
+// racing the Hub's wg.Wait; the drain guard in handleWebSocket catches
+// any in-flight request that slipped past the listener before close.
 func (ts *TestServer) Close(t *testing.T) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), ts.cfg.ShutdownTimeout)
 	defer cancel()
 
-	ts.hub.Shutdown()
 	if err := ts.srv.Shutdown(ctx); err != nil {
 		t.Logf("Server shutdown error: %v", err)
 	}
+	ts.hub.Shutdown()
 	ts.shutdown()
 }
 
