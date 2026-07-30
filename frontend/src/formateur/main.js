@@ -79,11 +79,19 @@ async function init() {
     state.sessionCode = savedSessionCode
     renderFullLayout(app)
     initClient()
-    attachAppKeyboardShortcuts(leaveSession)
   } else {
     renderLandingPage(app)
     attachLandingListenersWithHandlers()
   }
+
+  // R6: attach the app-level Escape shortcut once per page lifecycle,
+  // regardless of entry path. Previously this only ran in the
+  // savedSessionCode branch, so the most common flow (land → Créer)
+  // never wired Escape-to-leave — the session_created handler in
+  // websocket.js doesn't call it either. The handler self-guards on
+  // state.sessionCode (no-op on the landing page) and attachAppKeyboardShortcuts
+  // is itself idempotent, so this is safe to call unconditionally.
+  attachAppKeyboardShortcuts(leaveSession)
 }
 
 init().catch((err) => console.error('Formateur init failed:', err))

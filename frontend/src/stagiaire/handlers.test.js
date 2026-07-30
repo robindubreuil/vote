@@ -199,6 +199,7 @@ describe('stagiaire handlers — submit / join / leave', () => {
     state.gameEnabled = false
     state.gamePlaying = false
     state.prenomEdit = false
+    state.pendingRename = null
     state.connected = true
 
     connectSpy = vi.fn()
@@ -457,17 +458,16 @@ describe('stagiaire handlers — submit / join / leave', () => {
       expect(inlineError.style.display).toBe('block')
     })
 
-    it('F8: clears aria-invalid and hides the inline error on success', () => {
+    it('F8: clears aria-invalid and hides the inline error on submit (R8: defers commit to name_updated)', () => {
       const fakeClient = { send: vi.fn(() => true) }
       mockGetClient.mockReturnValue(fakeClient)
       const { input } = fillEditForm('NewName')
-      // Capture the inline error reference *before* handleEditName runs,
-      // because a successful validation calls render() which destroys the
-      // modal (and #edit-name-error along with it). We can still assert
-      // the input was cleared by re-querying it just before the call.
-      expect(input.getAttribute('aria-invalid')).toBe('false') // sanity: starts clean
-      // Now mark it invalid manually, then call handleEditName to verify
-      // the success path resets the field-level state.
+      // Mark the field invalid + surface the inline error, then submit.
+      // R8: handleEditName no longer commits prenom or closes the modal
+      // optimistically — it sends update_name and waits for the server.
+      // The field-level reset (aria-invalid=false, inline error hidden)
+      // still runs so the user gets immediate feedback that the local
+      // validation passed.
       input.setAttribute('aria-invalid', 'true')
       const inlineError = document.getElementById('edit-name-error')
       inlineError.style.display = 'block'
@@ -475,15 +475,16 @@ describe('stagiaire handlers — submit / join / leave', () => {
       const ev = submitEvent()
       handleEditName(ev)
 
-      // After a successful edit, the modal is unmounted (state.prenomEdit=false)
-      // and the WAITING view replaces it. The success path therefore can't
-      // be inspected via the destroyed DOM nodes — we assert the contract
-      // via state instead.
-      expect(state.prenom).toBe('NewName')
-      expect(state.prenomEdit).toBe(false)
-      // The input element is gone after the re-render.
-      expect(document.getElementById('editPrenom')).toBeNull()
-      expect(document.getElementById('edit-name-error')).toBeNull()
+      // Field-level state is cleared on submit.
+      expect(input.getAttribute('aria-invalid')).toBe('false')
+      expect(inlineError.style.display).toBe('none')
+      // R8: prenom is NOT committed optimistically — the server may reject.
+      expect(state.prenom).toBe('Old')
+      // R8: modal stays open (prenomEdit=true) until name_updated.
+      expect(state.prenomEdit).toBe(true)
+      // R8: the in-flight value is tracked for the error-routing path.
+      expect(state.pendingRename).toBe('NewName')
+      expect(fakeClient.send).toHaveBeenCalledWith({ type: 'update_name', name: 'NewName' })
     })
 
     it('updates state.prenom and sends update_name on the client', () => {
@@ -492,18 +493,23 @@ describe('stagiaire handlers — submit / join / leave', () => {
       fillEditForm('NewName')
       const ev = submitEvent()
       handleEditName(ev)
-      expect(state.prenom).toBe('NewName')
-      expect(state.prenomEdit).toBe(false)
+      // R8: prenom is NOT committed optimistically.
+      expect(state.prenom).toBe('Old')
+      expect(state.prenomEdit).toBe(true)
+      expect(state.pendingRename).toBe('NewName')
       expect(fakeClient.send).toHaveBeenCalledWith({ type: 'update_name', name: 'NewName' })
     })
 
-    it('is a no-op when no client is connected', () => {
+    it('R8: falls back to optimistic commit when no client is connected (offline)', () => {
       mockGetClient.mockReturnValue(null)
       fillEditForm('NewName')
       const ev = submitEvent()
       expect(() => handleEditName(ev)).not.toThrow()
+      // No client → can't wait for server response. Commit locally so
+      // the UI isn't stuck; the next reconnect re-syncs via stagiaire_join.
       expect(state.prenom).toBe('NewName')
       expect(state.prenomEdit).toBe(false)
+      expect(state.pendingRename).toBeNull()
     })
   })
 
@@ -659,8 +665,11 @@ describe('stagiaire handlers — F15 prenom persistence', () => {
     expect(localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
   })
 
-  it('handleEditName updates sessionStorage, not localStorage', () => {
-    // Enter edit-name modal with an existing prenom.
+  it('handleEditName does NOT persist prenom optimistically (R8: defers to name_updated)', () => {
+    // R8: handleEditName sends update_name and waits for the server
+    // response before committing. sessionStorage is written by the
+    // name_updated handler in websocket.js, not here. This avoids a
+    // rejected name lingering in sessionStorage on a shared device.
     state.appState = AppState.WAITING
     state.prenom = 'Old'
     state.prenomEdit = true
@@ -672,7 +681,10 @@ describe('stagiaire handlers — F15 prenom persistence', () => {
     input.value = 'New'
     handleEditName(submitEvent())
 
-    expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBe('New')
+    // Not committed — server may reject with ErrNameInUse.
+    expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBeNull()
     expect(localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
+    expect(state.prenom).toBe('Old')
+    expect(state.pendingRename).toBe('New')
   })
 })

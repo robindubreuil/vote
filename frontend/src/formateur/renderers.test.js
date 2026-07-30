@@ -23,7 +23,8 @@ const {
   renderMainContent,
   renderFullLayout,
   setActionHandlers,
-  _trackerSizesForTests
+  _trackerSizesForTests,
+  _resetAppShortcutForTests
 } = await import('./renderers.js')
 
 // Minimal action handlers so attachConfigListeners / attachVoteListeners
@@ -81,6 +82,10 @@ describe('listener tracker split (C3 + M1 regression)', () => {
     state.allowBlank = false
     state.gameEnabled = false
     state.multipleChoice = false
+    // R6: reset the idempotency guard so each test starts from a clean
+    // slate (the guard is intentionally sticky for the page lifetime in
+    // production).
+    _resetAppShortcutForTests()
   })
 
   it('C3: Escape shortcut survives cleanupAllListeners() (session_created flow)', async () => {
@@ -205,6 +210,37 @@ describe('listener tracker split (C3 + M1 regression)', () => {
     dispatchKey('Escape')
     await flushMicrotasks()
     expect(leave).not.toHaveBeenCalled()
+    cleanupAllListeners()
+  })
+
+  it('R6: attachAppKeyboardShortcuts is idempotent (calling twice does not stack handlers)', async () => {
+    // R6: the Escape shortcut must be bound exactly once per page
+    // lifecycle. Calling attachAppKeyboardShortcuts multiple times
+    // (e.g. hoisted in main.js + a future session_created re-attach)
+    // must NOT stack keydown handlers — otherwise a single Escape
+    // press opens N confirmation dialogs. The latest leaveSessionFn
+    // wins so a late caller can still swap the handler.
+    buildAppShell()
+    renderFullLayout(document.getElementById('app'))
+
+    const leave1 = vi.fn()
+    const leave2 = vi.fn()
+    attachAppKeyboardShortcuts(leave1)
+    const sizeAfterFirst = _trackerSizesForTests().app
+    attachAppKeyboardShortcuts(leave2)
+    attachAppKeyboardShortcuts(leave2)
+    const sizeAfterRepeat = _trackerSizesForTests().app
+
+    // Tracker did not grow — still exactly one keydown listener.
+    expect(sizeAfterRepeat).toBe(sizeAfterFirst)
+
+    // The latest leaveSessionFn (leave2) is the one that fires.
+    _confirmResult = true
+    dispatchKey('Escape')
+    await flushMicrotasks()
+    expect(leave1).not.toHaveBeenCalled()
+    expect(leave2).toHaveBeenCalledTimes(1)
+
     cleanupAllListeners()
   })
 })

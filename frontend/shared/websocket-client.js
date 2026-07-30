@@ -38,11 +38,22 @@ export class VoteClient {
    * Listen for browser online/offline events so reconnects pause while the
    * OS reports no network (no point burning attempts against a dead NIC)
    * and resume immediately when connectivity returns.
+   *
+   * R3: idempotent — unbinds any previously-bound handlers first so a
+   * `connect()` following a `close()` re-arms the listeners. Without this,
+   * a stagiaire who leaves one session and joins another without a reload
+   * (close → connect on the same instance) loses offline/online awareness:
+   * `_unbindOnlineEvents()` ran in `close()`, and `connect()` didn't
+   * re-bind, so a classroom wifi drop burned reconnect attempts against a
+   * dead NIC with no fast-retry on `online` — exactly the regression
+   * FH1/FH2 were built to prevent.
    */
   _bindOnlineEvents() {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
       return
     }
+    // Drop any prior bindings so repeat calls don't stack handlers.
+    this._unbindOnlineEvents()
     this._onOnline = () => {
       this.online = true
       // Fast-retry on connectivity return. Covers two cases:
@@ -77,6 +88,11 @@ export class VoteClient {
     }
     if (this._onOnline) window.removeEventListener('online', this._onOnline)
     if (this._onOffline) window.removeEventListener('offline', this._onOffline)
+    // Drop references so a stale handler can't be re-removed (and so
+    // _bindOnlineEvents's "already bound?" implicit check via these
+    // fields behaves predictably).
+    this._onOnline = null
+    this._onOffline = null
   }
 
   connect() {
@@ -87,6 +103,10 @@ export class VoteClient {
     this.isExplicitlyClosed = false
     this.isPermanentlyClosed = false
     this.reconnectAttempts = 0
+    // R3: re-arm online/offline awareness. close() unbinds these; a
+    // connect() on the same instance (leave → rejoin without a reload)
+    // must re-bind so a wifi drop still pauses reconnects.
+    this._bindOnlineEvents()
     this._doConnect()
   }
 

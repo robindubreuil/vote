@@ -953,9 +953,22 @@ export function attachLandingListeners(joinSessionFn, createSessionFn) {
  * that runs after every server message does NOT kill the Escape-to-leave
  * shortcut mid-session. The handler no-ops when `state.sessionCode` is
  * falsy, so it's safe to keep attached on the landing page too.
+ *
+ * R6: idempotent — a module-level guard ensures the document-level
+ * keydown listener is bound exactly once per page lifecycle, even if
+ * the call site is reached twice (e.g. reload-with-session + a future
+ * session_created re-attach). The latest `leaveSessionFn` wins, so a
+ * late call can still swap the leave handler if needed.
  * @param {Function} leaveSessionFn
  */
+let _appShortcutAttached = false
+let _appShortcutLeaveFn = null
 export function attachAppKeyboardShortcuts(leaveSessionFn) {
+  // Always refresh the leave handler — a late caller may swap it.
+  _appShortcutLeaveFn = leaveSessionFn
+  if (_appShortcutAttached) return
+  _appShortcutAttached = true
+
   const keyHandler = async (e) => {
     // Escape key - leave session with confirmation
     if (e.key === 'Escape' && state.sessionCode) {
@@ -965,9 +978,23 @@ export function attachAppKeyboardShortcuts(leaveSessionFn) {
         message: t.formateur.leaveSession,
         confirmLabel: t.formateur.leave
       })
-      if (ok) leaveSessionFn()
+      if (ok) _appShortcutLeaveFn()
     }
   }
 
   trackAppListener(document, 'keydown', keyHandler)
+}
+
+/**
+ * Test-only reset for the app-shortcut idempotency guard. Production
+ * code never calls this — the guard is intentionally sticky for the
+ * page lifetime. Tests need it to verify "first attach binds, second
+ * attach is a no-op" from a clean slate, AND to prevent the appTracker
+ * from accumulating keydown listeners across test cases (the tracker
+ * itself is module-level and not touched by cleanupAllListeners).
+ */
+export function _resetAppShortcutForTests() {
+  appTracker.cleanup()
+  _appShortcutAttached = false
+  _appShortcutLeaveFn = null
 }

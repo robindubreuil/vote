@@ -53,7 +53,7 @@ root cause: client-side lifecycle assumes the *first* event of a kind is the
 *only* event, so second-order paths (leave→rejoin, reload-reconnect, async
 rejection) reset or fail to re-bind state.
 
-- [ ] **R3** [High] A stagiaire permanently loses offline/online reconnect
+- [x] **R3** [High] A stagiaire permanently loses offline/online reconnect
   awareness after leaving one session and joining another without a reload.
   `_bindOnlineEvents()` runs only in the `VoteClient` constructor
   (`shared/websocket-client.js:60-72`); `close()` calls `_unbindOnlineEvents()`
@@ -68,7 +68,7 @@ rejection) reset or fail to re-bind state.
   in `connect()` (`this._bindOnlineEvents()` is idempotent), or expose a
   `resetClient()` from `stagiaire/websocket.js` that nulls `client` and call it
   from `leaveSession`.
-- [ ] **R6** [Medium] The Escape-to-leave shortcut is never attached when a
+- [x] **R6** [Medium] The Escape-to-leave shortcut is never attached when a
   trainer creates a session from the landing page. `attachAppKeyboardShortcuts`
   is called only inside the `savedSessionCode` branch (`formateur/main.js:82`),
   i.e. only on reload with a persisted session; the `session_created` handler
@@ -80,7 +80,7 @@ rejection) reset or fail to re-bind state.
   `attachAppKeyboardShortcuts` from the `session_created` handler behind a
   one-shot guard (or hoist the call to module top-level in `main.js` before the
   `if/else`).
-- [ ] **R7** [Medium] A trainee's game high score and streak are silently wiped
+- [x] **R7** [Medium] A trainee's game high score and streak are silently wiped
   on a page reload mid-session. `session_joined` resets them when
   `state.appState === AppState.JOINING` (`stagiaire/websocket.js:110-113`); a
   reload rebuilds state with `appState = JOINING` (`stagiaire/state.js`). F15
@@ -91,7 +91,7 @@ rejection) reset or fail to re-bind state.
   when an existing `vote_stagiaire_id` in sessionStorage signals a
   reconnect-to-same-session rather than a first join (or move the reset to fire
   only on an explicit join-form submit).
-- [ ] **R8** [Medium] A server-rejected rename has no UI rollback.
+- [x] **R8** [Medium] A server-rejected rename has no UI rollback.
   `handleEditName` commits `state.prenom`, persists it, closes the modal, and
   renders — all before the server responds (`stagiaire/handlers.js:476-518`); the
   `name_updated` handler ignores `msg.name` (`stagiaire/websocket.js:228-232`).
@@ -103,7 +103,7 @@ rejection) reset or fail to re-bind state.
   **Fix:** don't set `state.prenom` optimistically — set it from `msg.name` in
   the `name_updated` handler; on `error`, keep `prenomEdit = true` so the modal
   stays open with the invalid input for correction.
-- [ ] Tests: `websocket-client.test.js` (+rebind-on-reconnect after close, R3),
+- [x] Tests: `websocket-client.test.js` (+rebind-on-reconnect after close, R3),
   `formateur/websocket.test.js` / a `main.js` test (+Escape attached on
   `session_created`, R6), `stagiaire/websocket.test.js` (+high score preserved
   on reload-reconnect when `vote_stagiaire_id` present, R7), `stagiaire/
