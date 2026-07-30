@@ -14,6 +14,14 @@ const WS_URL = getWebSocketURL()
 // WebSocket client instance
 let client = null
 
+// R1: reclaim-rejection retries at most once per WS connection. A
+// second rejection on the same connection must not resend (otherwise a
+// stale ID + missing token — e.g. from a partial sessionStorage failure
+// in private-browsing / quota-exhaustion mode — loops forever, throttled
+// only by the 10/s per-client rate cap). Reset to false on every fresh
+// connect() so a real reconnect can retry once.
+let reclaimRetried = false
+
 /**
  * Initialize the WebSocket client
  * @returns {VoteClient} The initialized client
@@ -63,12 +71,32 @@ export function getClient() {
   return client
 }
 
+// F17: internal state exposed for unit tests only. Gated behind
+// `import.meta.env.DEV` so production bundles ship `null` here. Vitest
+// sees the live object. The reclaim-retry guard (`reclaimRetried`) is
+// module-level so it survives across handleMessage invocations on the
+// same connection; tests need to reset it between cases.
+export const _test = import.meta.env.DEV
+  ? {
+      get reclaimRetried() {
+        return reclaimRetried
+      },
+      resetReclaimRetryGuard() {
+        reclaimRetried = false
+      }
+    }
+  : null
+
 /**
  * Connect to a session
  * @param {string} code - The session code to connect to
  */
 export function connectToSession(code) {
   state.sessionCode = code
+  // R1: a fresh connect() is a new connection lifecycle — reset the
+  // one-shot reclaim-retry guard so a legitimate reconnect can retry
+  // once if its cached token has gone stale.
+  reclaimRetried = false
   // Si le client n'est pas initialisé, on le fait
   if (!client) {
     initClient()
@@ -135,14 +163,22 @@ function handleMessage(msg) {
         delete state.reclaimToken
         safeSessionRemove('vote_stagiaire_id')
         safeSessionRemove('vote_stagiaire_reclaim_token')
-        if (state.sessionCode && state.prenom && client) {
+        // R1: one-shot retry per WS connection. A second rejection on
+        // the same connection without a successful session_joined in
+        // between signals a real failure (server restart wiped the
+        // identity, sessionStorage corruption, etc.) — surfacing the
+        // error to the user is better than a silent infinite loop
+        // throttled only by the per-client rate cap.
+        if (!reclaimRetried && state.sessionCode && state.prenom && client) {
+          reclaimRetried = true
           client.send({
             type: 'stagiaire_join',
             sessionCode: state.sessionCode,
             name: state.prenom
           })
+        } else {
+          showError(errorMessage)
         }
-        // Suppress the toast — the retry is transparent to the user.
         break
       }
       showError(errorMessage)

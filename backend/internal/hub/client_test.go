@@ -987,3 +987,100 @@ func sameStrings(got any, want []string) bool {
 	}
 	return true
 }
+
+// TestJoinStagiaireRetryResetsClientID covers R1: when a stagiaire_join
+// presents a known ID + missing/wrong reclaim token, the server rejects
+// it. The frontend then retries with an empty stagiaireId (dropping the
+// stale credentials). Before R1, c.ID stayed at the rejected value
+// because the ID-resolution guard is skipped on empty StagiaireID, so
+// JoinStagiaire re-took the reclaim path with the stale ID + empty
+// token and failed again — a tight message loop throttled only by the
+// per-client rate cap. With R1, handleStagiaireJoin resets c.ID to the
+// immutable OriginalID at the top of every attempt, so the retry is
+// treated as a fresh join and succeeds.
+func TestJoinStagiaireRetryResetsClientID(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	code := drainUntil(t, trainer, "session_created")["sessionCode"].(string)
+	drainUntil(t, trainer, "connected_count")
+	time.Sleep(50 * time.Millisecond)
+
+	// Bootstrap a real stagiaire identity directly in the Manager so a
+	// presented stale ID is "known" to the session — the precondition
+	// for JoinStagiaire's reclaim path. The ID below is what the
+	// frontend would have cached in sessionStorage from a prior join
+	// (e.g. before a tab crash left the reclaim token unset). Use a
+	// distinct name so the R1 retry's fresh-join name-collision check
+	// (S6 — names are reserved until the trainer resets) doesn't
+	// obscure the c.ID reset assertion we actually care about.
+	staleID := "stale1234567"
+	if _, err := h.VoteManager.JoinStagiaire(code, staleID, "PriorUser", ""); err != nil {
+		t.Fatalf("bootstrap JoinStagiaire: %v", err)
+	}
+
+	// WS handshake mints an immutable OriginalID. The first join
+	// presents the cached stale ID with NO reclaim token (the partial-
+	// sessionStorage-failure scenario from R1) and is rejected via the
+	// reclaim path.
+	c := &Client{ID: staleID, OriginalID: "origabc12345", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(c)
+	c.handleMessage(mustMarshal(t, models.Message{
+		Type:        "stagiaire_join",
+		SessionCode: code,
+		StagiaireID: staleID,
+		Name:        "Marie",
+	}))
+	rej := drainUntil(t, c, "error")
+	if msg, _ := rej["message"].(string); msg == "" {
+		t.Fatal("first join with stale ID + no token should be rejected")
+	}
+
+	// Sanity: the advisory path overwrote c.ID with the presented ID.
+	if c.ID != staleID {
+		t.Fatalf("first join should leave c.ID == presented stale ID, got %q", c.ID)
+	}
+
+	// Frontend retry: empty stagiaireId. Before R1 the server-side c.ID
+	// was still stale, so the retry re-entered JoinStagiaire with the
+	// rejected ID + empty token and failed again. With R1, c.ID is reset
+	// to OriginalID at the top of handleStagiaireJoin, so the retry is a
+	// fresh join that mints a new identity.
+	c.handleMessage(mustMarshal(t, models.Message{
+		Type:        "stagiaire_join",
+		SessionCode: code,
+		Name:        "Marie",
+	}))
+
+	joined := drainUntil(t, c, "session_joined")
+	if got, _ := joined["stagiaireId"].(string); got != "origabc12345" {
+		t.Errorf("retry should join as the OriginalID, got stagiaireId=%q want origabc12345", got)
+	}
+
+	// Defensive: c.ID must be OriginalID after the retry (proving the
+	// reset happened — without R1 this would still be the stale ID).
+	if c.ID != c.OriginalID {
+		t.Errorf("post-retry c.ID = %q, want OriginalID %q (R1 reset missing)", c.ID, c.OriginalID)
+	}
+
+	// The fresh OriginalID must be registered. The staleID is also
+	// still there (S6: only a trainer reset clears it).
+	sess, ok := h.VoteManager.GetSession(code)
+	if !ok {
+		t.Fatal("session missing after retry")
+	}
+	stagiaires := sess.GetStagiaires()
+	if _, ok := stagiaires["origabc12345"]; !ok {
+		t.Errorf("OriginalID not registered: %v", stagiaires)
+	}
+}
