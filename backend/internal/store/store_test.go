@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -176,6 +177,111 @@ func TestLoadCountersRejectsHistogramBucketExceedsCount(t *testing.T) {
 	os.WriteFile(s.countersPath, data, 0o600)
 	if got, _ := s.LoadCounters(); !sampleEqual(got, Counters{}) {
 		t.Errorf("bucket > count must be rejected, got %+v", got)
+	}
+}
+
+// TestValidHistogramRejectsNaNSum is the focused R20 unit test. Go's
+// encoding/json rejects NaN at both marshal and unmarshal time, so a NaN
+// sum cannot reach validHistogram through the LoadCounters JSON path today
+// — but validHistogram is also called by validCounters (the pre-write gate
+// in SaveCounters) and is the documented last-line guard should the JSON
+// decoder ever change (e.g. jsoniter, sonic) or should Sum be set
+// programmatically. Asserting the predicate directly attributes the
+// rejection to the sum check rather than to a coincident bucket violation.
+func TestValidHistogramRejectsNaNSum(t *testing.T) {
+	h := Histogram{
+		Count: 5,
+		Sum:   math.NaN(),
+		Buckets: []HistogramBucket{
+			{LE: 0, Count: 2},
+			{LE: 10, Count: 5},
+		},
+	}
+	if validHistogram(h) {
+		t.Errorf("validHistogram must reject NaN sum")
+	}
+}
+
+// TestValidHistogramRejectsInfSum is the R20 regression for ±Inf — the
+// other non-finite class that would surface as `..._sum +Inf` in /metrics.
+// Both signs must be rejected.
+func TestValidHistogramRejectsInfSum(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sum  float64
+	}{
+		{"posInf", math.Inf(1)},
+		{"negInf", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := Histogram{
+				Count: 5,
+				Sum:   tc.sum,
+				Buckets: []HistogramBucket{
+					{LE: 0, Count: 2},
+					{LE: 10, Count: 5},
+				},
+			}
+			if validHistogram(h) {
+				t.Errorf("validHistogram must reject %s sum", tc.name)
+			}
+		})
+	}
+}
+
+// TestValidHistogramAcceptsFiniteSum confirms the R20 guard doesn't
+// over-suppress: a legitimate finite sum (including a very large one and
+// zero) must still pass.
+func TestValidHistogramAcceptsFiniteSum(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sum  float64
+	}{
+		{"zero", 0},
+		{"small", 3.5},
+		{"large", 1e18},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := Histogram{
+				Count: 5,
+				Sum:   tc.sum,
+				Buckets: []HistogramBucket{
+					{LE: 0, Count: 2},
+					{LE: 10, Count: 5},
+				},
+			}
+			if !validHistogram(h) {
+				t.Errorf("validHistogram must accept finite sum %v", tc.sum)
+			}
+		})
+	}
+}
+
+// TestSaveCountersRejectsNaNSumBeforeWrite is the R20 pre-write gate:
+// SaveCounters runs validCounters (→ validHistogram) before touching disk,
+// so a NaN sum set programmatically (e.g. by a future caller that bypasses
+// the JSON parser, or by accumulated floating-point drift) is rejected
+// before it can poison counters.json. Go's stdlib json.Marshal also errors
+// on NaN, so this is defense-in-depth; the test confirms SaveCounters
+// surfaces a validation error rather than writing bad state.
+func TestSaveCountersRejectsNaNSumBeforeWrite(t *testing.T) {
+	s := newTestStore(t)
+	bad := Counters{
+		Sample: sample(time.Now(), 1, 0, 0, 0, 0, 0),
+		VotesPerSession: Histogram{
+			Count: 5,
+			Sum:   math.NaN(),
+			Buckets: []HistogramBucket{
+				{LE: 0, Count: 2},
+				{LE: 10, Count: 5},
+			},
+		},
+	}
+	if err := s.SaveCounters(bad); err == nil {
+		t.Error("SaveCounters must reject NaN-sum histogram before write")
+	}
+	if _, err := os.Stat(s.countersPath); !os.IsNotExist(err) {
+		t.Errorf("counters.json must not be written for invalid input: stat=%v", err)
 	}
 }
 
@@ -489,5 +595,74 @@ func TestAppendSampleRecoversFromExternalLogTruncation(t *testing.T) {
 	}
 	if got[0].SessionsCreated != 2 {
 		t.Errorf("recovered sample value mismatch: got %d, want 2", got[0].SessionsCreated)
+	}
+}
+
+// TestSaveCountersRemovesTempFile is the R21 structural assertion: after a
+// successful SaveCounters, the temp file must be gone (the rename-and-fsync
+// path ran end-to-end) and counters.json must hold the new payload. A leftover
+// .tmp would mean the rename was skipped; combined with the durability-recipe
+// doc assertion below, this guards against a regression that drops fsync.
+func TestSaveCountersRemovesTempFile(t *testing.T) {
+	s := newTestStore(t)
+	want := counters(time.Unix(1700000000, 0).UTC(), 7, 14, 100, 25, 2, 1)
+	if err := s.SaveCounters(want); err != nil {
+		t.Fatalf("SaveCounters: %v", err)
+	}
+	tmp := filepath.Join(s.dir, countersFile+".tmp")
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Errorf("temp file must not remain after successful SaveCounters: stat=%v", err)
+	}
+	got, err := s.LoadCounters()
+	if err != nil {
+		t.Fatalf("LoadCounters: %v", err)
+	}
+	if !sampleEqual(got, want) {
+		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", got, want)
+	}
+}
+
+// TestSyncDirAndSyncPathHelpersRun confirms the R21 durability primitives
+// don't error on the platform under test. fsync of a directory fd is the
+// standard POSIX durability recipe (the post-rename metadata commit); on
+// some filesystems / CI sandboxes fsync is a no-op, which is fine — the
+// contract is "best-effort durability", and what we are asserting here is
+// that the helpers are wired and callable, not that they physically flush.
+func TestSyncDirAndSyncPathHelpersRun(t *testing.T) {
+	dir := t.TempDir()
+	if err := syncDir(dir); err != nil {
+		t.Errorf("syncDir(%s): %v", dir, err)
+	}
+	f := filepath.Join(dir, "scratch")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncPath(f); err != nil {
+		t.Errorf("syncPath(%s): %v", f, err)
+	}
+}
+
+// TestSaveCountersDocAssertsDurabilityRecipe is the R21 doc-contract guard.
+// The package doc and SaveCounters doc must reference both fsync steps of
+// the portable durability recipe (temp-file fsync + directory fsync) so a
+// future refactor can't silently collapse them back to bare WriteFile +
+// Rename — the comment is the load-bearing reminder of why the extra syscalls
+// are there. If this test fails the recipe has been edited and the durability
+// claim needs to be re-evaluated against the new code.
+func TestSaveCountersDocAssertsDurabilityRecipe(t *testing.T) {
+	pkgDoc, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatalf("read store.go: %v", err)
+	}
+	src := string(pkgDoc)
+	for _, want := range []string{
+		"fsync",             // durability primitive present in recipe
+		"directory",         // post-rename dir fsync referenced
+		"crash-durability",  // contract documented
+		"atomic visibility", // distinguished from crash-durability
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("store.go doc contract missing %q — R21 durability recipe was edited; re-evaluate", want)
+		}
 	}
 }
