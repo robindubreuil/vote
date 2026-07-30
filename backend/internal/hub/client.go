@@ -310,6 +310,21 @@ func (c *Client) SendError(message string) {
 // Handlers that interface with VoteManager and Hub
 
 func (c *Client) handleTrainerJoin(msg models.Message) {
+	// S14: per-IP exponential backoff (S2) must apply to join attempts on
+	// an established connection too, not only to the WS upgrade. Without
+	// this gate, a single upgraded WebSocket can probe trainer_join /
+	// stagiaire_join against arbitrary codes at the per-client message
+	// rate (10/s burst 20) — the ~12,167-code space is enumerable in
+	// ~20 min from one connection. The "Session introuvable" oracle then
+	// hands live codes to S13. CheckJoinRateLimit reads the existing
+	// backoff state (it does not extend it); RecordFailedJoin below
+	// accrues failures on bad codes so the next rejected attempt waits
+	// longer.
+	if !c.Hub.Security.CheckJoinRateLimit(c.IP) {
+		c.SendError("Trop de tentatives — réessayez dans quelques minutes")
+		return
+	}
+
 	var code string
 
 	// If no code provided or "new" is specified, generate a unique code
@@ -379,6 +394,15 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 }
 
 func (c *Client) handleStagiaireJoin(msg models.Message) {
+	// S14: mirror handleTrainerJoin's per-IP backoff gate. A single
+	// upgraded WebSocket can otherwise probe stagiaire_join against
+	// arbitrary codes at the per-client message rate, enumerating live
+	// codes via the "Session introuvable" oracle.
+	if !c.Hub.Security.CheckJoinRateLimit(c.IP) {
+		c.SendError("Trop de tentatives — réessayez dans quelques minutes")
+		return
+	}
+
 	if !vote.IsValidSessionCode(msg.SessionCode) {
 		c.SendErrorWithBackoff("Code session invalide")
 		return

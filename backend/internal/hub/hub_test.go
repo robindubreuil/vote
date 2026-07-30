@@ -209,12 +209,20 @@ func TestRegisterClientUpdateTrainerFailureRollsBack(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Clear the active trainer so the reconnect below is a recovery
-	// (mirrors TestTrainerRecoveryWithoutTokenAllowed) rather than a
-	// takeover — we want to reach the GetSession/UpdateTrainer branch
-	// without the token check firing.
+	// rather than a takeover — we want to reach the GetSession/UpdateTrainer
+	// branch without the active-takeover close path firing. S13: the
+	// recovery path now also requires the trainer token, so seed it on
+	// the reconnecting client.
 	h.mu.Lock()
 	h.Connections[code].Trainer = nil
 	h.mu.Unlock()
+	token := ""
+	if sess, ok := h.VoteManager.GetSession(code); ok {
+		token = sess.GetTrainerToken()
+	}
+	if token == "" {
+		t.Fatal("missing trainer token on bootstrapped session")
+	}
 
 	// Swap UpdateTrainer to deterministically fail — simulating the
 	// race where the session is reaped between GetSession and
@@ -231,8 +239,9 @@ func TestRegisterClientUpdateTrainerFailureRollsBack(t *testing.T) {
 	reconnect := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
 	initTestHandlers(reconnect)
 	reconnect.handleMessage(mustMarshal(t, models.Message{
-		Type:        "trainer_join",
-		SessionCode: code,
+		Type:         "trainer_join",
+		SessionCode:  code,
+		TrainerToken: token,
 	}))
 
 	// The trainer should receive session_created (the CreateSession
@@ -284,6 +293,13 @@ func TestRegisterClientUpdateTrainerAndCreateBothFailRollsBack(t *testing.T) {
 	h.mu.Lock()
 	h.Connections[code].Trainer = nil
 	h.mu.Unlock()
+	token := ""
+	if sess, ok := h.VoteManager.GetSession(code); ok {
+		token = sess.GetTrainerToken()
+	}
+	if token == "" {
+		t.Fatal("missing trainer token on bootstrapped session")
+	}
 
 	// Stub UpdateTrainer to fail AND CreateSession to fail. The
 	// defensive rollback (conns.Trainer = nil) is the only path that
@@ -304,8 +320,9 @@ func TestRegisterClientUpdateTrainerAndCreateBothFailRollsBack(t *testing.T) {
 	reconnect := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
 	initTestHandlers(reconnect)
 	reconnect.handleMessage(mustMarshal(t, models.Message{
-		Type:        "trainer_join",
-		SessionCode: code,
+		Type:         "trainer_join",
+		SessionCode:  code,
+		TrainerToken: token,
 	}))
 
 	// The trainer should receive the rollback error.

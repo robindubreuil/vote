@@ -396,18 +396,64 @@ func (h *Hub) registerClient(client *Client) {
 	}
 
 	conns, exists := h.Connections[client.SessionID]
+
+	// S13: any join to an already-minted Manager session requires the
+	// per-session trainer token — including the empty-slot recovery
+	// path (conns.Trainer == nil after the previous trainer's readPump
+	// exited). The previous code gated the token check on `old != nil`,
+	// so once the legitimate trainer's readPump exited and
+	// unregisterClient set conns.Trainer = nil, any client who knew the
+	// public 3-char session code (printed in every stagiaire's QR)
+	// could claim the slot AND receive the minted token in
+	// session_created — collapsing S1's takeover protection for the
+	// rest of the session. Worse, the token is minted once and never
+	// rotated, so the attacker held it for as long as the session
+	// lived.
+	//
+	// The check runs BEFORE the !exists branch so a tokenless claimant
+	// cannot bypass it by triggering the createSessionFn path (which
+	// would otherwise overwrite the existing session's minted token).
+	// The legitimate trainer always has the token (sessionStorage,
+	// scoped to the tab, populated from the session_created payload at
+	// creation time and re-confirmed on every authenticated reconnect);
+	// an unauthenticated claimant is rejected with the same "Session
+	// introuvable" message the no-session branch uses so the response
+	// does not leak that the code is live.
+	//
+	// Fresh session creation (no Manager session at this point) is the
+	// only path that mints and emits the token to a previously-
+	// unauthenticated trainer — the creator IS the legitimate trainer.
+	if client.Type == "trainer" {
+		if sess, ok := h.VoteManager.GetSession(client.SessionID); ok && sess.GetTrainerToken() != "" {
+			if !h.VoteManager.ValidateTrainerToken(client.SessionID, client.TrainerToken) {
+				queueErr(client, "Session introuvable")
+				return
+			}
+		}
+	}
+
 	if !exists {
 		if client.Type == "trainer" {
 			conns = &SessionConnections{
 				Stagiaires: make(map[string]*Client),
 			}
 			h.Connections[client.SessionID] = conns
-			if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
-				slog.Error("Failed to create session",
-					append([]any{"error", err}, client.logAttrs()...)...)
-				delete(h.Connections, client.SessionID)
-				queueErr(client, "Impossible de créer la session")
-				return
+			// S13 defensive guard: if a Manager session already exists
+			// here (Connections entry was reaped while the Manager
+			// session survived — not reachable via cleanupLoop's normal
+			// contract, but defense in depth), do NOT call
+			// createSessionFn. It would overwrite the existing minted
+			// token, minting a fresh one for the claimant and defeating
+			// the S13 check above. The trainer was authenticated above;
+			// the existing session is theirs to recover.
+			if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
+				if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
+					slog.Error("Failed to create session",
+						append([]any{"error", err}, client.logAttrs()...)...)
+					delete(h.Connections, client.SessionID)
+					queueErr(client, "Impossible de créer la session")
+					return
+				}
 			}
 		} else {
 			queueErr(client, "Session introuvable")
@@ -417,14 +463,10 @@ func (h *Hub) registerClient(client *Client) {
 
 	if client.Type == "trainer" {
 		if old := conns.Trainer; old != nil && old != client {
-			// S1: takeover of an active trainer requires the per-session
-			// trainer token. Without this, anyone who knows the public
-			// 3-char session code (shown in the QR to every stagiaire)
-			// could send trainer_join and kick the legitimate trainer.
-			if !h.VoteManager.ValidateTrainerToken(client.SessionID, client.TrainerToken) {
-				queueErr(client, "Session déjà active — reprenez votre onglet existant")
-				return
-			}
+			// Active takeover. The token was validated above; this branch
+			// just closes the outgoing trainer's connection. S1's
+			// per-session token gate is what made takeover require
+			// proof of ownership; S13 extended it to the recovery path.
 			queueErr(old, "New trainer connection detected, closing this one.")
 			// CL1: flag the outgoing trainer so any in-flight broadcast
 			// captured before the swap drops silently instead of pushing
@@ -473,9 +515,12 @@ func (h *Hub) registerClient(client *Client) {
 			"sessionCode": client.SessionID,
 			"trainerId":   client.ID,
 		}
-		// Return the token only on creation or authenticated reconnection.
-		// The client persists it and re-sends on every trainer_join so
-		// reconnects can take over an active trainer connection.
+		// Emit the token to the trainer. With S13 every trainer reaching
+		// this point is either the creator of a freshly-minted session
+		// or has already validated the per-session token above — never an
+		// unauthenticated claimant. The client persists it (sessionStorage,
+		// scoped to the tab) and re-sends on every trainer_join so
+		// reconnects can re-validate against the same gate.
 		if sess, ok := h.VoteManager.GetSession(client.SessionID); ok {
 			if token := sess.GetTrainerToken(); token != "" {
 				sessionCreated["trainerToken"] = token
