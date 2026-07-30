@@ -20,7 +20,7 @@ is currently ordered backwards relative to Go's documented pattern, which leaves
 a window for stuck sockets and (under `-race`) a `sync.WaitGroup` contract
 violation.
 
-- [ ] **R2** [High] The hub drains *before* the HTTP listener closes, so new
+- [x] **R2** [High] The hub drains *before* the HTTP listener closes, so new
   WebSocket dials are accepted throughout the drain. `main.go:76` calls
   `h.Shutdown()` before `main.go:82` calls `srv.Shutdown()`, and
   `handleWebSocket` (`server.go:358-427`) never checks `hub.Context().Err()`
@@ -38,7 +38,7 @@ violation.
   *before* `AcquireIPSlot`/`Upgrade`; (c) add a SIGTERM-under-load integration
   test running under `-race` (the existing `shutdown_test.go` exercises
   `Hub.Shutdown()` in isolation, which is why this is latent).
-- [ ] Tests: `TestShutdownRejectsNewUpgradesDuringDrain` (assert a dial during
+- [x] Tests: `TestShutdownRejectsNewUpgradesDuringDrain` (assert a dial during
   drain gets 503, not an upgrade), `TestShutdownJoinsAllGoroutinesUnderLoad`
   (assert no WaitGroup panic and all client goroutines exit under `-race`),
   `TestShutdownClosesListenerFirst` (ordering contract). Wire into

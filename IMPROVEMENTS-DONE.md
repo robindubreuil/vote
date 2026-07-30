@@ -266,6 +266,61 @@ while verifying it. All three live in the join/reveal/reconnect paths.
 
 ---
 
+## Session 18 — Graceful shutdown under load
+
+One architectural fix plus the test coverage that would have caught it. The
+shutdown sequence in `main.go` was ordered backwards relative to Go's
+documented graceful-shutdown pattern: the hub drained (cancelling its context
+and calling `wg.Wait`) *before* the HTTP listener closed, so new WebSocket
+dials were accepted throughout the drain. Two consequences: (1) a reconnect
+upgrading during drain called `client.Start()` → `wg.Add(2)` concurrent with
+the Hub's `wg.Wait`, which Go forbids when the counter is zero (`sync:
+WaitGroup is reused before previous Wait has returned`); (2) hijacked WS conns
+aren't tracked by `http.Server.Shutdown`, so such a reconnect's `writePump`
+exited on `ctx.Done` but its `readPump` blocked in `ReadMessage` until
+`pongWait` (70 s) — a "connected" socket that delivered no state, freezing a
+30-student class on every deploy. Both were latent only because no test loaded
+`main.go`'s shutdown path (the existing `shutdown_test.go` exercised
+`Hub.Shutdown()` in isolation).
+
+- [x] **R2** [High] **Fix (a):** reordered `main.go`'s shutdown so
+  `srv.Shutdown` (closes the HTTP listener, drains HTTP) runs **before**
+  `h.Shutdown` (cancels the hub context, closes every live WebSocket, waits
+  for all Hub-owned goroutines). Once `srv.Shutdown` returns, no new TCP dial
+  can reach `handleWebSocket`, so no new `wg.Add(2)` can race with the Hub's
+  `wg.Wait`. The shutdown sequence was extracted into a `gracefulShutdown`
+  helper so the ordering contract is testable. `http.Server.Shutdown` does not
+  track hijacked WebSocket connections, so the guard in (b) is defense in depth
+  for any request that slipped past the listener before close. **Fix (b):**
+  added a drain guard at the top of `handleWebSocket` — `if
+  s.hub.Context().Err() != nil { 503 }` *before* `AcquireIPSlot` / `Upgrade` /
+  `client.Start()`. With the new ordering the listener is already closed by
+  the time the context cancels, but the guard catches any in-flight request
+  and makes the drain observable as a clean 503 rather than a stuck socket.
+  **Fix (c):** mirrored the corrected order in every test helper that shuts
+  down a server (`TestServer.Close`, `cleanup_test.go`, `scenario_test.go`) so
+  the test infrastructure can't drift from production.
+- [x] Tests: `TestShutdownRejectsNewUpgradesDuringDrain`
+  (`internal/server/server_test.go` — cancels the hub context via `h.Shutdown`
+  with no registered clients, which returns immediately leaving the HTTP
+  listener open; asserts a fresh `GET /ws` gets 503, not a 400 from the
+  upgrader or an upgrade; verified to fail with `[400]` when the guard is
+  removed). `TestShutdownClosesListenerFirst` (`cmd/server/main_test.go` —
+  wraps the listener in a `trackingListener` whose `Close()` records an event,
+  spawns a goroutine recording when the hub context cancels, runs
+  `gracefulShutdown`, asserts the event order is `[listener, hub]`; verified
+  to fail with `[hub listener]` when the order is reverted). `TestShutdown-
+  JoinsAllGoroutinesUnderLoad` (`integration/shutdown_test.go` — loads the
+  real `server.Server` + `handleWebSocket` path with 12 registered trainers
+  plus a 4-goroutine reconnect storm continuously re-dialing throughout
+  shutdown, triggers drain via `TestServer.Close` which mirrors `main.go`'s
+  order, asserts under `-race`: no WaitGroup panic, every client read pump
+  observes the close, goroutine count returns to baseline; stable across 5
+  consecutive runs). `go test -race ./...` green; `make fmt-check` clean;
+  `go vet ./...` clean.
+
+---
+
 ## Notes from the audit (kept for context)
 
 Things checked and found correct — do not regress:

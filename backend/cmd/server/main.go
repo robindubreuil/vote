@@ -70,21 +70,48 @@ func main() {
 		slog.Error("Server error, shutting down", "error", err)
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	gracefulShutdown(srv, h, cfg.ShutdownTimeout)
+
+	slog.Info("Server stopped")
+}
+
+// gracefulShutdown performs the ordered drain that closes R2's race window.
+//
+// Order matters and is the inverse of startup:
+//
+//  1. srv.Shutdown closes the HTTP listener FIRST. Once it returns, no new
+//     TCP dial can reach handleWebSocket, so no new client.Start() → wg.Add(2)
+//     can race with the Hub's wg.Wait in step 2 (Go forbids a positive-delta
+//     Add concurrent with Wait when the counter is zero). http.Server.Shutdown
+//     does not track hijacked WebSocket connections, but the drain guard at
+//     the top of handleWebSocket (server.go) catches any request that slipped
+//     past the listener before close — once the hub's context cancels it
+//     returns 503 instead of upgrading.
+//
+//  2. h.Shutdown cancels the hub context (writePumps exit on ctx.Done),
+//     closes every live WebSocket (readPumps unblock from ReadMessage),
+//     and waits for all Hub-owned goroutines (Run, cleanupLoop, every
+//     readPump/writePump) to return. Safe to Wait now: no racing Add is
+//     possible because the listener is already closed.
+//
+//  3. FlushStats + CloseStore run last so the final counter checkpoint
+//     reflects every vote cast up to the drain.
+//
+// Extracted from main() so the ordering contract is testable.
+func gracefulShutdown(srv *server.Server, h *hub.Hub, timeout time.Duration) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Server shutdown error", "error", err)
+	}
 
 	h.Shutdown()
 
 	// Flush the final counter checkpoint so the next boot restores to exactly
 	// here, not the last periodic sample.
 	srv.FlushStats()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("Server shutdown error", "error", err)
-	}
 	srv.CloseStore()
-
-	slog.Info("Server stopped")
 }
 
 // runHealthCheck performs an in-process liveness probe against the local
