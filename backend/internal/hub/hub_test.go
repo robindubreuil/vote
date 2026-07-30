@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"testing"
 	"time"
 	"vote-backend/internal/config"
@@ -339,5 +340,208 @@ func TestRegisterClientUpdateTrainerAndCreateBothFailRollsBack(t *testing.T) {
 	// forever with conns.Trainer set but no Manager session).
 	if conns.Trainer != nil {
 		t.Error("conns.Trainer should be nil after both UpdateTrainer and CreateSession failed")
+	}
+}
+
+// TestRegisterClientRemovesPriorIDSlot covers R16: when a *Client
+// re-registers under a new stagiaireId (Client.ID is mutable across
+// stagiaire_join messages — reset to OriginalID then overwritten by a
+// presented, known id), registerClient must delete the prior slot the
+// client held under its old ID. Without the fix, conns.Stagiaires[oldID]
+// pointed at the same *Client forever — inflating connected_count (a
+// phantom the trainer could never clear) and leaking a
+// MaxClientsPerSession slot per cycle. The cleanup runs BEFORE the cap
+// check, so a single connection cycling through many IDs cannot exhaust
+// the cap and block legitimate joins.
+//
+// registerClient is driven directly (same package) for determinism: the
+// invariant under test is the hub-level slot bookkeeping, independent of
+// the WS-message path's reclaim-token machinery.
+func TestRegisterClientRemovesPriorIDSlot(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:       time.Hour,
+		CleanupInterval:      time.Hour,
+		PingInterval:         time.Second,
+		MaxClientsPerSession: 4, // tight cap so a slot leak trips it fast
+		ValidColors:          []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+
+	trainer := &Client{
+		ID:        "trainer1abcde",
+		Type:      "trainer",
+		SessionID: "ABC",
+		Hub:       h,
+		Send:      make(chan []byte, ClientSendBufferSize),
+		IP:        "127.0.0.1",
+	}
+	h.registerClient(trainer)
+	drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+
+	// Stagiaire registers under its server-minted OriginalID.
+	const oldID = "s1abc1234567"
+	s := &Client{
+		ID:         oldID,
+		OriginalID: oldID,
+		Type:       "stagiaire",
+		Name:       "", // anonymous: isolate the slot invariant from name logic
+		SessionID:  "ABC",
+		Hub:        h,
+		Send:       make(chan []byte, ClientSendBufferSize),
+		IP:         "127.0.0.1",
+	}
+	h.registerClient(s)
+	drainUntilQuiet(s.Send, 20*time.Millisecond, time.Second)
+	drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+
+	assertStagiaireSlots := func(wantIDs ...string) {
+		t.Helper()
+		h.mu.RLock()
+		c := h.Connections["ABC"]
+		gotCount := len(c.Stagiaires)
+		missing := []string{}
+		for _, id := range wantIDs {
+			if ptr, ok := c.Stagiaires[id]; !ok || ptr != s {
+				missing = append(missing, id)
+			}
+		}
+		// Confirm no other slots point at s.
+		extras := 0
+		for id, ptr := range c.Stagiaires {
+			if ptr == s {
+				matched := false
+				for _, w := range wantIDs {
+					if id == w {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					extras++
+				}
+			}
+		}
+		h.mu.RUnlock()
+		if len(missing) != 0 {
+			t.Errorf("missing expected slots for %v", missing)
+		}
+		if extras != 0 {
+			t.Errorf("found %d extra slots still pointing at the re-registering client", extras)
+		}
+		if gotCount != len(wantIDs) {
+			t.Errorf("connected_count: got %d, want %d", gotCount, len(wantIDs))
+		}
+	}
+
+	assertStagiaireSlots(oldID)
+
+	// The SAME *Client re-joins under a different ID (ID B is fresh to
+	// the session, so JoinStagiaire takes the fresh-join path). R16 must
+	// drop the oldID slot; the client now occupies exactly one slot.
+	const newID = "s2abc1234567"
+	s.ID = newID
+	h.registerClient(s)
+	drainUntilQuiet(s.Send, 20*time.Millisecond, time.Second)
+	drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+	assertStagiaireSlots(newID)
+
+	// Cycle the same *Client through many more IDs than the cap allows
+	// stagiaires (cap=4 → effective stagiaire limit 3). Without R16 each
+	// cycle left a phantom slot and the 4th register would be rejected
+	// with "Session complète"; with R16 the slot is reused every cycle.
+	for i := 3; i <= 12; i++ {
+		s.ID = fmt.Sprintf("s%011d", i) // 12-char lowercase alphanumeric, matches GenerateID shape
+		h.registerClient(s)
+		// A successful register yields session_joined; a cap rejection
+		// yields an error. Assert we never hit the cap.
+		drainUntilQuiet(s.Send, 20*time.Millisecond, time.Second)
+		drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+		select {
+		case raw := <-s.Send:
+			t.Fatalf("unexpected leftover message after cycle %d: %s", i, raw)
+		default:
+		}
+		h.mu.RLock()
+		count := len(h.Connections["ABC"].Stagiaires)
+		h.mu.RUnlock()
+		if count != 1 {
+			t.Fatalf("cycle %d: connected_count should stay 1, got %d (cap exhausted by slot leak)", i, count)
+		}
+	}
+
+	// Unregistering the client (readPump exit) must drop its current ID
+	// and leave no phantom behind.
+	h.unregisterClient(s)
+	h.mu.RLock()
+	leftover := len(h.Connections["ABC"].Stagiaires)
+	h.mu.RUnlock()
+	if leftover != 0 {
+		t.Errorf("after unregister, stagiaire slots should be empty, got %d", leftover)
+	}
+}
+
+// TestRegisterClientSameIDReRegisterIsNoOp covers the R16 companion
+// guard: a *Client re-registering under the SAME ID is a no-op reconnect
+// and must not mark-and-close its own connection (the pre-R16 block ran
+// unconditionally and would self-sabotage).
+func TestRegisterClientSameIDReRegisterIsNoOp(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+
+	trainer := &Client{
+		ID: "trainer1abcde", Type: "trainer", SessionID: "ABC", Hub: h,
+		Send: make(chan []byte, ClientSendBufferSize), IP: "127.0.0.1",
+	}
+	h.registerClient(trainer)
+	drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+
+	const id = "s1abc1234567"
+	s := &Client{
+		ID: id, OriginalID: id, Type: "stagiaire", Name: "Alice",
+		SessionID: "ABC", Hub: h,
+		Send: make(chan []byte, ClientSendBufferSize), IP: "127.0.0.1",
+	}
+	h.registerClient(s)
+	drainUntilQuiet(s.Send, 20*time.Millisecond, time.Second)
+	drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+
+	if s.closing.Load() {
+		t.Fatal("client marked closing after first register")
+	}
+
+	// Re-register the SAME client under the SAME id with the SAME name
+	// (and a valid reclaim token so JoinStagiaire takes the reclaim
+	// path). The slot already belongs to s; this must be a no-op, not a
+	// self-close.
+	token := ""
+	if sess, ok := h.VoteManager.GetSession("ABC"); ok {
+		token = sess.GetReclaimToken(id)
+	}
+	if token == "" {
+		t.Fatal("missing reclaim token")
+	}
+	s.ReclaimToken = token
+	h.registerClient(s)
+	drainUntilQuiet(s.Send, 20*time.Millisecond, time.Second)
+	drainUntilQuiet(trainer.Send, 20*time.Millisecond, time.Second)
+
+	if s.closing.Load() {
+		t.Fatal("R16 self-close: client marked closing after same-id re-register")
+	}
+
+	h.mu.RLock()
+	ptr := h.Connections["ABC"].Stagiaires[id]
+	count := len(h.Connections["ABC"].Stagiaires)
+	h.mu.RUnlock()
+	if ptr != s {
+		t.Error("same-id re-register should keep the same *Client in its slot")
+	}
+	if count != 1 {
+		t.Errorf("connected_count should be 1, got %d", count)
 	}
 }

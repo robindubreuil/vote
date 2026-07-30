@@ -191,6 +191,19 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name, reclaimToken strin
 		if stored == "" || subtle.ConstantTimeCompare([]byte(stored), []byte(reclaimToken)) != 1 {
 			return JoinStagiaireResult{}, ErrReclaimUnauthorized
 		}
+		// S15: the reclaim-rename path must re-run the authoritative
+		// name-collision check (CC2) under the session lock, excluding
+		// the reclaimer's own ID. Previously only the fresh-join branch
+		// checked, so the advisory IsNameInUse lookup running in the
+		// client goroutine was the sole guard — exactly the TOCTOU
+		// pattern CC2 eliminated. Two stagiaires could end up sharing a
+		// normalised name, breaking the uniqueness invariant that gates
+		// ranking/leaderboard tie-breakers (Sort by Name ASC +
+		// AssignCompetitionRanks) and showing two indistinguishable rows
+		// in the trainer view.
+		if name != "" && nameCollidesLocked(session, name, stagiaireID) {
+			return JoinStagiaireResult{}, ErrNameInUse
+		}
 		// Reconnect path: the identity is reclaimed, not minted. Apply
 		// the (possibly updated) name, then bail out without running
 		// the new-join name-collision check below.
@@ -203,13 +216,11 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name, reclaimToken strin
 
 	// Fresh join path. Mint a reclaim token alongside the new entry so
 	// the invariant (id ∈ Stagiaires ⟺ id ∈ ReclaimTokens) holds.
-	if name != "" {
-		normalised := NormalizeName(name)
-		for id, n := range session.Stagiaires {
-			if id != stagiaireID && NormalizeName(n) == normalised {
-				return JoinStagiaireResult{}, ErrNameInUse
-			}
-		}
+	// S15: the collision check is the same helper the reclaim branch
+	// uses, so both branches enforce the uniqueness invariant under the
+	// session lock with no advisory-only TOCTOU gap.
+	if name != "" && nameCollidesLocked(session, name, stagiaireID) {
+		return JoinStagiaireResult{}, ErrNameInUse
 	}
 
 	token := security.GenerateToken()
@@ -531,11 +542,10 @@ func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error
 	}
 
 	// Check for name collision
-	normalizedNew := NormalizeName(name)
-	for id, n := range session.Stagiaires {
-		if id != stagiaireID && NormalizeName(n) == normalizedNew {
-			return ErrNameInUse
-		}
+	// S15: shared with JoinStagiaire so every name mutation enforces the
+	// uniqueness invariant under the session lock.
+	if nameCollidesLocked(session, name, stagiaireID) {
+		return ErrNameInUse
 	}
 
 	session.Stagiaires[stagiaireID] = name
@@ -631,13 +641,11 @@ func (m *Manager) IsNameInUse(sessionID, name string, excludeID string) bool {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 
-	normalizedNew := NormalizeName(name)
-	for id, n := range session.Stagiaires {
-		if id != excludeID && NormalizeName(n) == normalizedNew {
-			return true
-		}
-	}
-	return false
+	// S15: delegate to the shared locked helper so the advisory check
+	// the client goroutine performs cannot diverge from the
+	// authoritative check JoinStagiaire / UpdateStagiaireName run under
+	// the session lock.
+	return nameCollidesLocked(session, name, excludeID)
 }
 
 func (m *Manager) UpdateGameScore(sessionID, stagiaireID string, score int) error {
@@ -687,4 +695,20 @@ func NormalizeName(name string) string {
 		}
 	}
 	return b.String()
+}
+
+// nameCollidesLocked reports whether a normalised form of name is
+// already held by any stagiaire other than excludeID. Caller must hold
+// session.mu (R or W). S15 factored this out of the fresh-join branch so
+// the reclaim-rename path and UpdateStagiaireName enforce the same
+// uniqueness invariant under the lock, with no advisory-only TOCTOU gap
+// between the client-goroutine check and the authoritative map write.
+func nameCollidesLocked(session *Session, name, excludeID string) bool {
+	normalised := NormalizeName(name)
+	for id, n := range session.Stagiaires {
+		if id != excludeID && NormalizeName(n) == normalised {
+			return true
+		}
+	}
+	return false
 }

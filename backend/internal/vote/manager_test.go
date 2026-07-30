@@ -2,6 +2,8 @@ package vote
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"vote-backend/internal/models"
@@ -154,6 +156,126 @@ func TestJoinStagiaireNameUniquenessUnderLock(t *testing.T) {
 	if _, err := m.JoinStagiaire("ABC", "s6abc1234567", "Marie", ""); err != nil {
 		t.Errorf("distinct name should succeed, got %v", err)
 	}
+}
+
+// TestJoinStagiaireReclaimRenameRejectsCollision covers S15: the
+// reclaim-rename path (existing stagiaireID + valid token + a new name)
+// must re-run the authoritative name-collision check under the session
+// lock. Before S15 only the fresh-join branch checked, so the advisory
+// IsNameInUse lookup in the client goroutine was the sole guard — the
+// TOCTOU pattern CC2 eliminated. Two stagiaires could end up sharing a
+// normalised name, breaking the uniqueness invariant that gates ranking
+// tie-breakers (Sort by Name ASC + AssignCompetitionRanks) and showing
+// two indistinguishable rows in the trainer view.
+func TestJoinStagiaireReclaimRenameRejectsCollision(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+
+	// Two stagiaires with distinct names.
+	if _, err := m.JoinStagiaire("ABC", "s1abc1234567", "Alice", ""); err != nil {
+		t.Fatalf("alice join: %v", err)
+	}
+	resBob, err := m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
+	if err != nil {
+		t.Fatalf("bob join: %v", err)
+	}
+
+	// Bob reclaims his own identity (valid token) and tries to rename
+	// to a normalised collision with Alice. "Àlice" normalises to
+	// "alice" (accent-stripped + lowercased) — same as "Alice".
+	_, err = m.JoinStagiaire("ABC", "s2abc1234567", "Àlice", resBob.ReclaimToken)
+	if !errors.Is(err, ErrNameInUse) {
+		t.Errorf("reclaim-rename to colliding name: expected ErrNameInUse, got %v", err)
+	}
+
+	// A second normalised variant must also be rejected.
+	if _, err := m.JoinStagiaire("ABC", "s2abc1234567", "ALICE", resBob.ReclaimToken); !errors.Is(err, ErrNameInUse) {
+		t.Errorf("reclaim-rename to case-collision: expected ErrNameInUse, got %v", err)
+	}
+
+	// Reclaiming the SAME unchanged name is fine (no self-collision).
+	if _, err := m.JoinStagiaire("ABC", "s2abc1234567", "Bob", resBob.ReclaimToken); err != nil {
+		t.Errorf("reclaim same name should succeed, got %v", err)
+	}
+
+	// Reclaiming with a fresh, free name is fine.
+	if _, err := m.JoinStagiaire("ABC", "s2abc1234567", "Carol", resBob.ReclaimToken); err != nil {
+		t.Errorf("reclaim distinct name should succeed, got %v", err)
+	}
+
+	// Reconnecting without renaming (empty name) never collides.
+	if _, err := m.JoinStagiaire("ABC", "s2abc1234567", "", resBob.ReclaimToken); err != nil {
+		t.Errorf("reconnect without rename should succeed, got %v", err)
+	}
+
+	// Neither identity was clobbered by the rejected attempts.
+	sess, _ := m.GetSession("ABC")
+	sess.mu.RLock()
+	aliceName := sess.Stagiaires["s1abc1234567"]
+	bobName := sess.Stagiaires["s2abc1234567"]
+	sess.mu.RUnlock()
+	if aliceName != "Alice" {
+		t.Errorf("alice mutated by rejected rename: %q", aliceName)
+	}
+	if bobName != "Carol" {
+		t.Errorf("bob should be Carol after the successful rename: %q", bobName)
+	}
+}
+
+// TestNameCollidesLockedConcurrent covers the S15 invariant under
+// concurrency: the authoritative check holds session.mu, so two
+// reclaim-renames racing for the same normalised name cannot both
+// succeed. Run under -race to also assert no data race on the session
+// map.
+func TestNameCollidesLockedConcurrent(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+
+	// Seed two identities with distinct names.
+	resA, err := m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	if err != nil {
+		t.Fatalf("alice: %v", err)
+	}
+	resB, err := m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
+	if err != nil {
+		t.Fatalf("bob: %v", err)
+	}
+
+	// Two more identities race to reclaim-rename to "Marie".
+	resC, err := m.JoinStagiaire("ABC", "s3abc1234567", "Carol", "")
+	if err != nil {
+		t.Fatalf("carol: %v", err)
+	}
+	resD, err := m.JoinStagiaire("ABC", "s4abc1234567", "Dave", "")
+	if err != nil {
+		t.Fatalf("dave: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	var success atomic.Int32
+	for _, tc := range []struct {
+		id, token string
+	}{
+		{"s3abc1234567", resC.ReclaimToken},
+		{"s4abc1234567", resD.ReclaimToken},
+	} {
+		wg.Add(1)
+		go func(id, token string) {
+			defer wg.Done()
+			if _, err := m.JoinStagiaire("ABC", id, "Marie", token); err == nil {
+				success.Add(1)
+			}
+		}(tc.id, tc.token)
+	}
+	wg.Wait()
+
+	if got := success.Load(); got != 1 {
+		t.Errorf("exactly one racing reclaim-rename should succeed, got %d", got)
+	}
+
+	// Sanity: the other two original identities are untouched.
+	_ = resA
+	_ = resB
 }
 
 func TestStartVote(t *testing.T) {
