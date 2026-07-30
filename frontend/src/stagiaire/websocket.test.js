@@ -46,11 +46,24 @@ vi.mock('@shared/websocket-client.js', () => ({
 
 // pauseGameExternal / teardownGame are imported by websocket.js — we don't
 // want the real game rendering to interfere with state assertions.
+// R8: setFieldInvalid is also imported by websocket.js for the rename
+// error-routing path. Provide a real DOM-manipulating implementation
+// so tests can assert aria-invalid / .error class.
 const pauseSpy = vi.fn()
 const teardownSpy = vi.fn()
 vi.mock('./handlers.js', () => ({
   pauseGameExternal: (...a) => pauseSpy(...a),
-  teardownGame: (...a) => teardownSpy(...a)
+  teardownGame: (...a) => teardownSpy(...a),
+  setFieldInvalid(input, invalid) {
+    if (!input) return
+    if (invalid) {
+      input.classList.add('error')
+      input.setAttribute('aria-invalid', 'true')
+    } else {
+      input.classList.remove('error')
+      input.setAttribute('aria-invalid', 'false')
+    }
+  }
 }))
 
 const resetHighScoreSpy = vi.fn()
@@ -91,6 +104,7 @@ describe('stagiaire websocket — message handling', () => {
     state.reclaimToken = null
     state.prenom = ''
     state.prenomEdit = false
+    state.pendingRename = null
     state.gameEnabled = false
     state.gamePlaying = false
     state.competitive = false
@@ -254,6 +268,56 @@ describe('stagiaire websocket — message handling', () => {
       })
       expect(state.stagiaireId).toBeUndefined()
     })
+
+    it('R7: does NOT reset high score on reload-reconnect (cached stagiaireId in state)', () => {
+      // Simulate the reload-reconnect path: main.js preloads the cached
+      // stagiaireId from sessionStorage into state BEFORE connectToSession
+      // fires. Its presence at session_joined time signals "resume
+      // existing identity" rather than "start fresh" — so the high score
+      // and streak survive the reload (CLAUDE.md: "Persists across
+      // sessions and reconnects").
+      state.appState = AppState.JOINING
+      state.stagiaireId = 'cached-id'
+      initClient()
+      capturedClient.fireMessage({
+        type: 'session_joined',
+        sessionCode: 'DEF',
+        stagiaireId: 'cached-id'
+      })
+      expect(resetHighScoreSpy).not.toHaveBeenCalled()
+      expect(saveStreakSpy).not.toHaveBeenCalled()
+    })
+
+    it('R7: DOES reset high score on a true first join (no cached stagiaireId)', () => {
+      // No cached ID → genuine first join from the form → reset.
+      state.appState = AppState.JOINING
+      state.stagiaireId = null
+      initClient()
+      capturedClient.fireMessage({
+        type: 'session_joined',
+        sessionCode: 'DEF',
+        stagiaireId: 'new-id'
+      })
+      expect(resetHighScoreSpy).toHaveBeenCalledTimes(1)
+      expect(saveStreakSpy).toHaveBeenCalledWith(0)
+    })
+
+    it('R7: DOES reset high score on reclaim-retry (cached ID was dropped before join)', () => {
+      // The reclaim-retry path deletes state.stagiaireId before resending
+      // stagiaire_join. The new identity that comes back should start
+      // fresh — a new game player, not a resume.
+      state.appState = AppState.JOINING
+      state.stagiaireId = null // dropped by the error handler before retry
+      initClient()
+      capturedClient.fireMessage({
+        type: 'session_joined',
+        sessionCode: 'DEF',
+        stagiaireId: 'fresh-id',
+        reclaimToken: 'fresh-tok'
+      })
+      expect(resetHighScoreSpy).toHaveBeenCalledTimes(1)
+      expect(saveStreakSpy).toHaveBeenCalledWith(0)
+    })
   })
 
   describe('error handling', () => {
@@ -404,6 +468,56 @@ describe('stagiaire websocket — message handling', () => {
       expect(() => capturedClient.fireMessage({ type: 'error', message: 'Boom' })).not.toThrow()
       expect(document.querySelector('.error-message').textContent).toBe('Boom')
     })
+
+    it('R8: routes a rename rejection into the edit-name modal inline error and keeps it open', () => {
+      // R8: when state.pendingRename is set (handleEditName just sent
+      // update_name), a server-side name-collision rejection is routed
+      // into the modal's inline error slot — not a generic toast — and
+      // the modal stays open (prenomEdit stays true) with the user's
+      // input preserved for correction.
+      state.pendingRename = 'Taken'
+      state.prenomEdit = true
+      state.prenom = 'Old'
+
+      // Mount the edit-name modal's inline error + input elements.
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<input id="editPrenom" value="Taken" /><div id="edit-name-error" style="display:none"></div>'
+      )
+
+      initClient()
+      capturedClient.fireMessage({ type: 'error', message: 'Ce nom est déjà utilisé' })
+
+      // pendingRename is cleared so a subsequent unrelated error doesn't
+      // mis-route into the modal.
+      expect(state.pendingRename).toBeNull()
+      // Modal stays open.
+      expect(state.prenomEdit).toBe(true)
+      // prenom is NOT committed.
+      expect(state.prenom).toBe('Old')
+      // Inline error surfaces the message.
+      const inlineError = document.getElementById('edit-name-error')
+      expect(inlineError.textContent).toBe('Ce nom est déjà utilisé')
+      expect(inlineError.style.display).toBe('block')
+      // Input is marked invalid.
+      const editInput = document.getElementById('editPrenom')
+      expect(editInput.getAttribute('aria-invalid')).toBe('true')
+    })
+
+    it('R8: a non-rename error does NOT route into the edit-name modal', () => {
+      // Without state.pendingRename, the error takes the generic
+      // showError path even if the modal happens to be open.
+      state.pendingRename = null
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<div class="error-message" style="display:none"></div><div id="edit-name-error" style="display:none"></div>'
+      )
+      initClient()
+      capturedClient.fireMessage({ type: 'error', message: 'Boom' })
+      // Generic error slot, not the modal's inline slot.
+      expect(document.querySelector('.error-message').textContent).toBe('Boom')
+      expect(document.getElementById('edit-name-error').textContent).toBe('')
+    })
   })
 
   describe('vote_started', () => {
@@ -551,6 +665,35 @@ describe('stagiaire websocket — message handling', () => {
       state.prenomEdit = true
       initClient()
       capturedClient.fireMessage({ type: 'name_updated' })
+      expect(state.prenomEdit).toBe(false)
+    })
+
+    it('R8: commits the canonical name from msg.name and persists to sessionStorage', () => {
+      // R8: prenom is committed from the server's response (not the
+      // user's raw input) so a server-side normalisation (trim,
+      // collapse whitespace) is reflected locally. Avoids the previous
+      // optimistic-commit desync where the local UI showed a rejected
+      // name while the trainer still saw the old one.
+      state.prenomEdit = true
+      state.prenom = 'Old'
+      state.pendingRename = 'New'
+      initClient()
+      capturedClient.fireMessage({ type: 'name_updated', name: 'New' })
+
+      expect(state.prenom).toBe('New')
+      expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBe('New')
+      expect(state.prenomEdit).toBe(false)
+      expect(state.pendingRename).toBeNull()
+    })
+
+    it('R8: leaves prenom untouched when msg.name is absent', () => {
+      // Backward-compat: an older server that doesn't echo the name
+      // shouldn't wipe the current prenom.
+      state.prenom = 'Existing'
+      state.prenomEdit = true
+      initClient()
+      capturedClient.fireMessage({ type: 'name_updated' })
+      expect(state.prenom).toBe('Existing')
       expect(state.prenomEdit).toBe(false)
     })
   })

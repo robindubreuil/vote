@@ -440,11 +440,87 @@ describe('VoteClient', () => {
       client.connect()
       client.close()
 
+      // R3: connect() re-binds (idempotent unbind + rebind), so the raw
+      // call counts include the constructor bind + the connect rebind.
+      //What matters for leak prevention is that every add is matched by
+      // a remove after close(), so no handler outlives the instance.
       const onlineAdds = addSpy.mock.calls.filter(([e]) => e === 'online' || e === 'offline')
       const onlineRemoves = removeSpy.mock.calls.filter(([e]) => e === 'online' || e === 'offline')
-      expect(onlineAdds).toHaveLength(2)
-      expect(onlineRemoves).toHaveLength(2)
+      expect(onlineAdds.length).toBeGreaterThan(0)
+      expect(onlineRemoves).toHaveLength(onlineAdds.length)
 
+      addSpy.mockRestore()
+      removeSpy.mockRestore()
+    })
+
+    it('R3: connect() re-binds online/offline listeners after close() (leave → rejoin)', () => {
+      // Regression: close() unbinds the online/offline listeners.
+      // connect() on the same instance (stagiaire leaveSession →
+      // connectToSession without a page reload) must re-bind them, or a
+      // classroom wifi drop burns reconnect attempts against a dead NIC
+      // with no fast-retry on `online` — exactly what FH1/FH2 fixed.
+      const client = new VoteClient('ws://x', {
+        initialReconnectDelay: 10_000,
+        maxReconnectDelay: 10_000
+      })
+      client.connect()
+      const firstSocket = MockWebSocket.instances[0]
+      firstSocket.fireOpen()
+      client.close()
+
+      // After close, online/offline listeners are unbound — verify by
+      // checking that dispatching 'online' does NOT trigger a reconnect.
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+      window.dispatchEvent(new Event('offline'))
+      Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+      window.dispatchEvent(new Event('online'))
+      expect(MockWebSocket.instances).toHaveLength(1)
+
+      // Now reconnect on the same instance (the leave → rejoin path).
+      client.connect()
+      const secondSocket = MockWebSocket.instances[1]
+      secondSocket.fireOpen()
+
+      // Simulate the wifi drop: offline pauses, online fast-retries.
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+      window.dispatchEvent(new Event('offline'))
+      secondSocket.fireClose(1006)
+      vi.advanceTimersByTime(60_000)
+      expect(MockWebSocket.instances).toHaveLength(2) // no reconnect while offline
+
+      Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+      window.dispatchEvent(new Event('online'))
+      // R3 fix: online event fires → immediate reconnect. Without the
+      // rebind in connect(), this would still be 2 (listeners unbound
+      // by the prior close()).
+      expect(MockWebSocket.instances).toHaveLength(3)
+
+      client.close()
+    })
+
+    it('R3: _bindOnlineEvents is idempotent (no duplicate handlers on repeated connect)', () => {
+      const addSpy = vi.spyOn(window, 'addEventListener')
+      const removeSpy = vi.spyOn(window, 'removeEventListener')
+
+      const client = new VoteClient('ws://x')
+      // Constructor binds once. Multiple connect() calls must not stack
+      // handlers — each connect() unbinds then rebinds, so the net
+      // listener count on window stays at exactly 2 (one online, one
+      // offline), not 2×N.
+      client.connect()
+      client.connect()
+      client.connect()
+
+      // Count active 'online' listeners by tallying adds minus removes.
+      const onlineAdds = addSpy.mock.calls.filter(([e]) => e === 'online').length
+      const onlineRemoves = removeSpy.mock.calls.filter(([e]) => e === 'online').length
+      const offlineAdds = addSpy.mock.calls.filter(([e]) => e === 'offline').length
+      const offlineRemoves = removeSpy.mock.calls.filter(([e]) => e === 'offline').length
+
+      expect(onlineAdds - onlineRemoves).toBe(1)
+      expect(offlineAdds - offlineRemoves).toBe(1)
+
+      client.close()
       addSpy.mockRestore()
       removeSpy.mockRestore()
     })

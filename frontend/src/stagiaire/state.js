@@ -27,6 +27,11 @@ export const AppState = {
  *   ownership of stagiaireId on reconnect (S6/S12).
  * @property {string} prenom
  * @property {boolean} prenomEdit
+ * @property {string|null} pendingRename R8: the in-flight rename value.
+ *   Set by handleEditName when sending `update_name`, cleared by
+ *   `name_updated` on success or by the `error` handler on rejection.
+ *   Used to route a server-side name-collision rejection into the
+ *   edit-name modal's inline error slot instead of a generic toast.
  */
 export const state = {
   appState: AppState.JOINING,
@@ -41,6 +46,7 @@ export const state = {
   reclaimToken: null,
   prenom: '',
   prenomEdit: false,
+  pendingRename: null,
   gameEnabled: false,
   gamePlaying: false,
   competitive: false,
@@ -77,6 +83,7 @@ export function resetStagiaireState() {
   state.stagiaireId = null
   state.reclaimToken = null
   state.prenomEdit = false
+  state.pendingRename = null
   state.competitive = false
   state.allowBlank = false
   state.voteScore = 0

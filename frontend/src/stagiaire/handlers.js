@@ -38,10 +38,16 @@ function getOverlay() {
  * `aria-invalid="false"` so this keeps the DOM state symmetric and
  * avoids ever surfacing the implicit "unset" state to AT.
  *
+ * R8: exported so the websocket error handler can mark the edit-name
+ * input invalid when a server-side rename rejection arrives (name
+ * collision under the session lock). The function is pure DOM, so it
+ * has no dependency on handlers.js state — safe to call from either
+ * module without ordering concerns.
+ *
  * @param {HTMLInputElement} input
  * @param {boolean} invalid
  */
-function setFieldInvalid(input, invalid) {
+export function setFieldInvalid(input, invalid) {
   if (!input) return
   if (invalid) {
     input.classList.add('error')
@@ -471,10 +477,32 @@ export function handleJoin(e) {
 }
 
 /**
- * Handle the edit name form submission
+ * Handle the edit name form submission.
+ *
+ * R8: don't commit `state.prenom` optimistically. The server performs an
+ * authoritative normalised-name collision check under the session lock
+ * (`vote/manager.go:UpdateStagiaireName`) and can reject with
+ * `ErrNameInUse` in the same TOCTOU window CC2 identified for joins. If
+ * we commit + close the modal before the response arrives, a rejection
+ * leaves the trainee's UI showing the rejected name while the trainer
+ * still sees the old one, with the modal already closed and only a 5s
+ * toast as a signal.
+ *
+ * Instead: send the request and keep the modal open. The `name_updated`
+ * handler in websocket.js commits `msg.name` (the canonical server-
+ * normalised name) and closes the modal on success. On `error`, the
+ * modal stays open with the user's input preserved for correction. We
+ * fall back to the optimistic path only when there is no client (fully
+ * offline) so the local UI doesn't feel stuck — the next reconnect
+ * re-syncs via `stagiaire_join`.
  */
 export function handleEditName(e) {
   e.preventDefault()
+
+  // R8: clear any stale pendingRename from a prior attempt so the
+  // websocket error handler doesn't route a rejection into a modal
+  // that's opening fresh.
+  state.pendingRename = null
 
   const input = document.getElementById('editPrenom')
   const newPrenom = input.value.trim()
@@ -503,19 +531,28 @@ export function handleEditName(e) {
     inlineError.style.display = 'none'
   }
 
-  state.prenom = newPrenom
-  safeSessionSet('vote_stagiaire_prenom', newPrenom)
-
   const client = getClient()
-  if (client) {
-    client.send({
-      type: 'update_name',
-      name: newPrenom
-    })
+  if (!client) {
+    // Offline fallback: commit locally so the UI isn't stuck. The next
+    // reconnect re-syncs via stagiaire_join.
+    state.prenom = newPrenom
+    safeSessionSet('vote_stagiaire_prenom', newPrenom)
+    state.prenomEdit = false
+    render()
+    return
   }
 
-  state.prenomEdit = false
-  render()
+  // R8: mark a rename as in-flight so the websocket error handler can
+  // route a rejection into the modal's inline error slot (instead of a
+  // 5s toast that disappears before the user can correct the input).
+  // Cleared by name_updated on success.
+  state.pendingRename = newPrenom
+  client.send({
+    type: 'update_name',
+    name: newPrenom
+  })
+  // Intentionally do NOT set state.prenom / close the modal here — wait
+  // for the server's authoritative response.
 }
 
 /**

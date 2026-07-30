@@ -4,7 +4,7 @@ import { showError } from '@shared/ui.js'
 import { t } from '@shared/strings.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
-import { pauseGameExternal, teardownGame } from './handlers.js'
+import { pauseGameExternal, teardownGame, setFieldInvalid } from './handlers.js'
 import { safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 import { resetHighScore, saveStreak } from '@shared/game-storage.js'
 
@@ -112,7 +112,17 @@ export function connectToSession(code) {
  */
 function handleMessage(msg) {
   switch (msg.type) {
-    case 'session_joined':
+    case 'session_joined': {
+      // R7: capture the reconnect signal BEFORE the handler writes the
+      // new ID. On a reload-reconnect, main.js preloads the cached
+      // stagiaireId from sessionStorage into state; its presence here
+      // means we're resuming an existing identity, not starting fresh —
+      // so don't wipe the high score / streak (CLAUDE.md: "Persists
+      // across sessions and reconnects"). On a true first join (or the
+      // reclaim-retry path, which deletes state.stagiaireId before this
+      // point), state.stagiaireId is null and the reset rightly fires.
+      const isReconnectToSameIdentity = Boolean(state.stagiaireId)
+
       state.sessionCode = msg.sessionCode
       if (msg.stagiaireId) {
         state.stagiaireId = msg.stagiaireId
@@ -135,7 +145,7 @@ function handleMessage(msg) {
         safeSessionRemove('vote_stagiaire_id')
         safeSessionRemove('vote_stagiaire_reclaim_token')
       }
-      if (state.appState === AppState.JOINING) {
+      if (state.appState === AppState.JOINING && !isReconnectToSameIdentity) {
         resetHighScore()
         saveStreak(0)
       }
@@ -143,11 +153,34 @@ function handleMessage(msg) {
       safeSessionSet('vote_session_code', msg.sessionCode)
       render()
       break
+    }
 
     case 'error': {
       let errorMessage = msg.message || t.stagiaire.connectionError
       if (errorMessage === 'Session not found') {
         errorMessage = t.stagiaire.sessionNotFound
+      }
+      // R8: if a rename is in-flight, route the rejection into the
+      // edit-name modal's inline error slot and keep the modal open
+      // (state.prenomEdit stays true) so the user can correct the
+      // input. Without this, the only signal was a 5s toast that
+      // vanished before the user could read it, and the modal was
+      // already closed by the optimistic commit.
+      if (state.pendingRename) {
+        state.pendingRename = null
+        const inlineError = document.getElementById('edit-name-error')
+        if (inlineError) {
+          inlineError.textContent = errorMessage
+          inlineError.style.display = 'block'
+        }
+        const editInput = document.getElementById('editPrenom')
+        if (editInput) setFieldInvalid(editInput, true)
+        // Re-render only if the modal was somehow unmounted; otherwise
+        // leave the DOM intact so the user's input is preserved.
+        if (!document.getElementById('editPrenom')) {
+          render()
+        }
+        break
       }
       // S6/S12: the server rejected the reclaim token (or the ID is
       // stale post-restart). Drop the cached credentials and retry
@@ -262,7 +295,16 @@ function handleMessage(msg) {
       break
 
     case 'name_updated':
-      // Confirmation de mise à jour du nom
+      // R8: commit the canonical name from the server response. Avoids
+      // the previous optimistic-commit desync where the local UI showed
+      // a rejected name while the trainer still saw the old one. The
+      // server normalises (trims + collapses internal whitespace) so
+      // msg.name is the authoritative form, not the user's raw input.
+      if (msg.name) {
+        state.prenom = msg.name
+        safeSessionSet('vote_stagiaire_prenom', msg.name)
+      }
+      state.pendingRename = null
       state.prenomEdit = false
       render()
       break
