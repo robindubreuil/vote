@@ -82,10 +82,24 @@ export function initClient() {
           showToast(t.formateur.reconnected)
         }
         state.everConnected = true
+        // F25: a fresh successful connection clears any prior permanent
+        // close (e.g. the trainer reloaded, or the server came back and
+        // the client was re-bound). The banner must not stay "lost".
+        state.permanentlyClosed = false
       }
       updateHeader(client)
       updateConnectionBanner()
       updateActionButtonsState()
+      publishState()
+    },
+    // F25: the WS client has given up for good (~16h backoff exhausted or
+    // a 4xxx permanent close). The last onStatusChange(false) is all we'd
+    // otherwise see, leaving the "Reconnexion…" banner up forever. Flip
+    // the permanent flag so the banner swaps to "rechargez la page".
+    onPermanentClose: () => {
+      state.permanentlyClosed = true
+      state.connected = false
+      updateConnectionBanner()
       publishState()
     },
     onOpen: () => {

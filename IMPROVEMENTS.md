@@ -229,12 +229,12 @@ crash durability. Coherent cluster, isolated from the rest of the codebase.
 
 ---
 
-## Session 26 — Lower-priority cleanup
+## Session 26 — Lower-priority cleanup  ✓
 
 The remaining round-4 findings bundled into one tidy-up session. Each is small,
 isolated, and independently verifiable.
 
-- [ ] **R15** [Low/Medium] `handleWebSocket` post-upgrade ctx-race during
+- [x] **R15** [Low/Medium] `handleWebSocket` post-upgrade ctx-race during
   shutdown (narrows R2). R2's drain guard (`server.go:380`) only catches requests
   that arrive *after* `h.ctx` cancels. Once a request passes the guard and
   reaches `upgrader.Upgrade` (`server.go:426`), the conn is hijacked;
@@ -247,7 +247,7 @@ isolated, and independently verifiable.
   `ReadMessage` until `pongWait` (70 s). **Fix:** add a second guard immediately
   before `client.Start()` — `if s.hub.Context().Err() != nil { conn.Close();
   ReleaseIPSlot(clientIP); return }` — narrowing the race to a few instructions.
-- [ ] **R17** [Low] `UpdateGameScore` skips the `GameEnabled` recheck.
+- [x] **R17** [Low] `UpdateGameScore` skips the `GameEnabled` recheck.
   `handleReportGameScore` does an advisory `GetGameEnabled()` check, then calls
   `UpdateGameScore` (`client.go:687-698`); the manager method takes
   `session.mu.Lock` but only checks `Stagiaires[id]` existence, not `GameEnabled`
@@ -258,7 +258,7 @@ isolated, and independently verifiable.
   **Fix:** add `if !session.GameEnabled { return ErrGameDisabled }` inside
   `UpdateGameScore` after `session.mu.Lock`, mirroring `SubmitVote` /
   `RevealAnswers`.
-- [ ] **S16** [Medium/Low] All per-IP protections collapse to a single shared
+- [x] **S16** [Medium/Low] All per-IP protections collapse to a single shared
   bucket behind the documented reverse proxy. `TrustedProxies` defaults to empty
   (deliberate anti-spoofing), so `SetTrustedProxies([])` makes `c.ClientIP()`
   return `RemoteAddr`, which behind the recommended Caddy deploy
@@ -274,7 +274,7 @@ isolated, and independently verifiable.
   `.env.example` for the proxy case); optionally emit a startup `slog.Warn` if
   `TrustedProxies` is empty while a high fraction of `ClientIP()` values are
   loopback.
-- [ ] **F25** [Low] `isPermanentlyClosed` is never surfaced to the app. After
+- [x] **F25** [Low] `isPermanentlyClosed` is never surfaced to the app. After
   `maxReconnectAttempts` (default 50 ≈ 16 h backoff), `scheduleReconnect` flips
   `isPermanentlyClosed = true` and logs to console (`websocket-client.js:200-204`)
   — but no callback fires. The last `onStatusChange(false)` is all the app sees,
@@ -286,12 +286,22 @@ isolated, and independently verifiable.
   `onPermanentClose` callback to the `VoteClient` options, invoke it where the
   flag is set, and wire the formateur/stagiaire banners to swap to a
   recoverable "Connexion perdue — rechargez la page" state.
-- [ ] Tests: `TestShutdownRejectsUpgradeBetweenGuardAndStart` (R15 — under
+- [x] Tests: `TestShutdownRejectsUpgradeBetweenGuardAndStart` (R15 — under
   `-race`, force the context to cancel after the guard but before `Start`),
-  `TestUpdateGameScoreRejectsWhenGameDisabled` (R17), a config/docs change for
-  S16 (+ optional `TestWarnsOnLoopbackWithoutTrustedProxies`),
-  `websocket-client.test.js` (+`onPermanentClose` fires once at the ceiling,
-  F25). `go test -race ./...` green; `npm test` green.
+  `TestUpdateGameScoreRejectsWhenGameDisabled` +
+  `TestUpdateGameScoreRejectsConcurrentResetVote` (R17), config/docs change for
+  S16 + `TestLoopbackMonitorWarnsOnLoopbackWithoutTrustedProxies` /
+  `TestLoopbackMonitorDoesNotWarnWithTrustedProxies` /
+  `TestLoopbackMonitorRespectsMinObservations` /
+  `TestLoopbackMonitorIgnoresNonLoopbackTraffic` /
+  `TestLoopbackMonitorRearmsAfterConditionClears` /
+  `TestLoopbackMonitorIgnoresUnparsableIP` (S16), `websocket-client.test.js`
+  (+`onPermanentClose` fires once at the ceiling and on a 4xxx permanent
+  close, F25), `formateur/websocket.test.js` (+`onPermanentClose` flips
+  `permanentlyClosed` + banner re-render + clears on reconnect, F25),
+  `formateur/renderers-snapshot.test.js` (+banner swaps to the `lost` state
+  + clears the class when hidden again, F25). `go test -race ./...` green;
+  `npm test` green (578); `npm run lint` clean; `npm run build` clean.
 
 ---
 

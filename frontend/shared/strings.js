@@ -46,6 +46,9 @@ export const t = {
     codeRequired: 'Le code session est requis',
     invalidCode: 'Le code doit contenir 3 lettres',
     connectionError: 'Erreur de connexion',
+    // F25: shown when the WS client has permanently given up; the
+    // stagiaire should reload to recover.
+    connectionLost: 'Connexion perdue — rechargez la page',
     // Server-sent French sentinel for "reclaim token rejected" (S6/S12).
     // Kept in sync with backend/internal/vote/errors.go:ErrReclaimUnauthorized.
     // The websocket layer compares the incoming message against this
@@ -172,6 +175,11 @@ export const t = {
     invalidPresetsFile: 'Format de fichier non reconnu',
     reconnecting: 'Connexion perdue — reconnexion en cours…',
     reconnected: 'Reconnecté',
+    // F25: shown after the WS client has permanently given up
+    // (maxReconnectAttempts reached ≈ 16h, or a 4xxx permanent close).
+    // The reconnect banner swaps to this so the trainer isn't left
+    // staring at a "reconnecting" promise that will never resolve.
+    connectionLost: 'Connexion perdue — rechargez la page',
     sessionLimitReached: 'Trop de sessions créées — réessayez dans quelques minutes',
     gameToggle: "Mini-jeu pendant l'attente",
     gameToggleHint: 'Les stagiaires peuvent jouer en attendant le prochain vote',

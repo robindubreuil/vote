@@ -5,6 +5,10 @@ export const state = {
   connected: false,
   connecting: false,
   everConnected: false,
+  // F25: true once the WS client has permanently given up
+  // (maxReconnectAttempts reached or a 4xxx permanent close). Drives the
+  // banner's "rechargez la page" state instead of "Reconnexion…".
+  permanentlyClosed: false,
   voteState: 'idle',
   selectedColors: new Set(COLORS.slice(0, 3).map((c) => c.id)),
   colorLabels: {},
@@ -27,6 +31,7 @@ export function resetTrainerState() {
   state.sessionCode = null
   state.connected = false
   state.everConnected = false
+  state.permanentlyClosed = false
   state.connecting = false
   state.connectedCount = 0
   state.stagiaires = []

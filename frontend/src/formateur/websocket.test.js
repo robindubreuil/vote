@@ -31,6 +31,9 @@ class FakeVoteClient {
   fireStatusChange(connected) {
     this.opts.onStatusChange?.(connected)
   }
+  firePermanentClose(...args) {
+    this.opts.onPermanentClose?.(...args)
+  }
   fireMessage(msg) {
     this.opts.onMessage?.(msg)
   }
@@ -179,6 +182,38 @@ describe('formateur websocket — message handling', () => {
       expect(rendererSpies.updateConnectionBanner).toHaveBeenCalledTimes(1)
       // F24: button disabled state tracks connectivity live.
       expect(rendererSpies.updateActionButtonsState).toHaveBeenCalledTimes(1)
+    })
+
+    // F25: onPermanentClose flips state.permanentlyClosed, marks the
+    // socket down, and re-renders the banner — otherwise the
+    // "Reconnexion…" banner stays up after the client internally gave up.
+    it('F25: onPermanentClose sets permanentlyClosed + re-renders the banner', () => {
+      initClient()
+      // Establish a session + a prior connection so the banner is in the
+      // "reconnecting" branch.
+      capturedClient.fireMessage({ type: 'session_created', sessionCode: 'ABC' })
+      capturedClient.fireStatusChange(true)
+      expect(state.permanentlyClosed).toBe(false)
+
+      rendererSpies.updateConnectionBanner.mockClear()
+      capturedClient.firePermanentClose()
+
+      expect(state.permanentlyClosed).toBe(true)
+      expect(state.connected).toBe(false)
+      expect(rendererSpies.updateConnectionBanner).toHaveBeenCalledTimes(1)
+    })
+
+    // F25 symmetry: a successful reconnect clears a prior permanent
+    // close so the banner doesn't stay "lost".
+    it('F25: a successful status change clears permanentlyClosed', () => {
+      initClient()
+      capturedClient.fireMessage({ type: 'session_created', sessionCode: 'ABC' })
+      capturedClient.fireStatusChange(true)
+      capturedClient.firePermanentClose()
+      expect(state.permanentlyClosed).toBe(true)
+
+      capturedClient.fireStatusChange(true)
+      expect(state.permanentlyClosed).toBe(false)
     })
   })
 

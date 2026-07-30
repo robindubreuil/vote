@@ -76,12 +76,22 @@ func RequestIDFromContext(c *gin.Context) string {
 // lines and the request ID that correlates them with hub logs were both
 // missing, so diagnosing a classroom flap required guessing which log
 // line belonged to which client.
-func accessLogMiddleware() gin.HandlerFunc {
+//
+// S16: the resolved ClientIP is also fed to the server's loopback monitor
+// so the watcher can warn when a reverse-proxy deploy left
+// VOTE_TRUSTED_PROXIES unset. One IsLoopback check + two atomic adds per
+// request — negligible on the hot path.
+func (s *Server) accessLogMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
 		c.Next()
 		latency := time.Since(start)
+
+		ip := c.ClientIP()
+		if s.loopback != nil {
+			s.loopback.observe(ip)
+		}
 
 		level := slog.LevelInfo
 		if path == "/health" || path == "/metrics" {
@@ -100,7 +110,7 @@ func accessLogMiddleware() gin.HandlerFunc {
 			slog.Int("status", status),
 			slog.Int("bytes", c.Writer.Size()),
 			slog.Duration("latency", latency),
-			slog.String("ip", c.ClientIP()),
+			slog.String("ip", ip),
 			slog.String("request_id", RequestIDFromContext(c)),
 		)
 	}

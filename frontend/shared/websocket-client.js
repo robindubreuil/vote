@@ -7,6 +7,14 @@ export class VoteClient {
       onClose: () => {},
       onError: () => {},
       onStatusChange: () => {}, // (connected: boolean) => void
+      // F25: fired exactly once when the client gives up for good —
+      // either after maxReconnectAttempts (≈16h backoff at default
+      // cadence) or an application-defined 4xxx permanent close. The
+      // app uses it to swap the "Reconnexion…" banner to a recoverable
+      // "rechargez la page" state, since the client has stopped trying
+      // and the last onStatusChange(false) is all the app would
+      // otherwise see.
+      onPermanentClose: () => {},
       initialReconnectDelay: 2000,
       maxReconnectDelay: 30000,
       // Ceiling on reconnect attempts before the client gives up. Default
@@ -163,6 +171,7 @@ export class VoteClient {
             // Application-defined permanent close — stop trying.
             this.isPermanentlyClosed = true
             console.error(`Connection closed permanently (code: ${event.code})`)
+            this.options.onPermanentClose(event.code)
           } else {
             this.scheduleReconnect()
           }
@@ -200,6 +209,10 @@ export class VoteClient {
     if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
       this.isPermanentlyClosed = true
       console.error(`Max reconnect attempts (${this.options.maxReconnectAttempts}) reached; giving up`)
+      // F25: notify the app so the "Reconnexion…" banner can swap to a
+      // recoverable "rechargez la page" state instead of promising a
+      // reconnect that will never come.
+      this.options.onPermanentClose()
       return
     }
 

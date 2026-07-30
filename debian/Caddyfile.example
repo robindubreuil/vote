@@ -11,8 +11,24 @@ vote.example.com {
 	# Proxy every backend-owned route to the Go server. Includes the new
 	# D2/D9 endpoints (/version, /livez, /readyz) alongside the legacy
 	# /health so any external monitor wired to the old path keeps working.
+	#
+	# S16: the Go server must be started with
+	#   VOTE_TRUSTED_PROXIES=127.0.0.1
+	# (or whatever address reverse_proxy dials). Without it, Gin can't
+	# trust the X-Forwarded-For header Caddy sets below, so ClientIP()
+	# returns 127.0.0.1 for EVERY client and all per-IP protections
+	# collapse into one shared bucket: the connection cap becomes a
+	# global 50-conn ceiling, the session-creation cap is shared across
+	# every trainer, and one attacker's brute-force trips failed-join
+	# backoff that locks out the whole classroom.
 	@api path /ws* /livez /readyz /health /version /metrics /dashboard*
-	reverse_proxy @api localhost:8080
+	reverse_proxy @api localhost:8080 {
+		# Forward the real client IP so the backend's per-IP rate
+		# limiting / connection caps work. The header is only honoured
+		# once VOTE_TRUSTED_PROXIES lists this host (see above).
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+	}
 
 	# Serve on-the-fly gzip/zstd compression for responses the reverse
 	# proxy generates (small JSON probes, /metrics text). WebSocket and
