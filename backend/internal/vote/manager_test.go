@@ -699,6 +699,10 @@ func TestUpdateGameScoreMonotonic(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
 	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	// R17: UpdateGameScore rejects when the game is disabled. Enable it
+	// via StartVote(gameEnabled=true) so the monotonic-write path is
+	// exercised under a legitimately enabled game.
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true, true, true)
 
 	m.UpdateGameScore("ABC", "s1abc1234567", 500)
 	m.UpdateGameScore("ABC", "s1abc1234567", 300)
@@ -717,6 +721,71 @@ func TestUpdateGameScoreNonexistentStagiaire(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for nonexistent stagiaire")
 	}
+}
+
+// TestUpdateGameScoreRejectsWhenGameDisabled is the R17 test.
+//
+// UpdateGameScore re-validates GameEnabled under the session lock. The
+// handler's advisory GetGameEnabled() check runs in the client goroutine
+// before the manager call; a concurrent ResetVote (GameEnabled=false)
+// landing in the window used to leave a stale score recorded against a
+// disabled game for the session lifetime, feeding the competitive
+// leaderboard. The lock-held re-check mirrors SubmitVote / RevealAnswers
+// and closes the TOCTOU gap.
+func TestUpdateGameScoreRejectsWhenGameDisabled(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+
+	// Start a vote with the game enabled, then disable it via ResetVote.
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true, true, true)
+	m.ResetVote("ABC", "trainer1", []string{"rouge"}, false, nil, false, true, true)
+
+	err := m.UpdateGameScore("ABC", "s1abc1234567", 500)
+	if !errors.Is(err, ErrGameDisabled) {
+		t.Fatalf("expected ErrGameDisabled when game is disabled, got %v", err)
+	}
+
+	// Score must not be recorded.
+	session, _ := m.GetSession("ABC")
+	if got := session.GameScores["s1abc1234567"]; got != 0 {
+		t.Errorf("disabled game must not record a score, got %d", got)
+	}
+}
+
+// TestUpdateGameScoreRejectsConcurrentResetVote is the race-flavoured R17
+// test: UpdateGameScore and ResetVote (toggling GameEnabled) run concurrently
+// and the per-call invariant holds — a nil return means the game was enabled
+// at commit time (score recorded), an error means it was disabled (no write).
+// Run under -race to also exercise the lock discipline on the new check.
+func TestUpdateGameScoreRejectsConcurrentResetVote(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	m.StartVote("ABC", "trainer1", []string{"rouge"}, false, nil, true, true, true)
+
+	var wg sync.WaitGroup
+	const rounds = 50
+	for i := 0; i < rounds; i++ {
+		wg.Add(2)
+		// UpdateGameScore: either succeeds (game enabled at commit) or
+		// returns ErrGameDisabled (game disabled at commit). No panic,
+		// no other error.
+		go func(n int) {
+			defer wg.Done()
+			err := m.UpdateGameScore("ABC", "s1abc1234567", 100*(n+1))
+			if err != nil && !errors.Is(err, ErrGameDisabled) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}(i)
+		// ResetVote toggles GameEnabled each round.
+		go func(n int) {
+			defer wg.Done()
+			enabled := n%2 == 0
+			_ = m.ResetVote("ABC", "trainer1", []string{"rouge"}, false, nil, enabled, true, true)
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestRevealAnswersScoreWithBlank(t *testing.T) {

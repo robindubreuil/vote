@@ -1028,6 +1028,21 @@
   letter-spacing: 0.01em;
 }
 
+/* F25: permanent-close state — the client has given up, so the steady
+   red accent reads as terminal ("action required: reload") rather than
+   the pulsing orange of an in-progress reconnect. No animation: the
+   state won't change on its own. */
+.reconnect-banner-lost {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fca5a5;
+  animation: none;
+}
+
+.reconnect-banner-lost .reconnect-banner-spinner {
+  display: none;
+}
+
 @keyframes reconnect-pulse {
   0%,
   100% {

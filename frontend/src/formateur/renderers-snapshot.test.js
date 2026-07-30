@@ -34,6 +34,7 @@ function resetState() {
   state.connected = false
   state.connecting = false
   state.everConnected = false
+  state.permanentlyClosed = false
   state.voteState = 'idle'
   state.selectedColors = new Set(['rouge', 'vert', 'bleu'])
   state.colorLabels = {}
@@ -147,6 +148,52 @@ describe('formateur renderers — idempotency snapshots', () => {
     it('is a no-op when the banner is missing', () => {
       document.body.innerHTML = '<div id="app"></div>'
       expect(() => updateConnectionBanner()).not.toThrow()
+    })
+
+    // F25: once the WS client gives up permanently, the banner must swap
+    // from the pulsing "Reconnexion…" to a steady "rechargez la page"
+    // state — otherwise the trainer stares at a reconnect promise that
+    // will never resolve.
+    it('F25: swaps to the lost state when permanentlyClosed', () => {
+      renderFullLayout(document.getElementById('app'))
+      const banner = document.getElementById('reconnect-banner')
+      const text = banner.querySelector('.reconnect-banner-text')
+      const spinner = banner.querySelector('.reconnect-banner-spinner')
+
+      // Normal reconnecting branch.
+      state.sessionCode = 'ABC'
+      state.everConnected = true
+      state.connected = false
+      state.permanentlyClosed = false
+      updateConnectionBanner()
+      expect(banner.classList.contains('reconnect-banner-lost')).toBe(false)
+      expect(spinner.hidden).toBe(false)
+      expect(text.textContent).toMatch(/Reconnexion/i)
+
+      // Permanent-close branch.
+      state.permanentlyClosed = true
+      updateConnectionBanner()
+      expect(banner.classList.contains('reconnect-banner-lost')).toBe(true)
+      expect(spinner.hidden).toBe(true)
+      expect(text.textContent).toMatch(/rechargez la page/i)
+    })
+
+    it('F25: clears the lost class when the banner is hidden again', () => {
+      renderFullLayout(document.getElementById('app'))
+      const banner = document.getElementById('reconnect-banner')
+      state.sessionCode = 'ABC'
+      state.everConnected = true
+      state.connected = false
+      state.permanentlyClosed = true
+      updateConnectionBanner()
+      expect(banner.classList.contains('reconnect-banner-lost')).toBe(true)
+
+      // Reconnected → banner hidden, lost class removed so it doesn't
+      // leak into a future reconnect-cycle render.
+      state.connected = true
+      updateConnectionBanner()
+      expect(banner.hidden).toBe(true)
+      expect(banner.classList.contains('reconnect-banner-lost')).toBe(false)
     })
   })
 

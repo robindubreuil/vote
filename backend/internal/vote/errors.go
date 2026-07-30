@@ -36,7 +36,8 @@ func UserFacingError(err error) string {
 		errors.Is(err, ErrInvalidColor),
 		errors.Is(err, ErrVoteNotClosed),
 		errors.Is(err, ErrStagiaireNotFound),
-		errors.Is(err, ErrNotAuthorized):
+		errors.Is(err, ErrNotAuthorized),
+		errors.Is(err, ErrGameDisabled):
 		return err.Error()
 	default:
 		return "Une erreur est survenue"

@@ -40,6 +40,18 @@ export function initClient() {
         render()
       }
     },
+    // F25: the WS client has permanently given up (~16h backoff exhausted
+    // or a 4xxx permanent close). The stagiaire has no persistent banner,
+    // so surface the recoverable "rechargez la page" message via the same
+    // error slot a join failure uses, then re-render so the connection
+    // indicator drops to disconnected.
+    onPermanentClose: () => {
+      state.connected = false
+      showError(t.stagiaire.connectionLost)
+      if (state.appState !== AppState.JOINING) {
+        render()
+      }
+    },
     onOpen: () => {
       // Si on a un code session et un prénom, on tente de rejoindre
       if (state.sessionCode && state.prenom) {

@@ -175,6 +175,12 @@ export function renderFullLayout(app) {
  * Show or hide the reconnection banner. Visible only when the trainer has
  * been connected before (so initial load doesn't trigger a false alarm) and
  * the WS is currently down.
+ *
+ * F25: when the WS client has permanently given up (state.permanentlyClosed),
+ * swap the banner to a recoverable "Connexion perdue — rechargez la page"
+ * state with the accent colour — otherwise the trainer stares at a
+ * "Reconnexion…" promise that will never resolve (the client stopped trying
+ * after ~16h backoff or a 4xxx permanent close).
  */
 export function updateConnectionBanner() {
   const banner = document.getElementById('reconnect-banner')
@@ -183,9 +189,21 @@ export function updateConnectionBanner() {
   if (shouldShow) {
     banner.hidden = false
     banner.setAttribute('aria-hidden', 'false')
+    const text = banner.querySelector('.reconnect-banner-text')
+    const spinner = banner.querySelector('.reconnect-banner-spinner')
+    if (state.permanentlyClosed) {
+      banner.classList.add('reconnect-banner-lost')
+      if (text) text.textContent = t.formateur.connectionLost
+      if (spinner) spinner.hidden = true
+    } else {
+      banner.classList.remove('reconnect-banner-lost')
+      if (text) text.textContent = t.formateur.reconnecting
+      if (spinner) spinner.hidden = false
+    }
   } else {
     banner.hidden = true
     banner.setAttribute('aria-hidden', 'true')
+    banner.classList.remove('reconnect-banner-lost')
   }
 }
 

@@ -131,7 +131,7 @@ func TestAccessLogMiddlewareEmitsLine(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(requestIDMiddleware())
-	r.Use(accessLogMiddleware())
+	r.Use((&Server{loopback: newLoopbackMonitor()}).accessLogMiddleware())
 	r.GET("/p", func(c *gin.Context) { c.String(200, "ok") })
 
 	w := httptest.NewRecorder()
@@ -177,7 +177,7 @@ func TestAccessLogMiddlewareLevelByStatus(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			r := gin.New()
 			r.Use(requestIDMiddleware())
-			r.Use(accessLogMiddleware())
+			r.Use((&Server{loopback: newLoopbackMonitor()}).accessLogMiddleware())
 			r.GET("/p", func(c *gin.Context) { c.Status(tc.status) })
 
 			w := httptest.NewRecorder()

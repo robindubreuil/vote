@@ -578,6 +578,120 @@ func TestServeAcceptsPreBoundListener(t *testing.T) {
 	_ = done // serve goroutine exits when Shutdown closes the server
 }
 
+// TestShutdownRejectsUpgradeBetweenGuardAndStart is the R15 test.
+//
+// The first drain guard (server.go:380) only catches requests that
+// arrive AFTER h.ctx cancels. Once a request passes it and reaches
+// upgrader.Upgrade the conn is hijacked, and http.Server.Shutdown does
+// not track hijacked conns — so srv.Shutdown can return (hub.wg at its
+// base counter) while handleWebSocket's tail is about to call
+// client.Start() → wg.Add(2), which races wg.Wait() at zero and panics
+// ("sync: WaitGroup is reused before previous Wait has returned").
+//
+// The second guard (server.go:473) re-checks h.ctx immediately before
+// Start and tears down the upgraded conn + IP slot if shutdown landed.
+// This test exercises the exact window deterministically via the
+// postUpgradeBarrier seam: it blocks the handler between Upgrade and
+// the second guard, cancels the hub context there, then releases — the
+// guard must close the conn and skip Start so no wg.Add lands after
+// Shutdown's Wait returned.
+func TestShutdownRejectsUpgradeBetweenGuardAndStart(t *testing.T) {
+	cfg := &config.Config{
+		AllowedOrigins:  []string{"*"},
+		PingInterval:    time.Hour,
+		CleanupInterval: time.Hour,
+	}
+	h := hub.NewHub(cfg)
+	h.Run()
+
+	srv := NewServer(cfg, h)
+	ts := httptest.NewServer(srv.router)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+
+	// Install the test seam: block between Upgrade and the second guard.
+	// `entered` signals the handler reached the barrier (past the first
+	// guard AND past Upgrade, i.e. exactly in the R15 window).
+	entered := make(chan struct{}, 1)
+	barrier := make(chan struct{})
+	postUpgradeBarrier = func() {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-barrier
+	}
+	defer func() { postUpgradeBarrier = nil }()
+
+	// Dial in a goroutine. The handshake completes inside Upgrade, so
+	// Dial returns once the handler is past Upgrade — then the handler
+	// blocks at the barrier.
+	type dialResult struct {
+		ws  *websocket.Conn
+		err error
+	}
+	dialCh := make(chan dialResult, 1)
+	go func() {
+		dialer := websocket.Dialer{HandshakeTimeout: 2 * time.Second}
+		ws, _, err := dialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost"}})
+		dialCh <- dialResult{ws, err}
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never reached the barrier between the two guards")
+	}
+
+	// The handler is now parked in the R15 window. Cancel the hub
+	// context via Shutdown — runLoop/cleanupLoop exit, wg drains to
+	// zero, Wait returns. The handler is still blocked, so Start() has
+	// NOT been called yet.
+	hCtx := h.Context()
+	shutdownDone := make(chan struct{})
+	go func() {
+		h.Shutdown()
+		close(shutdownDone)
+	}()
+	select {
+	case <-hCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("hub context never cancelled")
+	}
+
+	// Release the barrier. Without the second guard the handler would
+	// now call client.Start() → wg.Add(2) AFTER Wait returned → panic.
+	// With the guard it tears down and returns.
+	close(barrier)
+
+	res := <-dialCh
+	if res.err != nil {
+		t.Fatalf("dial should succeed (handshake completes pre-barrier): %v", res.err)
+	}
+	defer res.ws.Close()
+
+	// The second guard closed the upgraded conn. A read must surface the
+	// close promptly rather than blocking until pongWait (70s) — that
+	// 70s hang was the second symptom R15 fixes.
+	if err := res.ws.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	if _, _, err := res.ws.ReadMessage(); err == nil {
+		t.Error("expected the upgraded conn to be closed by the second guard, got a successful read")
+	}
+
+	select {
+	case <-shutdownDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("h.Shutdown did not return (wg never drained)")
+	}
+
+	// Defence-in-depth sanity: no panic surfaced from the Add-after-Wait
+	// window — the test failing with a sync.WaitGroup panic would have
+	// already aborted the run.
+}
+
 // TestShutdownRejectsNewUpgradesDuringDrain is the R2 drain-guard test.
 //
 // Before the fix, the hub drained while the HTTP listener was still

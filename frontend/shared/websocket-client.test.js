@@ -259,6 +259,44 @@ describe('VoteClient', () => {
       errSpy.mockRestore()
     })
 
+    // F25: the app must learn the client gave up so it can swap its
+    // "Reconnexion…" banner to a recoverable "rechargez la page" state.
+    // Before the fix the flag was set silently — the last
+    // onStatusChange(false) was all the app saw, leaving the banner up
+    // forever.
+    it('F25: fires onPermanentClose exactly once when max attempts are reached', () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const onPermanentClose = vi.fn()
+      const client = new VoteClient('ws://x', {
+        initialReconnectDelay: 1,
+        maxReconnectDelay: 1,
+        maxReconnectAttempts: 3,
+        onPermanentClose
+      })
+      client.connect()
+      // Burn through all 3 attempts (each close schedules a reconnect
+      // because attempts < max). After this loop we have 4 sockets and
+      // reconnectAttempts == 3 — the next close is the give-up trigger.
+      for (let i = 0; i < 3; i++) {
+        MockWebSocket.instances[MockWebSocket.instances.length - 1].fireClose(1006)
+        vi.advanceTimersByTime(10)
+      }
+      expect(onPermanentClose).toHaveBeenCalledTimes(0)
+
+      // The give-up close: scheduleReconnect sees attempts >= max,
+      // flips isPermanentlyClosed, and fires onPermanentClose.
+      MockWebSocket.instances[MockWebSocket.instances.length - 1].fireClose(1006)
+      expect(onPermanentClose).toHaveBeenCalledTimes(1)
+      expect(client.isPermanentlyClosed).toBe(true)
+
+      // A further close must NOT re-fire: the client already gave up
+      // and scheduleReconnect early-returns on isPermanentlyClosed.
+      MockWebSocket.instances[MockWebSocket.instances.length - 1].fireClose(1006)
+      vi.advanceTimersByTime(10_000)
+      expect(onPermanentClose).toHaveBeenCalledTimes(1)
+      errSpy.mockRestore()
+    })
+
     it('resets attempt counter after a successful open', () => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const client = new VoteClient('ws://x', {
@@ -301,6 +339,21 @@ describe('VoteClient', () => {
 
       vi.advanceTimersByTime(60_000)
       expect(MockWebSocket.instances).toHaveLength(1)
+      expect(client.isPermanentlyClosed).toBe(true)
+      errSpy.mockRestore()
+    })
+
+    // F25: the 4xxx permanent-close branch must also surface to the app.
+    it('F25: fires onPermanentClose with the code on a 4xxx permanent close', () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const onPermanentClose = vi.fn()
+      const client = new VoteClient('ws://x', { onPermanentClose })
+      client.connect()
+      MockWebSocket.instances[0].fireClose(4001)
+
+      expect(onPermanentClose).toHaveBeenCalledTimes(1)
+      // The close code is forwarded so the app can branch on it if needed.
+      expect(onPermanentClose).toHaveBeenCalledWith(4001)
       expect(client.isPermanentlyClosed).toBe(true)
       errSpy.mockRestore()
     })

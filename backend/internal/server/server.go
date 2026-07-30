@@ -30,7 +30,21 @@ type Server struct {
 	statsMu     sync.Mutex
 	statsCloser chan struct{}
 	statsWG     sync.WaitGroup
+	// loopback observes resolved ClientIP values so the S16 watcher can
+	// warn when a reverse-proxy deploy left VOTE_TRUSTED_PROXIES unset.
+	loopback *loopbackMonitor
+	// watcherCloser / watcherWG manage the S16 loopback-fraction
+	// evaluator goroutine, mirroring the stats loop's lifecycle shape.
+	watcherCloser chan struct{}
+	watcherWG     sync.WaitGroup
 }
+
+// postUpgradeBarrier is a test-only seam for the R15 shutdown race. It
+// is nil in production (no overhead) and set by server-package tests to
+// a function that blocks handleWebSocket between the WS upgrade and the
+// second drain guard, so a test can cancel the hub context in that
+// window deterministically. See TestShutdownRejectsUpgradeBetweenGuardAndStart.
+var postUpgradeBarrier func()
 
 func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 	gin.SetMode(gin.ReleaseMode)
@@ -41,9 +55,14 @@ func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 	// the ID, and before the handlers so downstream code can read it.
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
-	r.Use(accessLogMiddleware())
 	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
 		slog.Warn("Failed to set trusted proxies", "error", err)
+	}
+	// S16: surface the reverse-proxy footgun at startup. The strong
+	// traffic-driven warning fires from the loopback watcher once real
+	// requests arrive; this is the immediate, deterministic notice.
+	if len(cfg.TrustedProxies) == 0 {
+		slog.Warn("TRUSTED_PROXIES is unset — behind a reverse proxy every per-IP protection (connection cap, session-creation cap, failed-join backoff) collapses to a single shared bucket; set VOTE_TRUSTED_PROXIES to the proxy's address")
 	}
 	s := &Server{
 		router:    r,
@@ -51,7 +70,11 @@ func NewServer(cfg *config.Config, h *hub.Hub) *Server {
 		config:    cfg,
 		startTime: time.Now(),
 		auth:      newDashboardAuth(cfg.DashboardSecret, cfg.DashboardMaxAge),
+		loopback:  newLoopbackMonitor(),
 	}
+	// accessLogMiddleware observes c.ClientIP() for the S16 watcher, so
+	// it must be constructed with the monitor reference.
+	r.Use(s.accessLogMiddleware())
 	s.setupRoutes()
 	return s
 }
@@ -281,6 +304,14 @@ func (s *Server) Serve(l net.Listener) error {
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
 	}
+	// S16: arm the loopback-fraction watcher once the server is actually
+	// serving traffic. Started here (not in NewServer) so the --health
+	// self-probe and failed-listen paths don't spawn an idle goroutine.
+	closer := make(chan struct{})
+	s.statsMu.Lock()
+	s.watcherCloser = closer
+	s.statsMu.Unlock()
+	s.startLoopbackWatch(closer)
 	slog.Info("Server starting", "addr", l.Addr().String())
 	if err := s.srv.Serve(l); err != nil && err != http.ErrServerClosed {
 		return err
@@ -297,6 +328,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
 	}
+	// Stop the S16 loopback watcher so Shutdown doesn't return with a
+	// live goroutine still reading the (now-closing) HTTP layer. Wait
+	// for it to fully exit, mirroring the stats-loop discipline.
+	s.statsMu.Lock()
+	closer := s.watcherCloser
+	s.watcherCloser = nil
+	s.statsMu.Unlock()
+	if closer != nil {
+		close(closer)
+	}
+	s.watcherWG.Wait()
 	return s.srv.Shutdown(ctx)
 }
 
@@ -455,6 +497,38 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 	// upgrade. Read from the gin context set by requestIDMiddleware;
 	// falls back to "" if the context value is absent.
 	client.RequestID = RequestIDFromContext(c)
+
+	// postUpgradeBarrier is a test-only seam for R15: nil in production
+	// (zero overhead), set by server-package tests to a receive that
+	// blocks handleWebSocket exactly between the WS upgrade and the
+	// second drain guard. Lets the shutdown-race test cancel the hub
+	// context deterministically in that window instead of relying on a
+	// probabilistic timing hit.
+	if postUpgradeBarrier != nil {
+		postUpgradeBarrier()
+	}
+
+	// R15: second drain guard, immediately before client.Start(). The
+	// first guard (server.go:380) only catches requests that arrive
+	// after h.ctx cancels; once a request passes it and reaches
+	// upgrader.Upgrade the conn is hijacked, and http.Server.Shutdown
+	// doesn't track hijacked conns. Between Upgrade and Start there's a
+	// window where srv.Shutdown can return (no tracked conn, hub.wg
+	// counter still zero) while handleWebSocket's tail is about to call
+	// client.Start() → wg.Add(2). If that Add races hub.wg.Wait() at
+	// counter zero, Go panics ("sync: WaitGroup is reused before
+	// previous Wait has returned"); the new client's readPump also
+	// isn't in the Connections snapshot Hub.Shutdown iterates, so it
+	// blocks in ReadMessage until pongWait (70s). Narrowing the race to
+	// a few instructions: re-check the ctx right before Start and tear
+	// down the freshly-upgraded conn + slot if shutdown landed.
+	if s.hub.Context().Err() != nil {
+		slog.Info("WS upgrade raced shutdown — closing before Start",
+			"ip", clientIP, "request_id", RequestIDFromContext(c))
+		conn.Close()
+		s.hub.ReleaseIPSlot(clientIP)
+		return
+	}
 
 	client.Start()
 }

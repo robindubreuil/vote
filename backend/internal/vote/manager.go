@@ -57,6 +57,16 @@ var (
 	ErrVoteNotClosed     = errors.New("Le vote doit être clôturé avant la révélation")
 	ErrStagiaireNotFound = errors.New("Stagiaire introuvable")
 	ErrNotAuthorized     = errors.New("Action non autorisée")
+	// ErrGameDisabled is returned by UpdateGameScore when the session
+	// has the mini-game disabled at the moment the score is committed.
+	// The advisory GetGameEnabled() check in handleReportGameScore runs
+	// in the client goroutine while the actual GameScores write happens
+	// later under session.mu; a concurrent ResetVote (which clears
+	// GameEnabled=false) in that window would otherwise leave a stale
+	// score recorded against a disabled game for the session lifetime,
+	// feeding the competitive leaderboard (R17). Mirrors the
+	// re-validate-under-lock pattern used by SubmitVote / RevealAnswers.
+	ErrGameDisabled = errors.New("Mini-jeu désactivé")
 )
 
 type Manager struct {
@@ -662,6 +672,16 @@ func (m *Manager) UpdateGameScore(sessionID, stagiaireID string, score int) erro
 
 	if _, exists := session.Stagiaires[stagiaireID]; !exists {
 		return ErrStagiaireNotFound
+	}
+
+	// R17: re-check GameEnabled under the session lock. The advisory
+	// GetGameEnabled() in handleReportGameScore runs in the client
+	// goroutine; a concurrent ResetVote (GameEnabled=false) landing in
+	// the race window would otherwise record a score against a disabled
+	// game. Every other stagiaire-state mutation re-validates under the
+	// session lock — UpdateGameScore was the lone holdout.
+	if !session.GameEnabled {
+		return ErrGameDisabled
 	}
 
 	if score > session.GameScores[stagiaireID] {
