@@ -52,6 +52,7 @@ const rendererSpies = {
   updateHeader: vi.fn(),
   updateLandingPageLoadingState: vi.fn(),
   updateConnectionBanner: vi.fn(),
+  updateActionButtonsState: vi.fn(),
   attachConfigListeners: vi.fn(),
   attachVoteListeners: vi.fn(),
   attachHeaderListeners: vi.fn(),
@@ -168,13 +169,16 @@ describe('formateur websocket — message handling', () => {
       expect(showToastSpy).toHaveBeenCalledTimes(1)
     })
 
-    it('updateHeader + updateConnectionBanner + publishState all run on status change', () => {
+    it('updateHeader + updateConnectionBanner + updateActionButtonsState + publishState all run on status change', () => {
       initClient()
       rendererSpies.updateHeader.mockClear()
       rendererSpies.updateConnectionBanner.mockClear()
+      rendererSpies.updateActionButtonsState.mockClear()
       capturedClient.fireStatusChange(true)
       expect(rendererSpies.updateHeader).toHaveBeenCalledTimes(1)
       expect(rendererSpies.updateConnectionBanner).toHaveBeenCalledTimes(1)
+      // F24: button disabled state tracks connectivity live.
+      expect(rendererSpies.updateActionButtonsState).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -207,20 +211,26 @@ describe('formateur websocket — message handling', () => {
       expect(sessionStorage.getItem('vote_trainer_token')).toBe('tok-abc')
 
       expect(rendererSpies.renderFullLayout).toHaveBeenCalledTimes(1)
-      expect(rendererSpies.attachHeaderListeners).toHaveBeenCalledTimes(1)
+      // F23: header listeners are now bound inside updateHeader on fresh
+      // markup injection, so attachHeaderListeners is NOT called as a
+      // separate step from the websocket layer. updateHeader is the call
+      // that wires the buttons.
+      expect(rendererSpies.updateHeader).toHaveBeenCalledWith(capturedClient)
       expect(createSessionPublisher).toHaveBeenCalledWith('ABC')
-      expect(rendererSpies.updateHeader).toHaveBeenCalled()
       expect(rendererSpies.attachConfigListeners).toHaveBeenCalledTimes(1)
       expect(publisherSpy.publish).toHaveBeenCalledTimes(1)
     })
 
-    it('does NOT re-render the full layout when app-content is already present', () => {
-      // Pre-populate the DOM as if a prior session was rendered.
+    it('F23: updateHeader runs on the reload path so header buttons get bound even when app-content already exists', () => {
+      // Simulate a reload-with-saved-session: main.js already rendered the
+      // full layout (header empty). session_created arrives and must still
+      // call updateHeader (which injects + binds the buttons).
       document.body.innerHTML = '<div id="app"><div id="reconnect-banner"></div><main id="app-content"></main></div>'
       initClient()
+      rendererSpies.updateHeader.mockClear()
       capturedClient.fireMessage({ type: 'session_created', sessionCode: 'ABC' })
-      // renderFullLayout should be skipped because #app-content exists.
       expect(rendererSpies.renderFullLayout).not.toHaveBeenCalled()
+      expect(rendererSpies.updateHeader).toHaveBeenCalledTimes(1)
     })
 
     it('applies the last-saved config when a fresh session_created arrives in idle state', () => {

@@ -19,6 +19,9 @@ const {
   attachConfigListeners,
   attachVoteListeners,
   attachHeaderListeners,
+  registerHeaderLeaveHandler,
+  updateHeader,
+  updateActionButtonsState,
   cleanupAllListeners,
   renderMainContent,
   renderFullLayout,
@@ -355,5 +358,174 @@ describe('preset input Escape isolation (F4)', () => {
     expect(confirmSpy).toHaveBeenCalledWith('Mon preset')
 
     cleanupAllListeners()
+  })
+})
+
+// F23: updateHeader must (re)attach header listeners whenever it injects
+// fresh markup. In production, renderFullLayout emits an EMPTY <header>,
+// then updateHeader injects the buttons. If listeners are attached before
+// the buttons exist (the original bug), the Quitter / Aide buttons are
+// dead for the entire session.
+describe('updateHeader re-attaches header listeners on fresh markup (F23)', () => {
+  beforeEach(() => {
+    _confirmResult = false
+    state.sessionCode = 'ABC'
+    state.voteState = 'idle'
+    state.connectedCount = 0
+    state.selectedColors = new Set(['rouge', 'vert'])
+    state.colorLabels = {}
+    state.stagiaires = []
+    state.competitive = false
+    state.allowBlank = false
+    state.gameEnabled = false
+    state.multipleChoice = false
+    state.connected = true
+    _resetAppShortcutForTests()
+  })
+
+  afterEach(() => {
+    cleanupAllListeners()
+  })
+
+  it('injects the leave + aid buttons and binds a working click listener on the leave button', async () => {
+    // renderFullLayout produces an EMPTY header — the original production
+    // ordering where attachHeaderListeners ran before the buttons existed.
+    document.body.innerHTML = '<div id="app"><header id="app-header"></header><main id="app-content"></main></div>'
+
+    const leave = vi.fn()
+    registerHeaderLeaveHandler(leave)
+
+    updateHeader({ isConnected: () => true })
+
+    const leaveBtn = document.getElementById('leaveSessionBtn')
+    expect(leaveBtn).not.toBeNull()
+    const aidBtn = document.getElementById('openConnectionAidBtn')
+    expect(aidBtn).not.toBeNull()
+
+    // The leave button click should trigger the confirm dialog and, on
+    // confirm, call the registered leave handler.
+    _confirmResult = true
+    leaveBtn.click()
+    await flushMicrotasks()
+    expect(leave).toHaveBeenCalledTimes(1)
+  })
+
+  it('aid button click opens the classroom-display URL', () => {
+    document.body.innerHTML = '<div id="app"><header id="app-header"></header><main id="app-content"></main></div>'
+    registerHeaderLeaveHandler(() => {})
+
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    updateHeader({ isConnected: () => true })
+
+    document.getElementById('openConnectionAidBtn').click()
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    const url = openSpy.mock.calls[0][0]
+    expect(url).toContain('aide=ABC')
+    openSpy.mockRestore()
+  })
+
+  it('className fast-path does NOT re-inject or double-bind (idempotent)', async () => {
+    document.body.innerHTML = '<div id="app"><header id="app-header"></header><main id="app-content"></main></div>'
+    const leave = vi.fn()
+    registerHeaderLeaveHandler(leave)
+
+    // First call injects + binds.
+    updateHeader({ isConnected: () => true })
+    const leaveBtn = document.getElementById('leaveSessionBtn')
+
+    // Second call with same sessionCode + connection state hits the
+    // fast-path (className-only). The button element must be unchanged
+    // (same node) and a single click must fire the handler exactly once.
+    updateHeader({ isConnected: () => true })
+    expect(document.getElementById('leaveSessionBtn')).toBe(leaveBtn)
+
+    _confirmResult = true
+    leaveBtn.click()
+    await flushMicrotasks()
+    expect(leave).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not double-bind across repeated fresh injections (sessionTracker self-cleaning)', async () => {
+    document.body.innerHTML = '<div id="app"><header id="app-header"></header><main id="app-content"></main></div>'
+    const leave = vi.fn()
+    registerHeaderLeaveHandler(leave)
+
+    // Simulate a session-code change triggering a fresh injection twice.
+    updateHeader({ isConnected: () => true })
+    // Force a fresh re-inject by clearing the header (as if renderFullLayout
+    // ran again).
+    document.getElementById('app-header').innerHTML = ''
+    updateHeader({ isConnected: () => true })
+
+    // sessionTracker should hold exactly 2 entries (leave + aid), not 4.
+    const sizes = _trackerSizesForTests()
+    expect(sizes.session).toBe(2)
+
+    _confirmResult = true
+    document.getElementById('leaveSessionBtn').click()
+    await flushMicrotasks()
+    // Must fire exactly once despite two injections.
+    expect(leave).toHaveBeenCalledTimes(1)
+  })
+})
+
+// F24: updateActionButtonsState toggles disabled on the action buttons so
+// their state tracks state.connected live (instead of only at render time).
+describe('updateActionButtonsState live disabled tracking (F24)', () => {
+  beforeEach(() => {
+    state.sessionCode = 'ABC'
+    state.voteState = 'idle'
+    state.connected = true
+    state.selectedColors = new Set(['rouge', 'vert'])
+  })
+
+  afterEach(() => {
+    cleanupAllListeners()
+  })
+
+  it('disables action buttons when disconnected', () => {
+    document.body.innerHTML = `
+      <main id="app-content">
+        <button id="startVote"></button>
+        <button id="resetConfig"></button>
+      </main>`
+    state.connected = false
+    updateActionButtonsState()
+    expect(document.getElementById('startVote').disabled).toBe(true)
+    expect(document.getElementById('resetConfig').disabled).toBe(true)
+  })
+
+  it('re-enables action buttons when reconnected', () => {
+    document.body.innerHTML = `
+      <main id="app-content">
+        <button id="startVote" disabled></button>
+        <button id="resetConfig" disabled></button>
+      </main>`
+    state.connected = true
+    updateActionButtonsState()
+    expect(document.getElementById('startVote').disabled).toBe(false)
+    expect(document.getElementById('resetConfig').disabled).toBe(false)
+  })
+
+  it('keeps startVote disabled when fewer than 2 colors selected (even when connected)', () => {
+    document.body.innerHTML = `<main id="app-content"><button id="startVote"></button></main>`
+    state.connected = true
+    state.selectedColors = new Set(['rouge'])
+    updateActionButtonsState()
+    expect(document.getElementById('startVote').disabled).toBe(true)
+  })
+
+  it('handles vote-phase buttons (closeVote / revealBtn / newVote)', () => {
+    document.body.innerHTML = `
+      <main id="app-content">
+        <button id="closeVote"></button>
+        <button id="revealBtn"></button>
+        <button id="newVote"></button>
+      </main>`
+    state.connected = false
+    updateActionButtonsState()
+    expect(document.getElementById('closeVote').disabled).toBe(true)
+    expect(document.getElementById('revealBtn').disabled).toBe(true)
+    expect(document.getElementById('newVote').disabled).toBe(true)
   })
 })

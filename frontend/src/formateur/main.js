@@ -3,6 +3,7 @@ import {
   renderLandingPage,
   renderFullLayout,
   attachAppKeyboardShortcuts,
+  registerHeaderLeaveHandler,
   cleanupAllListeners,
   setActionHandlers
 } from './renderers.js'
@@ -92,6 +93,10 @@ async function init() {
   // state.sessionCode (no-op on the landing page) and attachAppKeyboardShortcuts
   // is itself idempotent, so this is safe to call unconditionally.
   attachAppKeyboardShortcuts(leaveSession)
+  // F23: register the same leave handler for the header buttons so
+  // updateHeader can (re)bind them whenever it injects fresh markup,
+  // without needing the fn passed per-call.
+  registerHeaderLeaveHandler(leaveSession)
 }
 
 init().catch((err) => console.error('Formateur init failed:', err))
