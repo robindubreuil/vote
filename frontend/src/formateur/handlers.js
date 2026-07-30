@@ -201,7 +201,10 @@ export function startVote(client) {
     allowBlank: state.allowBlank
   })
 
-  client.send({
+  // F24: client.send returns false when the socket is down — surface the
+  // failure instead of letting the click drop silently (mirrors the
+  // stagiaire submitVote contract).
+  const ok = client.send({
     type: 'start_vote',
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
@@ -211,6 +214,9 @@ export function startVote(client) {
     competitive: state.competitive,
     allowBlank: state.allowBlank
   })
+  if (!ok) {
+    showError('Erreur de connexion')
+  }
 }
 
 export function closeVote(client) {
@@ -219,10 +225,13 @@ export function closeVote(client) {
     return
   }
 
-  client.send({
+  const ok = client.send({
     type: 'close_vote',
     sessionCode: state.sessionCode
   })
+  if (!ok) {
+    showError('Erreur de connexion')
+  }
 }
 
 export function revealAnswers(client, correctColors) {
@@ -231,11 +240,14 @@ export function revealAnswers(client, correctColors) {
     return
   }
 
-  client.send({
+  const ok = client.send({
     type: 'reveal_answers',
     sessionCode: state.sessionCode,
     correctColors: Array.from(correctColors)
   })
+  if (!ok) {
+    showError('Erreur de connexion')
+  }
 }
 
 export function resetVote(client) {
@@ -244,7 +256,7 @@ export function resetVote(client) {
     return
   }
 
-  client.send({
+  const ok = client.send({
     type: 'reset_vote',
     sessionCode: state.sessionCode,
     colors: Array.from(state.selectedColors),
@@ -253,6 +265,9 @@ export function resetVote(client) {
     competitive: state.competitive,
     allowBlank: state.allowBlank
   })
+  if (!ok) {
+    showError('Erreur de connexion')
+  }
 }
 
 export function joinSession(code, setLoadingFn, initClientFn) {

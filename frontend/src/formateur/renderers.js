@@ -71,6 +71,16 @@ export function setActionHandlers(handlers) {
   Object.assign(_actionHandlers, handlers)
 }
 
+// F23: the header leave handler is registered once from the composition
+// root (main.js) so updateHeader can (re)bind the header buttons whenever
+// it injects fresh markup, without needing the leave fn threaded through
+// every call site. Mirrors the _actionHandlers registration pattern.
+let _headerLeaveFn = null
+
+export function registerHeaderLeaveHandler(fn) {
+  _headerLeaveFn = typeof fn === 'function' ? fn : null
+}
+
 /**
  * Open the "Aide à la connexion" view in a new browser tab so the formateur
  * can drag it onto the videoprojector screen. The URL is built from the
@@ -180,6 +190,29 @@ export function updateConnectionBanner() {
 }
 
 /**
+ * F24: toggle the action buttons' disabled state so it tracks
+ * state.connected live, instead of only reflecting the connectivity at
+ * the last render. Without this, a mid-session wifi flap leaves the
+ * buttons visually enabled; a click silently drops because client.send
+ * returns false on a disconnected socket. Cheaper and non-disruptive
+ * than a full card re-render (preserves in-progress label edits, preset
+ * save form, etc.).
+ */
+export function updateActionButtonsState() {
+  const isConnected = state.connected
+  const ids = ['startVote', 'resetConfig', 'closeVote', 'revealBtn', 'newVote']
+  for (const id of ids) {
+    const btn = document.getElementById(id)
+    if (!btn) continue
+    let disabled = !isConnected
+    if (id === 'startVote') {
+      disabled = disabled || state.selectedColors.size < 2
+    }
+    btn.disabled = disabled
+  }
+}
+
+/**
  * Update the header
  * @param {Object} client
  */
@@ -208,14 +241,31 @@ export function updateHeader(client) {
       ${renderSessionCodeButton(state.sessionCode, isConnected, `${t.formateur.leaveSessionTitle} — ${t.formateur.shortcutEsc}`)}
     </div>
   `
+
+  // F23: fresh markup just replaced the header's children, so the buttons
+  // are brand-new elements with no listeners. Re-attach now. The className
+  // fast-path above returns early (no innerHTML change), so this only fires
+  // on genuine injection — no double-bind. attachHeaderListeners cleans the
+  // session tracker first, so repeated injections (e.g. a session-code
+  // change) can't accumulate stale references to detached nodes.
+  attachHeaderListeners()
 }
 
 /**
- * Attach header event listeners
- * @param {Object} client
- * @param {Function} renderLandingPageFn
+ * Attach header event listeners.
+ *
+ * F23: reads the leave handler from the module-level registration
+ * (registerHeaderLeaveHandler, set once from main.js) so it can be called
+ * with no arguments — updateHeader invokes it automatically after every
+ * fresh markup injection. Self-cleaning: the session tracker is wiped
+ * first so a repeated attach (session-code change, repeated session_created)
+ * can't double-bind or leak references to detached nodes.
+ * @param {Object} [client] unused (kept for call-site compatibility)
+ * @param {Function} [leaveSessionFn] override; defaults to the registered fn
  */
 export function attachHeaderListeners(client, leaveSessionFn) {
+  const leave = leaveSessionFn || _headerLeaveFn
+  sessionTracker.cleanup()
   const leaveSessionBtn = document.getElementById('leaveSessionBtn')
   if (leaveSessionBtn) {
     trackSessionListener(leaveSessionBtn, 'click', async () => {
@@ -224,7 +274,7 @@ export function attachHeaderListeners(client, leaveSessionFn) {
         message: t.formateur.leaveSession,
         confirmLabel: t.formateur.leave
       })
-      if (ok) leaveSessionFn()
+      if (ok && leave) leave()
     })
   }
 

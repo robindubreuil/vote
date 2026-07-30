@@ -63,14 +63,14 @@ them together keeps the auth-chain reasoning in one head.
 
 ---
 
-## Session 23 — Frontend trainer event-wiring
+## Session 23 — Frontend trainer event-wiring  ✓
 
 Two independent bugs where formateur buttons don't behave, both invisible to the
 existing tests because they mock out the piece that fails in production. Same
 file cluster (`formateur/websocket.js`, `handlers.js`, `renderers.js`), same fix
 shape (re-check the element after it's in the DOM / check the send return value).
 
-- [ ] **F23** [High] Formateur header buttons (`#leaveSessionBtn`,
+- [x] **F23** [High] Formateur header buttons (`#leaveSessionBtn`,
   `#openConnectionAidBtn`) never receive click listeners in production. In the
   `session_created` handler, `renderFullLayout` emits an **empty**
   `<header id="app-header">` (`renderers.js:157`), then `attachHeaderListeners`
@@ -85,11 +85,14 @@ shape (re-check the element after it's in the DOM / check the send return value)
   headline feature is unreachable via UI, and the aid button has no keyboard
   alternative. Tests missed it: `websocket.test.js` mocks `updateHeader`
   (`:52`), `renderers.test.js` pre-populates the header via `buildAppShell`
-  (`:48-58`), inverting the production ordering. **Fix:** call
-  `attachHeaderListeners` *after* `updateHeader`, or have `updateHeader` re-attach
-  whenever it injects fresh markup (guard so it doesn't double-bind on the
-  className-only fast-path at `renderers.js:193`).
-- [ ] **F24** [Medium] Formateur action handlers silently swallow clicks when the
+  (`:48-58`), inverting the production ordering. **Fix:** `updateHeader` now
+  calls `attachHeaderListeners` after every fresh markup injection (the
+  className fast-path returns early so there's no double-bind); the leave
+  handler is registered once at module level (`registerHeaderLeaveHandler` from
+  `main.js`) so it doesn't need to be threaded through every call site;
+  `attachHeaderListeners` is self-cleaning (wipes `sessionTracker` first) so
+  repeated injections can't accumulate stale references.
+- [x] **F24** [Medium] Formateur action handlers silently swallow clicks when the
   WS is down. All four trainer actions (`startVote` / `closeVote` /
   `revealAnswers` / `resetVote`) gate only on `if (!client)` then call
   `client.send(...)` and **ignore its return value** (`handlers.js:188-256`).
@@ -100,17 +103,19 @@ shape (re-check the element after it's in the DOM / check the send return value)
   + `publishState` — it never re-renders the config/vote card. During a
   mid-session wifi flap the buttons keep their pre-drop enabled state; a click
   silently drops, no error shows, and the trainer proceeds believing the vote is
-  closed/started/revealed while the message was never sent. **Fix:** mirror
-  `submitVote` — capture `const ok = client.send(...)`, `showError` on false —
-  in all four handlers; additionally have `onStatusChange` re-render the card (or
-  cheaply toggle a `disabled` class on the action buttons) so the button state
-  tracks `state.connected` live.
-- [ ] Tests: `formateur/websocket.test.js` (+`attachHeaderListeners` runs after
-  `updateHeader` on `session_created`, +called on the reload path, F23),
-  `formateur/handlers.test.js` (+each action handler shows `showError` and does
-  not proceed when `client.send` returns false, F24), a renderer test asserting
-  `updateHeader` re-attaches when it injects fresh markup (F23).
-  `npm test` green; `npm run build` clean.
+  closed/started/revealed while the message was never sent. **Fix:** all four
+  handlers now capture `const ok = client.send(...)` and call `showError` on
+  false (mirrors `submitVote`); additionally `onStatusChange` calls the new
+  `updateActionButtonsState()` which cheaply toggles `disabled` on the action
+  buttons so their state tracks `state.connected` live (non-disruptive —
+  preserves in-progress label edits / preset form).
+- [x] Tests: `formateur/websocket.test.js` (+`updateHeader` runs on the reload
+  path so buttons get bound, +`updateActionButtonsState` fires on status change,
+  F23/F24), `formateur/handlers.test.js` (new — each action handler shows
+  `showError` and sends exactly once when `client.send` returns false, F24),
+  `formateur/renderers.test.js` (+`updateHeader` re-attaches on fresh inject +
+  idempotent fast-path + no double-bind across injections, +`updateActionButtonsState`
+  live disabled tracking, F23/F24). `npm test` green (572); `npm run build` clean.
 
 ---
 

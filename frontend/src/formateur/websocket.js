@@ -5,7 +5,7 @@ import { validateSessionCode } from '@shared/validation.js'
 import { createSessionPublisher } from '@shared/session-sync.js'
 import { CONSTANTS } from '@shared/config.js'
 import { t } from '@shared/strings.js'
-import { state, resetTrainerState } from './state.js'
+import { state } from './state.js'
 import {
   renderFullLayout,
   updateHeader,
@@ -13,8 +13,8 @@ import {
   renderLandingPage,
   updateLandingPageLoadingState,
   updateConnectionBanner,
+  updateActionButtonsState,
   attachConfigListeners,
-  attachHeaderListeners,
   attachVoteListeners,
   cleanupAllListeners,
   attachLandingListeners
@@ -85,6 +85,7 @@ export function initClient() {
       }
       updateHeader(client)
       updateConnectionBanner()
+      updateActionButtonsState()
       publishState()
     },
     onOpen: () => {
@@ -126,11 +127,6 @@ function handleMessage(msg) {
 
         if (!document.getElementById('app-content')) {
           renderFullLayout(app)
-          // Header is rendered once per session by renderFullLayout —
-          // attach its listeners here (session-scoped tracker) instead of
-          // in attachListeners(), which fires on every render and would
-          // otherwise leak duplicate handlers into the sessionTracker.
-          attachHeaderListeners(client, leaveSessionFromHeader)
         }
 
         // Start publishing state for any "Aide à la connexion" tab as soon as
@@ -292,18 +288,6 @@ function handleMessage(msg) {
     default:
       console.debug('Unknown message type:', msg.type)
   }
-}
-
-function leaveSessionFromHeader() {
-  closeClient()
-  stopTimer()
-  safeSessionRemove('vote_session_code')
-  safeSessionRemove('vote_trainer_id')
-  safeSessionRemove('vote_trainer_token')
-  resetTrainerState()
-  cleanupAllListeners()
-  renderLandingPage(document.getElementById('app'))
-  attachLandingListenersWithHandlers()
 }
 
 function attachListeners() {
