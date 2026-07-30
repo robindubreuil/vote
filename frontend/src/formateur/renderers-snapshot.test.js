@@ -294,14 +294,36 @@ describe('formateur renderers — idempotency snapshots', () => {
       expect(html).toMatch(/id="newVote"/)
     })
 
-    it('hides the reveal button once revealed', () => {
+    it('keeps the reveal button after reveal so the answer key can be corrected (R14)', () => {
       state.voteState = 'closed'
       state.competitive = true
       state.revealed = true
       state.connected = true
       const html = renderVoteHTML()
-      expect(html).not.toMatch(/id="revealBtn"/)
+      expect(html).toMatch(/id="revealBtn"/)
       expect(html).toMatch(/id="newVote"/)
+    })
+
+    it('keeps the reveal section (correct-color checkboxes) after reveal (R14)', () => {
+      state.voteState = 'closed'
+      state.competitive = true
+      state.revealed = true
+      state.correctColors = new Set(['rouge'])
+      state.connected = true
+      const html = renderVoteHTML()
+      // The reveal section stays present and pre-checks the current key.
+      expect(html).toContain('reveal-section')
+      expect(html).toMatch(/data-correct-color="rouge"[^>]*checked/)
+      // The scoreboard also shows once revealed.
+      expect(html).toContain('scoreboard-section')
+    })
+
+    it('disables the reveal button when disconnected (R14)', () => {
+      state.voteState = 'closed'
+      state.competitive = true
+      state.revealed = false
+      state.connected = false
+      expect(renderVoteHTML()).toMatch(/id="revealBtn"[^>]*disabled/)
     })
 
     it('non-competitive closed state only shows the new-vote button', () => {

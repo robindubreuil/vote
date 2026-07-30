@@ -158,14 +158,14 @@ own; each was missed by a prior session that touched neighbouring code.
 Two small, low-risk cleanups that close a drift vector and unlock a
 backend-supported feature the UI currently blocks.
 
-- [ ] **R13** [Low] The live `connected_count` update duplicates the pluralization
+- [x] **R13** [Low] The live `connected_count` update duplicates the pluralization
   logic F16 (archived) extracted into `formatConnectedCount` precisely so the
   two surfaces couldn't drift. `formateur/websocket.js:176-177` still hardcodes
   `stagiaire${s} connecté${s}` inline; the initial render in `renderConfigHTML`
   (`formateur/renderers.js:476`) uses the helper. They agree today, but the whole
   point of F16 was to make drift impossible. **Fix:** replace the inline string
   with `formatConnectedCount(state.connectedCount)`.
-- [ ] **R14** [Low/Medium] Re-reveal (correcting the answer key) is unreachable
+- [x] **R14** [Low/Medium] Re-reveal (correcting the answer key) is unreachable
   from the UI despite full backend support. `RevealAnswers` is explicitly
   idempotent (BL2/BL3, archived): re-clicking "Révéler" reverses the previously
   applied scores and applies the new ones so the trainer can change
@@ -179,7 +179,7 @@ backend-supported feature the UI currently blocks.
   section visible (with the current `correctColors` pre-checked) and keep the
   "Révéler" button alongside "New vote". The backend already handles re-reveal
   correctly.
-- [ ] Tests: `formateur/renderers-snapshot.test.js` (+reveal section/button
+- [x] Tests: `formateur/renderers-snapshot.test.js` (+reveal section/button
   persist after `state.revealed`, R14), `formateur/websocket.test.js`
   (+`connected_count` update uses `formatConnectedCount`, R13). `npm test` green;
   `npm run build` clean.

@@ -685,16 +685,12 @@ export function renderVoteHTML() {
             ? `
           <button class="btn btn-danger" id="closeVote" data-testid="close-vote-btn" ${!isConnected ? 'disabled' : ''}>${stop(' class="icon icon-md"')} ${t.formateur.closeVote}</button>
         `
-            : state.competitive && !state.revealed
+            : state.competitive
               ? `
-          <button class="btn btn-primary" id="revealBtn" data-testid="reveal-btn">${checkPlain(' class="icon icon-md"')} ${t.formateur.revealAnswers}</button>
+          <button class="btn btn-primary" id="revealBtn" data-testid="reveal-btn" ${!isConnected ? 'disabled' : ''}>${checkPlain(' class="icon icon-md"')} ${t.formateur.revealAnswers}</button>
           <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
         `
-              : state.competitive && state.revealed
-                ? `
-          <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
-        `
-                : `
+              : `
           <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
         `
         }
@@ -703,41 +699,39 @@ export function renderVoteHTML() {
   `
 }
 
-function renderCompetitiveSectionHTML(activeColors) {
-  if (!state.competitive || state.voteState !== 'closed') return ''
-
-  if (!state.revealed) {
-    return `
-      <div class="reveal-section">
-        <div class="reveal-title">${t.formateur.markCorrect}</div>
-        <div class="reveal-colors">
-          ${activeColors
-            .map((color) => {
-              const checked = state.correctColors.has(color.id) ? 'checked' : ''
-              const displayName = state.colorLabels[color.id] || color.name
-              return `
-            <label class="reveal-color-chip ${checked ? 'selected' : ''}" data-correct-color="${color.id}">
-              <input type="checkbox" data-correct-color="${color.id}" ${checked} />
-              <span class="color-swatch" style="background-color: ${sanitizeColor(color.color)}"></span>
-              <span class="reveal-color-name">${escapeHtml(displayName)}</span>
-            </label>`
-            })
-            .join('')}
-          ${
-            state.allowBlank
-              ? `
-          <label class="reveal-color-chip ${state.correctColors.has('blank') ? 'selected' : ''}" data-correct-color="blank">
-            <input type="checkbox" data-correct-color="blank" ${state.correctColors.has('blank') ? 'checked' : ''} />
-            <span class="reveal-color-name">${t.formateur.blankVote}</span>
-          </label>
-          `
-              : ''
-          }
-        </div>
+function renderRevealSectionHTML(activeColors) {
+  return `
+    <div class="reveal-section">
+      <div class="reveal-title">${t.formateur.markCorrect}</div>
+      <div class="reveal-colors">
+        ${activeColors
+          .map((color) => {
+            const checked = state.correctColors.has(color.id) ? 'checked' : ''
+            const displayName = state.colorLabels[color.id] || color.name
+            return `
+          <label class="reveal-color-chip ${checked ? 'selected' : ''}" data-correct-color="${color.id}">
+            <input type="checkbox" data-correct-color="${color.id}" ${checked} />
+            <span class="color-swatch" style="background-color: ${sanitizeColor(color.color)}"></span>
+            <span class="reveal-color-name">${escapeHtml(displayName)}</span>
+          </label>`
+          })
+          .join('')}
+        ${
+          state.allowBlank
+            ? `
+        <label class="reveal-color-chip ${state.correctColors.has('blank') ? 'selected' : ''}" data-correct-color="blank">
+          <input type="checkbox" data-correct-color="blank" ${state.correctColors.has('blank') ? 'checked' : ''} />
+          <span class="reveal-color-name">${t.formateur.blankVote}</span>
+        </label>
+        `
+            : ''
+        }
       </div>
-    `
-  }
+    </div>
+  `
+}
 
+function renderScoreboardHTML() {
   const sortedByVote = [...state.scoreboard].sort((a, b) => b.voteScore - a.voteScore)
   const rows = sortedByVote
     .map((entry) => {
@@ -769,6 +763,17 @@ function renderCompetitiveSectionHTML(activeColors) {
       <ol class="scoreboard-list">${rows}</ol>
     </div>
   `
+}
+
+function renderCompetitiveSectionHTML(activeColors) {
+  if (!state.competitive || state.voteState !== 'closed') return ''
+
+  // R14: the reveal section stays visible after reveal so the trainer can
+  // correct the answer key and re-reveal. The backend's RevealAnswers is
+  // idempotent (BL2/BL3): it reverses the previously applied scores and
+  // applies the new ones. The current correctColors are pre-checked, so a
+  // re-reveal after a tweak is a single click on "Révéler".
+  return renderRevealSectionHTML(activeColors) + (state.revealed ? renderScoreboardHTML() : '')
 }
 
 /**
