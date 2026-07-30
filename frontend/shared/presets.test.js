@@ -400,3 +400,73 @@ describe('read-throws resilience (F2)', () => {
     }
   })
 })
+
+// F27: correctColors (the answer key) must round-trip through both
+// persistence layers. sanitizeConfig keeps palette ids + the 'blank'
+// pseudo-color (the reveal UI permits marking blank correct) and strips
+// unknown ids. Before the fix the field was half-wired: sanitizeConfig
+// read it but no save/restore site wrote it.
+describe('correctColors round-trip (F27)', () => {
+  it('savePreset + listPresets round-trips correctColors including blank', () => {
+    const p = savePreset('Key', {
+      selectedColors: ['rouge', 'vert'],
+      colorLabels: {},
+      multipleChoice: false,
+      correctColors: ['rouge', 'blank']
+    })
+    expect(p).not.toBeNull()
+    expect(p.config.correctColors).toEqual(['rouge', 'blank'])
+    const restored = listPresets().find((x) => x.id === p.id)
+    expect(restored.config.correctColors).toEqual(['rouge', 'blank'])
+  })
+
+  it('setLastConfig + getLastConfig round-trips correctColors', () => {
+    setLastConfig({
+      selectedColors: ['rouge'],
+      colorLabels: {},
+      multipleChoice: false,
+      correctColors: ['vert', 'blank']
+    })
+    expect(getLastConfig().correctColors).toEqual(['vert', 'blank'])
+  })
+
+  it('keeps blank but strips unknown ids from correctColors', () => {
+    setLastConfig({
+      selectedColors: ['rouge'],
+      colorLabels: {},
+      multipleChoice: false,
+      correctColors: ['rouge', 'blank', 'turquoise', 42, null]
+    })
+    expect(getLastConfig().correctColors).toEqual(['rouge', 'blank'])
+  })
+
+  it('defaults correctColors to [] when missing from input', () => {
+    setLastConfig({ selectedColors: ['rouge'], colorLabels: {}, multipleChoice: false })
+    expect(getLastConfig().correctColors).toEqual([])
+  })
+
+  it('never admits blank into selectedColors (palette stays strict)', () => {
+    setLastConfig({
+      selectedColors: ['rouge', 'blank'],
+      colorLabels: {},
+      multipleChoice: false
+    })
+    expect(getLastConfig().selectedColors).toEqual(['rouge'])
+  })
+
+  it('survives a v2-era payload that lacks correctColors', () => {
+    store.set(
+      _constants.LAST_CONFIG_KEY,
+      JSON.stringify({
+        selectedColors: ['rouge'],
+        colorLabels: {},
+        multipleChoice: false,
+        gameEnabled: true,
+        _v: 2
+      })
+    )
+    const cfg = getLastConfig()
+    expect(cfg.correctColors).toEqual([])
+    expect(cfg.gameEnabled).toBe(true)
+  })
+})

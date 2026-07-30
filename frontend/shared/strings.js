@@ -188,6 +188,8 @@ export const t = {
     markCorrect: 'Cocher les bonnes réponses',
     revealAnswers: 'Révéler les réponses',
     scoreboard: 'Classement',
+    scoreboardName: 'Nom',
+    scoreboardRound: 'Tour',
     score: 'Score',
     totalScore: 'Total',
     noScore: '—',

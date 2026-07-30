@@ -64,7 +64,9 @@ function sanitizeConfig(config) {
     competitive: Boolean(config.competitive),
     allowBlank: Boolean(config.allowBlank),
     correctColors: Array.isArray(config.correctColors)
-      ? config.correctColors.filter((id) => typeof id === 'string' && knownIds.has(id))
+      ? config.correctColors.filter(
+          (id) => typeof id === 'string' && (id === 'blank' || knownIds.has(id))
+        )
       : []
   }
 }

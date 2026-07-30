@@ -56,7 +56,8 @@ export function confirmSavePreset(rawName) {
     multipleChoice: state.multipleChoice,
     gameEnabled: state.gameEnabled,
     competitive: state.competitive,
-    allowBlank: state.allowBlank
+    allowBlank: state.allowBlank,
+    correctColors: Array.from(state.correctColors)
   })
   if (!saved) {
     showToast(t.formateur.presetSaveFailed, { type: 'error' })
@@ -78,6 +79,7 @@ export function applyPreset(id) {
   state.gameEnabled = Boolean(preset.config.gameEnabled)
   state.competitive = Boolean(preset.config.competitive)
   state.allowBlank = Boolean(preset.config.allowBlank)
+  state.correctColors = new Set(preset.config.correctColors || [])
   renderMainContent()
   const client = getClient()
   if (client) attachConfigListeners(client)
@@ -180,6 +182,7 @@ export function applyLastConfigIfAvailable() {
   state.gameEnabled = Boolean(last.gameEnabled)
   state.competitive = Boolean(last.competitive)
   state.allowBlank = Boolean(last.allowBlank)
+  state.correctColors = new Set(last.correctColors || [])
   renderMainContent()
   const client = getClient()
   if (client) attachConfigListeners(client)
@@ -198,7 +201,8 @@ export function startVote(client) {
     multipleChoice: state.multipleChoice,
     gameEnabled: state.gameEnabled,
     competitive: state.competitive,
-    allowBlank: state.allowBlank
+    allowBlank: state.allowBlank,
+    correctColors: Array.from(state.correctColors)
   })
 
   // F24: client.send returns false when the socket is down — surface the

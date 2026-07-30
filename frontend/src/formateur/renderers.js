@@ -800,8 +800,18 @@ function renderRevealSectionHTML(activeColors) {
 }
 
 function renderScoreboardHTML() {
-  const sortedByVote = [...state.scoreboard].sort((a, b) => b.voteScore - a.voteScore)
-  const rows = sortedByVote
+  // F26: rank by cumulative totalScore (which already folds in the game
+  // score), not the per-round voteScore that resets every round. The
+  // backend assigns competition ranks (R4) over this same ordering, so
+  // mirroring it here keeps the trainer's table consistent with the
+  // classroom aid leaderboard and the rank value each entry carries.
+  const ranked = [...state.scoreboard].sort((a, b) => {
+    const ta = a.totalScore ?? 0
+    const tb = b.totalScore ?? 0
+    if (tb !== ta) return tb - ta
+    return String(a.name || '').localeCompare(String(b.name || ''))
+  })
+  const rows = ranked
     .map((entry) => {
       const voteColors = (entry.vote || []).filter((c) => c !== 'blank')
       const isBlank = (entry.vote || []).includes('blank')
@@ -813,13 +823,18 @@ function renderScoreboardHTML() {
         })
         .join('')
       const voteDisplay = isBlank ? '<span class="scoreboard-blank">blanc</span>' : colorsHTML || '—'
-      const voteScoreClass = entry.voteScore >= 0 ? 'positive' : 'negative'
-      const voteScoreText = entry.voteScore >= 0 ? `+${entry.voteScore}` : String(entry.voteScore)
+      const voteScore = entry.voteScore ?? 0
+      const voteScoreClass = voteScore >= 0 ? 'positive' : 'negative'
+      const voteScoreText = voteScore >= 0 ? `+${voteScore}` : String(voteScore)
+      const totalScore = entry.totalScore ?? 0
+      const rank = entry.rank || 0
       return `
-      <li class="scoreboard-row">
+      <li class="scoreboard-row${rank ? ` rank-${rank}` : ''}">
+        <span class="scoreboard-rank">${rank || '—'}</span>
         <span class="scoreboard-name">${escapeHtml(entry.name || t.common.anonymous)}</span>
         <span class="scoreboard-vote">${voteDisplay}</span>
-        <span class="scoreboard-votescore ${voteScoreClass}">${voteScoreText}</span>
+        <span class="scoreboard-votescore ${voteScoreClass}" title="${t.formateur.score}">${voteScoreText}</span>
+        <span class="scoreboard-total" title="${t.formateur.totalScore}">${totalScore}</span>
       </li>
     `
     })
@@ -828,6 +843,13 @@ function renderScoreboardHTML() {
   return `
     <div class="scoreboard-section">
       <div class="scoreboard-title">${t.formateur.scoreboard}</div>
+      <div class="scoreboard-header">
+        <span class="scoreboard-rank" aria-hidden="true">#</span>
+        <span class="scoreboard-name">${t.formateur.scoreboardName}</span>
+        <span class="scoreboard-vote" aria-hidden="true"></span>
+        <span class="scoreboard-votescore">${t.formateur.scoreboardRound}</span>
+        <span class="scoreboard-total">${t.formateur.totalScore}</span>
+      </div>
       <ol class="scoreboard-list">${rows}</ol>
     </div>
   `

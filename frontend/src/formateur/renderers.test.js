@@ -14,6 +14,7 @@ vi.mock('@shared/ui.js', async (importOriginal) => {
 })
 
 const { state } = await import('./state.js')
+const { t } = await import('@shared/strings.js')
 const {
   attachAppKeyboardShortcuts,
   attachConfigListeners,
@@ -527,5 +528,95 @@ describe('updateActionButtonsState live disabled tracking (F24)', () => {
     expect(document.getElementById('closeVote').disabled).toBe(true)
     expect(document.getElementById('revealBtn').disabled).toBe(true)
     expect(document.getElementById('newVote').disabled).toBe(true)
+  })
+})
+
+// F26: the trainer scoreboard must rank by cumulative totalScore (which
+// folds in the game score), not the per-round voteScore, and surface both
+// the rank column and the total. Before the fix the renderer sorted by
+// voteScore and rendered neither rank nor totalScore — dead CSS
+// (.scoreboard-row.rank-1, .scoreboard-total) confirmed the intent.
+describe('trainer competitive scoreboard (F26)', () => {
+  beforeEach(() => {
+    _confirmResult = false
+    state.sessionCode = 'ABC'
+    state.voteState = 'closed'
+    state.competitive = true
+    state.allowBlank = false
+    state.gameEnabled = false
+    state.multipleChoice = false
+    state.connected = true
+    state.selectedColors = new Set(['rouge', 'vert'])
+    state.colorLabels = {}
+    state.correctColors = new Set(['rouge'])
+    state.revealed = true
+    state.stagiaires = []
+    _resetAppShortcutForTests()
+  })
+
+  afterEach(() => {
+    cleanupAllListeners()
+  })
+
+  function mountScoreboard() {
+    buildAppShell()
+    renderFullLayout(document.getElementById('app'))
+    renderMainContent()
+    return document.querySelector('.scoreboard-list')
+  }
+
+  it('sorts rows by cumulative totalScore, not per-round voteScore', () => {
+    // B has the lower round score but the higher cumulative total — must
+    // rank first. The old voteScore sort would put A first.
+    state.scoreboard = [
+      { id: 'a', name: 'Alice', vote: ['rouge'], voteScore: 500, totalScore: 1000, rank: 2 },
+      { id: 'b', name: 'Bob', vote: ['vert'], voteScore: 200, totalScore: 3000, rank: 1 }
+    ]
+    const list = mountScoreboard()
+    const names = [...list.querySelectorAll('.scoreboard-name')].map((n) => n.textContent.trim())
+    expect(names).toEqual(['Bob', 'Alice'])
+  })
+
+  it('emits a rank-N row class matching each entry rank', () => {
+    state.scoreboard = [
+      { id: 'a', name: 'Alice', vote: ['rouge'], voteScore: 500, totalScore: 1000, rank: 2 },
+      { id: 'b', name: 'Bob', vote: ['vert'], voteScore: 200, totalScore: 3000, rank: 1 }
+    ]
+    const list = mountScoreboard()
+    const rows = [...list.querySelectorAll('.scoreboard-row')]
+    expect(rows[0].className).toContain('rank-1')
+    expect(rows[1].className).toContain('rank-2')
+  })
+
+  it('renders the rank column and totalScore column per row', () => {
+    state.scoreboard = [
+      { id: 'b', name: 'Bob', vote: ['vert'], voteScore: 200, totalScore: 3000, rank: 1 }
+    ]
+    const list = mountScoreboard()
+    const row = list.querySelector('.scoreboard-row')
+    expect(row.querySelector('.scoreboard-rank').textContent.trim()).toBe('1')
+    expect(row.querySelector('.scoreboard-total').textContent.trim()).toBe('3000')
+    // Per-round voteScore is still surfaced (+200).
+    expect(row.querySelector('.scoreboard-votescore').textContent.trim()).toBe('+200')
+  })
+
+  it('renders a header labelling the round and total columns', () => {
+    state.scoreboard = [
+      { id: 'b', name: 'Bob', vote: ['vert'], voteScore: 0, totalScore: 0, rank: 1 }
+    ]
+    mountScoreboard()
+    const header = document.querySelector('.scoreboard-header')
+    expect(header).not.toBeNull()
+    expect(header.querySelector('.scoreboard-votescore').textContent.trim()).toBe(t.formateur.scoreboardRound)
+    expect(header.querySelector('.scoreboard-total').textContent.trim()).toBe(t.formateur.totalScore)
+  })
+
+  it('handles missing totalScore/rank (older server) without crashing', () => {
+    state.scoreboard = [{ id: 'a', name: 'Alice', vote: ['rouge'], voteScore: 100 }]
+    const list = mountScoreboard()
+    const row = list.querySelector('.scoreboard-row')
+    expect(row.querySelector('.scoreboard-total').textContent.trim()).toBe('0')
+    expect(row.querySelector('.scoreboard-rank').textContent.trim()).toBe('—')
+    expect(row.className).not.toContain('rank-')
   })
 })
