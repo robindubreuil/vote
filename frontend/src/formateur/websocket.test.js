@@ -305,6 +305,24 @@ describe('formateur websocket — message handling', () => {
       const payload = publisherSpy.publish.mock.calls.at(-1)[0]
       expect(payload.leaderboard).toBeNull()
     })
+
+    it('updates the live .config-info line via the shared formatConnectedCount helper (R13)', () => {
+      // Seed a real .config-info element (renderers are mocked, so the
+      // initial render never created one). The handler's fast path updates
+      // innerHTML in place instead of re-rendering.
+      document.body.innerHTML = '<div class="config-info"></div>'
+      state.voteState = 'idle'
+
+      capturedClient.fireMessage({ type: 'connected_count', count: 3 })
+      expect(document.querySelector('.config-info').innerHTML).toContain('3 stagiaires connectés')
+
+      capturedClient.fireMessage({ type: 'connected_count', count: 1 })
+      expect(document.querySelector('.config-info').innerHTML).toContain('1 stagiaire connecté')
+
+      // Singular stays singular at zero too (F16 rule).
+      capturedClient.fireMessage({ type: 'connected_count', count: 0 })
+      expect(document.querySelector('.config-info').innerHTML).toContain('0 stagiaire connecté')
+    })
   })
 
   describe('vote_started', () => {

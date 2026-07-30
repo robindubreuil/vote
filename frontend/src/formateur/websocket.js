@@ -21,6 +21,7 @@ import {
 } from './renderers.js'
 import { startTimer, stopTimer, updateVoteResults } from './utils.js'
 import { users } from '@shared/icons.js'
+import { formatConnectedCount } from '@shared/utils/format.js'
 import { showToast } from '@shared/ui.js'
 import { applyLastConfigIfAvailable } from './handlers.js'
 import { safeSessionGet, safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
@@ -173,8 +174,9 @@ function handleMessage(msg) {
       if (state.voteState === 'idle') {
         const configInfo = document.querySelector('.config-info')
         if (configInfo) {
-          const s = state.connectedCount > 1 ? 's' : ''
-          configInfo.innerHTML = `${users(' class="icon icon-sm"')} ${state.connectedCount} stagiaire${s} connecté${s}`
+          // R13: reuse the shared helper so the live update cannot drift
+          // from the initial render in renderConfigHTML (F16).
+          configInfo.innerHTML = `${users(' class="icon icon-sm"')} ${formatConnectedCount(state.connectedCount)}`
         } else if (document.getElementById('app-content')) {
           renderMainContent()
           attachListeners()
