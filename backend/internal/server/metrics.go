@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	"runtime"
+	"runtime/metrics"
 	"strconv"
 	"strings"
 	"time"
@@ -88,15 +88,18 @@ func (s *Server) handleMetrics(c *gin.Context) {
 	writeHistogram(&b, "vote_votes_per_session", "Number of submitted votes per ended session", p.VotesPerSession)
 	writeHistogram(&b, "vote_trainees_per_session", "Number of trainees who joined per ended session", p.TraineesPerSession)
 
-	writeGauge(&b, "go_goroutines", "Number of goroutines", float64(runtime.NumGoroutine()))
-
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	writeGauge(&b, "go_mem_alloc_bytes", "Bytes of allocated heap objects", float64(memStats.HeapAlloc))
-	writeGauge(&b, "go_mem_sys_bytes", "Total bytes of memory obtained from the OS", float64(memStats.Sys))
-	writeGauge(&b, "go_mem_heap_objects", "Number of allocated heap objects", float64(memStats.HeapObjects))
-	writeGauge(&b, "go_gc_total", "Total number of GC cycles", float64(memStats.NumGC))
+	// R12: Go runtime gauges are read in a single non-STW pass via
+	// runtime/metrics. The previous runtime.ReadMemStats call forced a
+	// stop-the-world on every /metrics scrape and every 30s dashboard
+	// poll, periodically stalling the real-time WebSocket path the
+	// endpoint exists to monitor — and the stall itself was invisible
+	// to /metrics. runtime/metrics.Read never stops the world.
+	rt := readRuntimeGauges()
+	writeGauge(&b, "go_goroutines", "Number of goroutines", float64(rt.goroutines))
+	writeGauge(&b, "go_mem_alloc_bytes", "Bytes of heap memory occupied by live and unmarked objects", float64(rt.heapObjectBytes))
+	writeGauge(&b, "go_mem_sys_bytes", "Bytes of memory mapped by the runtime (all classes)", float64(rt.totalBytes))
+	writeGauge(&b, "go_mem_heap_objects", "Number of live or unswept heap objects", float64(rt.heapObjects))
+	writeGauge(&b, "go_gc_total", "Total number of completed GC cycles", float64(rt.gcCycles))
 
 	if s.buildInfo.Version != "" || s.buildInfo.GitCommit != "" {
 		writeInfoMetric(&b, "vote_build_info",
@@ -178,4 +181,56 @@ func writeInfoMetric(b *strings.Builder, name, version, buildTime, gitCommit str
 	fmt.Fprintf(b, "# TYPE %s gauge\n", name)
 	fmt.Fprintf(b, `%s{version="%s",build_time="%s",git_commit="%s"} 1`+"\n",
 		name, escapeLabelValue(version), escapeLabelValue(buildTime), escapeLabelValue(gitCommit))
+}
+
+// runtimeGauges holds the Go runtime values exposed under /metrics. Each
+// field maps 1:1 to a runtime/metrics sample name (see readRuntimeGauges).
+type runtimeGauges struct {
+	heapObjectBytes uint64 // /memory/classes/heap/objects:bytes
+	totalBytes      uint64 // /memory/classes/total:bytes
+	heapObjects     uint64 // /gc/heap/objects:objects
+	gcCycles        uint64 // /gc/cycles/total:gc-cycles
+	goroutines      uint64 // /sched/goroutines:goroutines
+}
+
+// readRuntimeGauges samples the Go runtime gauges in a single non-STW pass.
+//
+// R12: this replaces runtime.ReadMemStats, which forces a stop-the-world.
+// Every metric here is KindUint64 and its name is guaranteed stable across
+// Go versions (a kind change would introduce a new name, never mutate an
+// existing one), so KindBad only surfaces on a future Go that dropped a
+// name — in which case we fall back to 0 rather than panic so /metrics
+// keeps serving. The five sample names mirror the prior MemStats fields:
+//
+//   - heapObjectBytes ≈ HeapAlloc (live + dead-not-yet-marked heap)
+//   - totalBytes      ≈ Sys       (all runtime-mapped RW memory)
+//   - heapObjects     ≈ HeapObjects
+//   - gcCycles        = NumGC
+//   - goroutines      = NumGoroutine
+//
+// A fresh sample slice per call keeps concurrent /metrics scrapes free of
+// the aliasing caveat in metrics.Read's docs (Values must not be read while
+// a Read with that value is outstanding).
+func readRuntimeGauges() runtimeGauges {
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/gc/heap/objects:objects"},
+		{Name: "/gc/cycles/total:gc-cycles"},
+		{Name: "/sched/goroutines:goroutines"},
+	}
+	metrics.Read(samples)
+	get := func(i int) uint64 {
+		if samples[i].Value.Kind() == metrics.KindUint64 {
+			return samples[i].Value.Uint64()
+		}
+		return 0
+	}
+	return runtimeGauges{
+		heapObjectBytes: get(0),
+		totalBytes:      get(1),
+		heapObjects:     get(2),
+		gcCycles:        get(3),
+		goroutines:      get(4),
+	}
 }

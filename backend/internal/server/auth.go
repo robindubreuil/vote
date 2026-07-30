@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,6 +18,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// randRead is the package-level CSPRNG seam, mirroring security.randRead so
+// the cookie-nonce failure path can be exercised without provoking a real
+// kernel-entropy fault. Production code never reassigns it; only tests do.
+var randRead = rand.Read
 
 const (
 	dashboardCookieName = "vote_admin"
@@ -82,17 +88,28 @@ func (a *dashboardAuth) enabled() bool { return a != nil }
 // expiry) and returns "payload.signature" both base64url-encoded. The nonce
 // makes each minting unique; the signature binds the expiry so a leaked
 // cookie cannot have its lifetime extended without the secret.
-func (a *dashboardAuth) signCookie(expiresAt time.Time) string {
+//
+// R10: the nonce is sourced from the kernel CSPRNG and a read failure is
+// propagated rather than swallowed. The previous implementation logged the
+// error and continued with an all-zero nonce, which made signCookie
+// deterministic over (secret, expiry-second): two logins within the same
+// second minted byte-identical cookies, defeating the per-token revocation
+// granularity S4 depends on. This is consistent with B14's "fail loud"
+// policy for the rest of the secret-minting surface (GenerateID /
+// GenerateToken panic on the same condition); the HTTP handler turns the
+// error into a 500 instead of a panic so the classroom-serving process
+// stays up.
+func (a *dashboardAuth) signCookie(expiresAt time.Time) (string, error) {
 	nonce := make([]byte, dashboardNonceBytes)
-	if _, err := rand.Read(nonce); err != nil {
-		slog.Error("Failed to generate dashboard cookie nonce", "error", err)
+	if _, err := randRead(nonce); err != nil {
+		return "", fmt.Errorf("dashboard cookie nonce: %w", err)
 	}
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
 	payload := dashboardCookieVal + "." + hex.EncodeToString(nonce) + "." + exp
 	mac := hmac.New(sha256.New, a.secret)
 	mac.Write([]byte(payload))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return payload + "." + sig
+	return payload + "." + sig, nil
 }
 
 // verifyCookie validates the signature, the expiry, AND that the cookie has
@@ -243,8 +260,14 @@ func (s *Server) handleDashboardLogin(c *gin.Context) {
 	s.hub.Security.ClearFailedJoin(dashKey)
 
 	expiresAt := time.Now().Add(s.auth.maxAge)
+	cookie, err := s.auth.signCookie(expiresAt)
+	if err != nil {
+		slog.Error("Refusing to mint dashboard cookie", "error", err, "remote", c.ClientIP())
+		c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(loginInternalErrorHTML))
+		return
+	}
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie(dashboardCookieName, s.auth.signCookie(expiresAt), int(s.auth.maxAge.Seconds()), "/dashboard", "", shouldUseSecureCookie(c.Request), true)
+	c.SetCookie(dashboardCookieName, cookie, int(s.auth.maxAge.Seconds()), "/dashboard", "", shouldUseSecureCookie(c.Request), true)
 	c.Redirect(http.StatusFound, "/dashboard")
 }
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,10 @@ import (
 	"vote-backend/internal/config"
 	"vote-backend/internal/hub"
 )
+
+// errTestCSPRNGFailure is the deterministic error returned by the randRead
+// seam in the R10 cookie-nonce tests. Mirrors security.errTestCSPRNG.
+var errTestCSPRNGFailure = errors.New("simulated CSPRNG failure (test)")
 
 func newTestServer(t *testing.T, secret string) *Server {
 	t.Helper()
@@ -534,7 +539,7 @@ func lineStartsWith(body, prefix string) bool {
 // minting is unique (nonce).
 func TestCookieSigningRoundTrip(t *testing.T) {
 	a := newDashboardAuth("secret-one", time.Hour)
-	token := a.signCookie(time.Now().Add(time.Hour))
+	token := mustSign(t, a, time.Now().Add(time.Hour))
 	if !a.verifyCookie(token) {
 		t.Error("valid token should verify")
 	}
@@ -544,20 +549,32 @@ func TestCookieSigningRoundTrip(t *testing.T) {
 		t.Error("token signed with a different secret must not verify")
 	}
 
-	expired := a.signCookie(time.Now().Add(-time.Minute))
+	expired := mustSign(t, a, time.Now().Add(-time.Minute))
 	if a.verifyCookie(expired) {
 		t.Error("expired token must not verify")
 	}
 
 	// Each minting produces a unique cookie (nonce). Without this,
 	// revoking one login within the same second would revoke them all.
-	t2 := a.signCookie(time.Now().Add(time.Hour))
+	t2 := mustSign(t, a, time.Now().Add(time.Hour))
 	if t2 == token {
 		t.Error("two signCookie calls must produce distinct tokens (nonce)")
 	}
 	if !a.verifyCookie(t2) {
 		t.Error("second token should also verify")
 	}
+}
+
+// mustSign is a test helper around signCookie that fatals on the CSPRNG
+// error path (R10) so existing tests keep the happy-path shape after the
+// signature gained a second return value.
+func mustSign(t *testing.T, a *dashboardAuth, expiresAt time.Time) string {
+	t.Helper()
+	tok, err := a.signCookie(expiresAt)
+	if err != nil {
+		t.Fatalf("signCookie: %v", err)
+	}
+	return tok
 }
 
 // TestShouldUseSecureCookie pins the loopback heuristic. S9: the decision
@@ -675,4 +692,75 @@ func TestPurgeRevokedRespectsMaxAgeChange(t *testing.T) {
 		t.Error("2h-old entry must be purged under a 1h maxAge")
 	}
 	shortLived.mu.Unlock()
+}
+
+// TestSignCookieFailsOnCSPRNGFailure pins the R10 contract: a kernel CSPRNG
+// read failure must surface as an error from signCookie, NOT be swallowed
+// into an all-zero nonce. The previous implementation logged the error and
+// continued, making signCookie deterministic over (secret, expiry-second)
+// so two logins within the same second minted byte-identical cookies and
+// defeated the per-token revocation granularity S4 relies on. This mirrors
+// B14's fail-loud policy for the rest of the secret-minting surface
+// (security.GenerateID / GenerateToken panic on the same condition).
+func TestSignCookieFailsOnCSPRNGFailure(t *testing.T) {
+	orig := randRead
+	randRead = func([]byte) (int, error) {
+		return 0, errTestCSPRNGFailure
+	}
+	t.Cleanup(func() { randRead = orig })
+
+	a := newDashboardAuth("secret", time.Hour)
+	tok, err := a.signCookie(time.Now().Add(time.Hour))
+	if err == nil {
+		t.Fatalf("signCookie should fail on CSPRNG failure, got token %q", tok)
+	}
+	if tok != "" {
+		t.Errorf("signCookie should return empty token on failure, got %q", tok)
+	}
+}
+
+// TestSignCookieRefusesZeroNonceByDistinctness is the functional guarantee
+// R10 protects: under a healthy CSPRNG, two mintings in the SAME second
+// must produce distinct cookies (nonce varies). The buggy zero-nonce path
+// collapsed them. Runs many iterations within one second to drive the
+// "same expiry-second" case hard.
+func TestSignCookieRefusesZeroNonceByDistinctness(t *testing.T) {
+	a := newDashboardAuth("secret", time.Hour)
+	seen := make(map[string]struct{}, 64)
+	exp := time.Now().Add(time.Hour)
+	for i := 0; i < 64; i++ {
+		tok := mustSign(t, a, exp) // same second for most iterations
+		if _, dup := seen[tok]; dup {
+			t.Fatalf("cookie %q minted twice (nonce not varying — zero-nonce regression)", tok)
+		}
+		seen[tok] = struct{}{}
+	}
+}
+
+// TestDashboardLoginCSPRNGFailureReturns500 wires R10 end-to-end through
+// the login handler: when the CSPRNG seam fails, POST /dashboard/login
+// must respond 500 (and issue NO cookie) rather than minting a zero-nonce
+// cookie or panicking. The dashboard is an optional admin feature, so the
+// classroom-serving process must stay up while refusing to mint.
+func TestDashboardLoginCSPRNGFailureReturns500(t *testing.T) {
+	orig := randRead
+	randRead = func([]byte) (int, error) {
+		return 0, errTestCSPRNGFailure
+	}
+	t.Cleanup(func() { randRead = orig })
+
+	srv := newTestServer(t, "s3cr3t")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/dashboard/login", strings.NewReader("password=s3cr3t"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when CSPRNG fails, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == dashboardCookieName {
+			t.Errorf("no cookie should be minted on CSPRNG failure, got %s=%s", c.Name, c.Value)
+		}
+	}
 }

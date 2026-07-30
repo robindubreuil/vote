@@ -74,3 +74,32 @@ button:hover { background:#3a6cef; }
 </form>
 </body>
 </html>`
+
+// loginInternalErrorHTML is served when the server cannot mint a session
+// cookie (e.g. the kernel CSPRNG is unavailable, R10). Distinct from
+// loginFailedHTML so an operator seeing a 500 knows it is a server fault,
+// not a wrong password — and so a brute-forcer gets no signal either way.
+const loginInternalErrorHTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Tableau de bord — erreur</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+  background:#0f1115; color:#e6e6e6; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+.card { background:#1a1d24; border:1px solid #2a2f3a; border-radius:12px; padding:2rem; width:100%; max-width:360px; text-align:center; }
+h1 { margin:0 0 .5rem; font-size:1.25rem; font-weight:600; }
+p { margin:0; color:#8a93a6; font-size:.875rem; line-height:1.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Erreur temporaire</h1>
+    <p>Le service ne peut pas établir de session pour le moment. Réessayez dans un instant.</p>
+  </div>
+</body>
+</html>`

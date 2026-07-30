@@ -288,7 +288,15 @@ func (s *Server) Serve(l net.Listener) error {
 	return nil
 }
 
+// Shutdown gracefully closes the HTTP server. If Serve was never called (e.g.
+// Run failed at net.Listen), s.srv is nil and the dereference would panic —
+// R9: that panic masks the real startup error in the logs and turns a clean
+// "exit 1 with a clear message" into a stack trace, because main's shutdown
+// block runs unconditionally for both the signal path and the errCh path.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.srv == nil {
+		return nil
+	}
 	return s.srv.Shutdown(ctx)
 }
 
