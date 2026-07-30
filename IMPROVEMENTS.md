@@ -5,184 +5,272 @@ doable with high quality inside one conversation.
 
 Status legend: `[ ]` pending · `[~]` in progress · `[x]` done
 
-Sessions 1–17 (audit rounds 1, 2 & 3-head) are archived in
-[`IMPROVEMENTS-DONE.md`](./IMPROVEMENTS-DONE.md). The findings below are the
-remainder of **audit round 3** — a fresh pass over areas where subtle residual
-issues survived the prior sessions. Item codes are prefixed `R` (round 3) to
-avoid colliding with the codes already used in the archived log.
+Sessions 1–21 (audit rounds 1, 2 & 3) are archived in
+[`IMPROVEMENTS-DONE.md`](./IMPROVEMENTS-DONE.md). The findings below are
+**audit round 4** — a fresh end-to-end pass over the now-hardened codebase. Round
+4 surfaced a small number of residual issues that survived the prior sessions;
+they cluster naturally into five conversation-sized sessions. Item codes keep
+their category prefix (S = security, F = frontend, R = round-3 residual backend,
+B = backend) and continue each series (the archived log ends at S12, F22, R14),
+so there is no code collision with anything already done.
 
 ---
 
-## Session 18 — Graceful shutdown under load
+## Session 22 — Trainer auth-chain hardening  ✓
 
-One architectural fix plus the test coverage that would have caught it. Shutdown
-is currently ordered backwards relative to Go's documented pattern, which leaves
-a window for stuck sockets and (under `-race`) a `sync.WaitGroup` contract
-violation.
+The headline of round 4. Two coupled bugs in the trainer-join path that together
+collapse S1's takeover protection. S14 makes live-session discovery cheap; S13
+is the payoff. Both touch `security.go` + `hub.go` + the join handlers, so fixing
+them together keeps the auth-chain reasoning in one head.
 
-- [x] **R2** [High] The hub drains *before* the HTTP listener closes, so new
-  WebSocket dials are accepted throughout the drain. `main.go:76` calls
-  `h.Shutdown()` before `main.go:82` calls `srv.Shutdown()`, and
-  `handleWebSocket` (`server.go:358-427`) never checks `hub.Context().Err()`
-  before upgrading / calling `client.Start()` → `wg.Add(2)` (`client.go:123`).
-  Two consequences: (1) Go forbids a positive-delta `Add` concurrent with `Wait`
-  when the counter is zero ("sync: WaitGroup is reused before previous Wait has
-  returned") — latent today only because no test loads `main.go`'s shutdown
-  path; (2) hijacked WS conns aren't tracked by `http.Server.Shutdown` (Go docs),
-  so a reconnect in the drain window upgrades successfully, its `writePump` exits
-  on `ctx.Done`, but its `readPump` blocks in `ReadMessage` until `pongWait`
-  (70 s) — a "connected" socket that delivers no state, freezing a 30-student
-  class on every deploy. **Fix:** (a) in `main.go`, stop accepting (close the
-  listener / `srv.Shutdown`) **before** `h.Shutdown()`; (b) add a drain guard at
-  the top of `handleWebSocket` — `if s.hub.Context().Err() != nil { 503 }`
-  *before* `AcquireIPSlot`/`Upgrade`; (c) add a SIGTERM-under-load integration
-  test running under `-race` (the existing `shutdown_test.go` exercises
-  `Hub.Shutdown()` in isolation, which is why this is latent).
-- [x] Tests: `TestShutdownRejectsNewUpgradesDuringDrain` (assert a dial during
-  drain gets 503, not an upgrade), `TestShutdownJoinsAllGoroutinesUnderLoad`
-  (assert no WaitGroup panic and all client goroutines exit under `-race`),
-  `TestShutdownClosesListenerFirst` (ordering contract). Wire into
-  `backend/integration/` so `main.go`'s real path is covered.
-
----
-
-## Session 19 — Frontend reconnect & lifecycle edge cases
-
-A cluster of state-desync bugs on reconnect / leave / page-reload. They share a
-root cause: client-side lifecycle assumes the *first* event of a kind is the
-*only* event, so second-order paths (leave→rejoin, reload-reconnect, async
-rejection) reset or fail to re-bind state.
-
-- [x] **R3** [High] A stagiaire permanently loses offline/online reconnect
-  awareness after leaving one session and joining another without a reload.
-  `_bindOnlineEvents()` runs only in the `VoteClient` constructor
-  (`shared/websocket-client.js:60-72`); `close()` calls `_unbindOnlineEvents()`
-  (`:225`). Stagiaire `leaveSession` calls `client.close()` but never nulls the
-  module-level `client` (`stagiaire/handlers.js:627-630`), and
-  `connectToSession` reuses the existing instance
-  (`stagiaire/websocket.js:73-78`); `connect()` (`:82`) does **not** re-bind the
-  online/offline listeners. After a leave→rejoin, a classroom wifi drop burns
-  reconnect attempts against a dead NIC with no fast-retry on `online` — exactly
-  the regression FH1/FH2 were built to prevent. (Formateur avoids this by
-  nulling + recreating the client in `closeClient`/`initClient`.) **Fix:** rebind
-  in `connect()` (`this._bindOnlineEvents()` is idempotent), or expose a
-  `resetClient()` from `stagiaire/websocket.js` that nulls `client` and call it
-  from `leaveSession`.
-- [x] **R6** [Medium] The Escape-to-leave shortcut is never attached when a
-  trainer creates a session from the landing page. `attachAppKeyboardShortcuts`
-  is called only inside the `savedSessionCode` branch (`formateur/main.js:82`),
-  i.e. only on reload with a persisted session; the `session_created` handler
-  (`formateur/websocket.js:120-164`) never wires it. C3's fix (moving the
-  shortcut to the app tracker so it survives `cleanupAllListeners`) is therefore
-  only effective on the reload path — the *most common* flow (land → Créer) has
-  no working Escape shortcut. The handler already self-guards on
-  `state.sessionCode`, so attaching it is safe. **Fix:** call
-  `attachAppKeyboardShortcuts` from the `session_created` handler behind a
-  one-shot guard (or hoist the call to module top-level in `main.js` before the
-  `if/else`).
-- [x] **R7** [Medium] A trainee's game high score and streak are silently wiped
-  on a page reload mid-session. `session_joined` resets them when
-  `state.appState === AppState.JOINING` (`stagiaire/websocket.js:110-113`); a
-  reload rebuilds state with `appState = JOINING` (`stagiaire/state.js`). F15
-  (archived) made reload auto-reconnect seamlessly via sessionStorage, so the
-  reset now fires on a reconnect, contradicting CLAUDE.md's "Persists across
-  sessions and reconnects". A PWA update or accidental reload erases progress and
-  drops difficulty to level 1. **Fix:** skip `resetHighScore()`/`saveStreak(0)`
-  when an existing `vote_stagiaire_id` in sessionStorage signals a
-  reconnect-to-same-session rather than a first join (or move the reset to fire
-  only on an explicit join-form submit).
-- [x] **R8** [Medium] A server-rejected rename has no UI rollback.
-  `handleEditName` commits `state.prenom`, persists it, closes the modal, and
-  renders — all before the server responds (`stagiaire/handlers.js:476-518`); the
-  `name_updated` handler ignores `msg.name` (`stagiaire/websocket.js:228-232`).
-  `UpdateStagiaireName` performs an authoritative normalised-name collision check
-  under the session lock (`vote/manager.go:528-532`) and can return
-  `ErrNameInUse` in the same TOCTOU window CC2 identified for joins. On rejection
-  the trainee's UI shows the rejected name while the trainer still sees the old
-  one, the modal is already closed, and the only signal is a 5 s toast.
-  **Fix:** don't set `state.prenom` optimistically — set it from `msg.name` in
-  the `name_updated` handler; on `error`, keep `prenomEdit = true` so the modal
-  stays open with the invalid input for correction.
-- [x] Tests: `websocket-client.test.js` (+rebind-on-reconnect after close, R3),
-  `formateur/websocket.test.js` / a `main.js` test (+Escape attached on
-  `session_created`, R6), `stagiaire/websocket.test.js` (+high score preserved
-  on reload-reconnect when `vote_stagiaire_id` present, R7), `stagiaire/
-  handlers.test.js` (+rename keeps modal open / leaves `prenom` untouched on
-  server error, R8). `npm test` green; `npm run build` clean.
+- [x] **S13** [High] Post-disconnect trainer hijack using only the public session
+  code. The S1 trainer-token gate (`hub.go:418-438`) runs *only* when
+  `conns.Trainer != nil`. Once the trainer's `readPump` exits,
+  `unregisterClient` sets `conns.Trainer = nil` (`hub.go:706`), opening an empty
+  slot any client with the **public** 3-char code (printed in every stagiaire's
+  QR) can claim with no token. Worse, the recovery path re-emits the original
+  token to the claimant (`hub.go:479-483`), and `CreateSession` mints it once and
+  never rotates it — so the attacker now holds the same token as the legitimate
+  trainer and can take it back indefinitely. CLAUDE.md's "the legitimate trainer
+  can always take it back" assurance is false against a malicious stagiaire
+  during a classroom wifi flap (they gain full session control: see every
+  individual vote, reveal/change answers, start/close votes). **Fix:** require
+  the trainer token whenever one has been minted for the session (always true
+  post-`CreateSession`), even on the empty-slot recovery path; stop re-emitting
+  `trainerToken` to unauthenticated claimants (an empty slot + no token should
+  behave like `ErrSessionNotFound`, not a free takeover).
+- [x] **S14** [Medium] Per-message join attempts bypass the exponential backoff
+  (S2 residual). `CheckJoinRateLimit` — the backoff *enforcer* — is called in
+  exactly two places: the WS upgrade (`server.go:389`) and dashboard login
+  (`auth.go:245`). It is **never** called inside `handleTrainerJoin` /
+  `handleStagiaireJoin`; `SendErrorWithBackoff` only *accumulates* backoff state
+  (`LastBackoffUntil`) that nothing on an established connection reads. The only
+  in-connection bound is the per-client message rate (10/s, burst 20). A single
+  upgraded WebSocket can probe `stagiaire_join` / `trainer_join` against
+  arbitrary codes at 10/s — the ~12,167-code space is enumerable in ~20 min from
+  one connection (the oracle: `"Session introuvable"` vs proceeds). Live codes
+  feed S13. **Fix:** call `CheckJoinRateLimit(c.IP)` at the top of both join
+  handlers (before the advisory lookups), backing off on rejection — or block
+  re-join attempts on a connection whose IP is already in backoff.
+- [x] Tests: `TestEmptyTrainerSlotRequiresToken` (S13 — drain the trainer via
+  `readPump` exit, assert a tokenless `trainer_join` is rejected, assert the
+  legit-token holder still recovers), `TestTrainerTokenNeverReEmittedToTokenlessClaim`
+  (S13 — recovery path does not hand out the token to an unauthenticated
+  claimant), `TestJoinHandlerEnforcesBackoff` (S14 — prime an IP into backoff,
+  assert `stagiaire_join`/`trainer_join` messages on an established connection
+  are rejected while the IP is in the backoff window). `go test -race ./...`
+  green.
 
 ---
 
-## Session 20 — Backend robustness & security cluster
+## Session 23 — Frontend trainer event-wiring
 
-Four small, independent, hardening fixes. Each is isolated and verifiable on its
-own; each was missed by a prior session that touched neighbouring code.
+Two independent bugs where formateur buttons don't behave, both invisible to the
+existing tests because they mock out the piece that fails in production. Same
+file cluster (`formateur/websocket.js`, `handlers.js`, `renderers.js`), same fix
+shape (re-check the element after it's in the DOM / check the send return value).
 
-- [x] **R9** [Medium] `Server.Shutdown` nil-pointer panics when startup failed
-  at `net.Listen`. If listen fails, `s.srv` stays nil, `Run` returns to `errCh`,
-  and `main`'s shutdown block calls `s.srv.Shutdown(ctx)`
-  (`server.go:291-293`) → panic, which masks the real listen error in the logs
-  and turns a clean "exit 1 with a clear message" into a stack trace. **Fix:**
-  guard `Server.Shutdown` — `if s.srv == nil { return nil }` (or return the
-  stored startup error).
-- [x] **R10** [Medium] The dashboard cookie mints an all-zero nonce on CSPRNG
-  failure, contradicting B14's "fail loud" policy. `auth.go:85-96` only `slog`
-  the `rand.Read(nonce)` error and continues with `nonce` left zeroed; B14
-  (archived) deliberately removed time-derived CSPRNG fallbacks and panics in
-  `security.GenerateID`/`GenerateToken` because predictable secrets collapse S1
-  (trainer takeover) and S6/S12 (reclaim) — the auth nonce was missed. With a
-  zero nonce the HMAC payload `v1.<nonce>.<exp>` is deterministic over
-  `(secret, exp-second)`, so two logins within the same second produce
-  byte-identical cookies, defeating per-token revocation granularity (S4).
-  **Fix:** return the error (or panic via `security.failCSPRNG`) and refuse to
-  mint — one-line consistency with the rest of the secret-minting surface.
-- [x] **R11** [Low] The backoff cap is applied *before* the +25% jitter, so the
-  real maximum is `MaxBackoffMs × 1.25 = 375 s` (6.25 min), not the documented 5
-  min. `security.go:137-153` caps then adds `jitterRange` (up to 75 s) on top.
-  **Fix:** apply the cap after jitter (and keep the existing 100 ms floor).
-- [x] **R12** [Low] `runtime.ReadMemStats` forces a stop-the-world on every
-  `/metrics` scrape and every 30 s dashboard poll (`metrics.go:93`). The
-  observability endpoint periodically stalls the very real-time path it
-  monitors, and the stall is invisible to `/metrics` itself. **Fix:** switch the
-  `go_mem_*` gauges to the non-STW `runtime/metrics` API
-  (`/memory/classes/heap/objects:bytes`, `/gc/heap/allocs:bytes`,
-  `/sched/goroutines:goroutines`), or drop `runtime.ReadMemStats` entirely.
-- [x] Tests: `TestServerShutdownNoPanicOnFailedListen` (R9), `TestSignCookieFailsOnCSPRNGFailure`
-  / extend the existing `randRead` seam to auth (R10), `TestBackoffRespectsMaxAfterJitter`
-  (R11 — table test at the cap), `TestMetricsGaugesDoNotSTW` or a benchmark
-  comparing `ReadMemStats` vs `runtime/metrics` (R12). `go test -race ./...` green.
+- [ ] **F23** [High] Formateur header buttons (`#leaveSessionBtn`,
+  `#openConnectionAidBtn`) never receive click listeners in production. In the
+  `session_created` handler, `renderFullLayout` emits an **empty**
+  `<header id="app-header">` (`renderers.js:157`), then `attachHeaderListeners`
+  runs (`websocket.js:133`) querying both buttons — they're `null`, so nothing
+  binds (`renderers.js:220,232` are `if`-guarded). Only afterward does
+  `updateHeader` (`websocket.js:155` → `renderers.js:198-210`) inject the
+  buttons. On the reload-with-saved-session path it's worse: `app-content`
+  already exists so the `if (!app-content)` block is skipped and
+  `attachHeaderListeners` is **never called at all** (`main.js:78-81`). Result:
+  the "Quitter" button and, critically, the QR / "Aide à la connexion"
+  classroom-display button are dead for the entire session — a documented
+  headline feature is unreachable via UI, and the aid button has no keyboard
+  alternative. Tests missed it: `websocket.test.js` mocks `updateHeader`
+  (`:52`), `renderers.test.js` pre-populates the header via `buildAppShell`
+  (`:48-58`), inverting the production ordering. **Fix:** call
+  `attachHeaderListeners` *after* `updateHeader`, or have `updateHeader` re-attach
+  whenever it injects fresh markup (guard so it doesn't double-bind on the
+  className-only fast-path at `renderers.js:193`).
+- [ ] **F24** [Medium] Formateur action handlers silently swallow clicks when the
+  WS is down. All four trainer actions (`startVote` / `closeVote` /
+  `revealAnswers` / `resetVote`) gate only on `if (!client)` then call
+  `client.send(...)` and **ignore its return value** (`handlers.js:188-256`).
+  Contrast the stagiaire side (`stagiaire/handlers.js:630-644`) which checks
+  `const success = client.send(...)` and restores the button + `showError` on
+  false. The buttons are disabled at render via `${!isConnected ? 'disabled' :
+  ''}`, but `onStatusChange` only calls `updateHeader` + `updateConnectionBanner`
+  + `publishState` — it never re-renders the config/vote card. During a
+  mid-session wifi flap the buttons keep their pre-drop enabled state; a click
+  silently drops, no error shows, and the trainer proceeds believing the vote is
+  closed/started/revealed while the message was never sent. **Fix:** mirror
+  `submitVote` — capture `const ok = client.send(...)`, `showError` on false —
+  in all four handlers; additionally have `onStatusChange` re-render the card (or
+  cheaply toggle a `disabled` class on the action buttons) so the button state
+  tracks `state.connected` live.
+- [ ] Tests: `formateur/websocket.test.js` (+`attachHeaderListeners` runs after
+  `updateHeader` on `session_created`, +called on the reload path, F23),
+  `formateur/handlers.test.js` (+each action handler shows `showError` and does
+  not proceed when `client.send` returns false, F24), a renderer test asserting
+  `updateHeader` re-attaches when it injects fresh markup (F23).
+  `npm test` green; `npm run build` clean.
 
 ---
 
-## Session 21 — Frontend polish
+## Session 24 — Identity & registration invariants
 
-Two small, low-risk cleanups that close a drift vector and unlock a
-backend-supported feature the UI currently blocks.
+Two state-invariant violations in the join/register path, both missed by prior
+sessions that touched neighbouring code. They share the join→`registerClient`
+area, so fixing them together keeps the invariant reasoning local. Both are
+correctness bugs that degrade ranking/leaderboard integrity or leak resource-cap
+slots.
 
-- [x] **R13** [Low] The live `connected_count` update duplicates the pluralization
-  logic F16 (archived) extracted into `formatConnectedCount` precisely so the
-  two surfaces couldn't drift. `formateur/websocket.js:176-177` still hardcodes
-  `stagiaire${s} connecté${s}` inline; the initial render in `renderConfigHTML`
-  (`formateur/renderers.js:476`) uses the helper. They agree today, but the whole
-  point of F16 was to make drift impossible. **Fix:** replace the inline string
-  with `formatConnectedCount(state.connectedCount)`.
-- [x] **R14** [Low/Medium] Re-reveal (correcting the answer key) is unreachable
-  from the UI despite full backend support. `RevealAnswers` is explicitly
-  idempotent (BL2/BL3, archived): re-clicking "Révéler" reverses the previously
-  applied scores and applies the new ones so the trainer can change
-  `correctColors` between reveals. But `renderVoteHTML`'s button matrix removes
-  the reveal button entirely once `state.revealed === true`
-  (`formateur/renderers.js:688-700`), and the reveal checkbox section
-  (`renderCompetitiveSectionHTML`, `:709`) is gated on `!state.revealed`. A
-  trainer who marks the wrong correct colors and reveals cannot fix it — the
-  scoreboard shows wrong scoring for the whole class, and the only recovery is
-  "New vote" (which resets the round). **Fix:** after reveal, keep the reveal
-  section visible (with the current `correctColors` pre-checked) and keep the
-  "Révéler" button alongside "New vote". The backend already handles re-reveal
-  correctly.
-- [x] Tests: `formateur/renderers-snapshot.test.js` (+reveal section/button
-  persist after `state.revealed`, R14), `formateur/websocket.test.js`
-  (+`connected_count` update uses `formatConnectedCount`, R13). `npm test` green;
-  `npm run build` clean.
+- [ ] **S15** [Medium] The reclaim-rename path skips the authoritative
+  name-collision check (CC2 residual). CC2 added an under-lock normalised-name
+  collision check, but only on the **fresh-join** branch (`manager.go:206-213`).
+  The reclaim branch (existing `stagiaireID` + valid token) overwrites
+  `session.Stagiaires[stagiaireID] = name` directly (`manager.go:198`) with no
+  re-check; the only guard is the advisory `IsNameInUse` check in the client
+  goroutine (`client.go:439-446`), exactly the TOCTOU pattern CC2 was built to
+  eliminate. Two stagiaires can end up sharing a normalised name, breaking the
+  uniqueness invariant that gates ranking / leaderboard tie-breakers (`Sort by
+  Name ASC` + `AssignCompetitionRanks`) and showing two indistinguishable rows in
+  the trainer view. **Fix:** extract the `NormalizeName` collision loop into a
+  shared helper and run it on both branches — including before the reclaim-path
+  rename, excluding the reclaimer's own `stagiaireID`, returning `ErrNameInUse`
+  on collision.
+- [ ] **R16** [Medium] Stale `conns.Stagiaires` entry when a connection re-joins
+  under a different ID. `Client.ID` is mutable across `stagiaire_join` messages
+  on the same connection (`client.go:400-434`: reset to `OriginalID`, then
+  overwritten to a presented `stagiaireId`). `registerClient` only cleans the
+  *current* ID slot (`hub.go:595-604`); `unregisterClient` only deletes the
+  *current* ID (`hub.go:710-711`). A client that registers as ID B after joining
+  as ID A leaves `conns.Stagiaires["A"]` → same `*Client` forever — inflating
+  `connected_count` (a phantom connected stagiaire the trainer can never clear)
+  and leaking a `MaxClientsPerSession` slot per cycle. A malicious client
+  cycling stolen `(id, token)` pairs can exhaust the session cap and block
+  legitimate joins with `"Session complète"`. **Fix:** in `registerClient`,
+  before assigning the new slot, scan for any prior registration of `client`
+  under a different ID and delete it (O(N) per join is fine — N is bounded by the
+  cap and the common case has zero matches).
+- [ ] Tests: `TestJoinStagiaireReclaimRenameRejectsCollision` (S15 — two clients
+  racing a reclaim-rename to the same normalised name; the second is rejected
+  under the lock), `TestRegisterClientRemovesPriorIDSlot` (R16 — same `*Client`
+  re-registered under a new ID; assert the old slot is gone and
+  `connected_count` doesn't double-count; assert the cap isn't exhausted by
+  cycling). `go test -race ./...` green.
+
+---
+
+## Session 25 — Persistence & metrics robustness
+
+Three low-risk integrity fixes in `stats.go` / `store.go`, all about
+histogram/counter correctness across clock jumps, corrupted state files, and
+crash durability. Coherent cluster, isolated from the rest of the codebase.
+
+- [ ] **R19** [Medium] Negative durations poison the session-duration histogram
+  persistently. `observeEndedSession` computes lifetime as
+  `time.Since(time.Unix(createdAt, 0))` (`stats.go:239-244`); `time.Unix(...)`
+  returns a `Time` with **no monotonic component**, so `time.Since` falls back to
+  wall-clock arithmetic. A backward NTP step / VM suspend-resume clock snap /
+  manual `date -s` yields a negative value; `Observe` then adds it to every
+  finite bucket and to `Sum`, `validHistogram` still passes, the poisoned state
+  flushes to `counters.json`, restores on reboot, and never self-heals short of
+  deleting the file. **Fix:** bound-check `d >= 0` before observing; optionally
+  also reject `v < 0` inside `Observe` to defend the invariant for any caller.
+- [ ] **R20** [Low] `validHistogram` does not validate `Sum`; NaN/Inf propagates
+  to `/metrics`. `validHistogram` (`store.go:429-441`) enforces count/bucket
+  invariants but never inspects `Sum`. A `counters.json` whose `sum` field is
+  `NaN`/`+Inf`/`-Inf` (disk corruption, manual editing, or accumulated R19
+  damage) unmarshals cleanly, passes validation, restores via `addLocked`
+  (`stats.go:124-130` does `h.sum += snap.Sum` → `x + NaN = NaN`), and surfaces in
+  `/metrics` as `..._sum NaN`, which breaks the in-tree dashboard's SVG sparkline
+  renderer (`dashboard.go:174` assumes finite values) and most alerting rules.
+  **Fix:** `if math.IsNaN(h.Sum) || math.IsInf(h.Sum, 0) { return false }` in
+  `validHistogram` — `LoadCounters` already rejects the whole file on validation
+  failure, which is the right recovery (start fresh).
+- [ ] **R21** [Low] `SaveCounters` / `AppendSample` perform no `fsync`; the
+  durability contract is overstated. `os.WriteFile` + `os.Rename` (counters) and
+  `O_APPEND` Write (stats log) never `Sync()` (`store.go:134-150, 200-261`).
+  Atomicity is at the **directory-entry** level only: a successful `Rename`
+  doesn't mean the data blocks are durable, so a power loss in the window between
+  `Rename` returning and the kernel flushing can leave `counters.json` empty or
+  referring to unwritten extents. CLAUDE.md and `store.go:14-17` claim "atomic,
+  no half-writes" — true at the rename level but overstated as durability. **Fix:
+  (a)** correct the comments to distinguish "atomic visibility" from
+  "crash-durability" (README's "worst-case crash loses at most one interval" is
+  the real guarantee), or **(b)** add `f.Sync()` between WriteFile and Rename for
+  `counters.json` only if true durability is wanted (accepting the per-flush I/O
+  cost — keep `stats.jsonl` un-fsynced since it's an append-only lossy history).
+- [ ] Tests: `TestObserveEndedSessionIgnoresNegativeDuration` (R19 — fake a
+  `createdAt` in the future; assert no bucket/sum mutation), `TestObserveRejectsNegative`
+  (R19 — if `Observe` gets the guard), `TestValidHistogramRejectsNaNSum` /
+  `TestValidHistogramRejectsInfSum` (R20 — assert `LoadCounters` discards the
+  file and starts fresh), a doc/comment assertion or no-op for R21. `go test
+  -race ./...` green.
+
+---
+
+## Session 26 — Lower-priority cleanup
+
+The remaining round-4 findings bundled into one tidy-up session. Each is small,
+isolated, and independently verifiable.
+
+- [ ] **R15** [Low/Medium] `handleWebSocket` post-upgrade ctx-race during
+  shutdown (narrows R2). R2's drain guard (`server.go:380`) only catches requests
+  that arrive *after* `h.ctx` cancels. Once a request passes the guard and
+  reaches `upgrader.Upgrade` (`server.go:426`), the conn is hijacked;
+  `http.Server.Shutdown` doesn't track hijacked conns, so `srv.Shutdown` can
+  return while `handleWebSocket`'s post-upgrade tail (`NewClient`,
+  `client.Start()` → `wg.Add(2)`) is still running. If that `wg.Add(2)` races
+  `h.wg.Wait()` at counter zero, Go panics (`sync: WaitGroup is reused before
+  previous Wait has returned`); the new client's `readPump` also isn't in the
+  `h.Connections` snapshot `Hub.Shutdown` iterates, so it blocks in
+  `ReadMessage` until `pongWait` (70 s). **Fix:** add a second guard immediately
+  before `client.Start()` — `if s.hub.Context().Err() != nil { conn.Close();
+  ReleaseIPSlot(clientIP); return }` — narrowing the race to a few instructions.
+- [ ] **R17** [Low] `UpdateGameScore` skips the `GameEnabled` recheck.
+  `handleReportGameScore` does an advisory `GetGameEnabled()` check, then calls
+  `UpdateGameScore` (`client.go:687-698`); the manager method takes
+  `session.mu.Lock` but only checks `Stagiaires[id]` existence, not `GameEnabled`
+  (`manager.go:643-664`). A concurrent `ResetVote` (sets `GameEnabled=false`) in
+  the race window leaves a stale score recorded against a disabled game for the
+  session lifetime, feeding the competitive leaderboard. Every other
+  stagiaire-state mutation re-validates under the session lock; this one doesn't.
+  **Fix:** add `if !session.GameEnabled { return ErrGameDisabled }` inside
+  `UpdateGameScore` after `session.mu.Lock`, mirroring `SubmitVote` /
+  `RevealAnswers`.
+- [ ] **S16** [Medium/Low] All per-IP protections collapse to a single shared
+  bucket behind the documented reverse proxy. `TrustedProxies` defaults to empty
+  (deliberate anti-spoofing), so `SetTrustedProxies([])` makes `c.ClientIP()`
+  return `RemoteAddr`, which behind the recommended Caddy deploy
+  (`reverse_proxy … localhost:8080`, `Caddyfile.example:15`) is `127.0.0.1` for
+  **every** client. With it unset, `VOTE_MAX_CONNECTIONS_PER_IP=50` becomes a
+  global 50-connection ceiling, the per-hour session cap is shared across all
+  trainers, and the S2 failed-join backoff is shared — so one attacker's
+  brute-force trips backoff that locks out every legitimate student (amplification
+  DoS). `.env.example:12` documents `TRUSTED_PROXIES=127.0.0.1` but leaves it
+  commented out, and `Caddyfile.example` never tells the operator to set it.
+  **Fix:** make `Caddyfile.example` explicitly require
+  `VOTE_TRUSTED_PROXIES=127.0.0.1` in the vote-server env (and uncomment it in
+  `.env.example` for the proxy case); optionally emit a startup `slog.Warn` if
+  `TrustedProxies` is empty while a high fraction of `ClientIP()` values are
+  loopback.
+- [ ] **F25** [Low] `isPermanentlyClosed` is never surfaced to the app. After
+  `maxReconnectAttempts` (default 50 ≈ 16 h backoff), `scheduleReconnect` flips
+  `isPermanentlyClosed = true` and logs to console (`websocket-client.js:200-204`)
+  — but no callback fires. The last `onStatusChange(false)` is all the app sees,
+  so the formateur reconnect banner (`updateConnectionBanner`, gated on
+  `state.everConnected && !state.connected`) shows "Reconnexion…" **forever**
+  after the client has internally given up. Practically unreachable, but if it
+  ever triggers (server permanently moved / IP blocked) the trainer stares at a
+  "reconnecting" banner with no signal to reload. **Fix:** add an
+  `onPermanentClose` callback to the `VoteClient` options, invoke it where the
+  flag is set, and wire the formateur/stagiaire banners to swap to a
+  recoverable "Connexion perdue — rechargez la page" state.
+- [ ] Tests: `TestShutdownRejectsUpgradeBetweenGuardAndStart` (R15 — under
+  `-race`, force the context to cancel after the guard but before `Start`),
+  `TestUpdateGameScoreRejectsWhenGameDisabled` (R17), a config/docs change for
+  S16 (+ optional `TestWarnsOnLoopbackWithoutTrustedProxies`),
+  `websocket-client.test.js` (+`onPermanentClose` fires once at the ceiling,
+  F25). `go test -race ./...` green; `npm test` green.
 
 ---
 

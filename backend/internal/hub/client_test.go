@@ -7,6 +7,7 @@ import (
 
 	"vote-backend/internal/config"
 	"vote-backend/internal/models"
+	"vote-backend/internal/security"
 )
 
 func initTestHandlers(c *Client) {
@@ -796,11 +797,116 @@ func TestTrainerTakeoverRequiresToken(t *testing.T) {
 	}
 }
 
-// TestTrainerRecoveryWithoutTokenAllowed covers the recovery path: when
-// there is NO active trainer (previous trainer disconnected), a join
-// without a token is allowed so the legitimate trainer can recover after
-// a device crash. This is not a takeover.
-func TestTrainerRecoveryWithoutTokenAllowed(t *testing.T) {
+// TestEmptyTrainerSlotRequiresToken covers S13: once the legitimate
+// trainer's readPump exits and unregisterClient clears conns.Trainer,
+// the empty slot must NOT be claimable with only the public 3-char
+// session code. The previous code skipped the trainer-token check on
+// the recovery path AND re-emitted the minted token in session_created,
+// so an attacker who knew the code (printed in every stagiaire's QR)
+// could take the slot, receive the token, and hold the session for the
+// rest of its life. The fix requires the per-session token on every
+// join to an already-minted Manager session; the legitimate trainer
+// always has it (sessionStorage, scoped to the tab), and an
+// unauthenticated claimant is rejected with the same "Session
+// introuvable" message the no-session branch uses (so the response
+// does not leak that the code is live).
+func TestEmptyTrainerSlotRequiresToken(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	// 1. Legitimate trainer creates the session and receives the token.
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCreated := drainUntil(t, trainer, "session_created")
+	sessionCode := sessionCreated["sessionCode"].(string)
+	token, _ := sessionCreated["trainerToken"].(string)
+	if token == "" {
+		t.Fatal("session_created must carry a trainerToken")
+	}
+	drainUntil(t, trainer, "connected_count")
+	time.Sleep(50 * time.Millisecond)
+
+	// 2. Drain the trainer via the real path: simulate readPump exit by
+	// routing through Unregister so unregisterClient sets
+	// conns.Trainer = nil — the S13 precondition. The Manager session
+	// (and its minted token) survives.
+	h.Unregister <- trainer
+	time.Sleep(50 * time.Millisecond)
+
+	h.mu.RLock()
+	active := h.Connections[sessionCode].Trainer
+	h.mu.RUnlock()
+	if active != nil {
+		t.Fatalf("precondition: trainer slot must be empty after unregister, got %v", active)
+	}
+	if _, ok := h.VoteManager.GetSession(sessionCode); !ok {
+		t.Fatal("precondition: Manager session must survive trainer disconnect")
+	}
+
+	// 3. Imposter (knows only the public code) tries to claim the empty
+	// slot WITHOUT the token → must be rejected with "Session
+	// introuvable" (not session_created, and not the active-takeover
+	// wording — collapsing the oracle).
+	imposter := &Client{ID: "imposter00001", Hub: h, Send: make(chan []byte, 20), IP: "10.0.0.99"}
+	initTestHandlers(imposter)
+	imposter.handleMessage(mustMarshal(t, models.Message{
+		Type:        "trainer_join",
+		SessionCode: sessionCode,
+	}))
+
+	rej := drainUntil(t, imposter, "error")
+	if msg, _ := rej["message"].(string); msg != "Session introuvable" {
+		t.Errorf("imposter rejection: got %q, want %q (S13: oracle-collapse)", msg, "Session introuvable")
+	}
+	// Drain anything else the imposter might have queued (defense).
+	drainOrTimeout(t, imposter)
+
+	h.mu.RLock()
+	active = h.Connections[sessionCode].Trainer
+	h.mu.RUnlock()
+	if active != nil {
+		t.Errorf("imposter must not claim the empty slot, got trainer=%v", active)
+	}
+
+	// 4. The legitimate trainer (carrying the persisted token) recovers
+	// the empty slot — the documented "trainer can always take it back"
+	// path. S13 keeps this working because the legit trainer has the
+	// token.
+	recovery := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(recovery)
+	recovery.handleMessage(mustMarshal(t, models.Message{
+		Type:         "trainer_join",
+		SessionCode:  sessionCode,
+		TrainerToken: token,
+	}))
+	drainUntil(t, recovery, "session_created")
+	drainUntil(t, recovery, "connected_count")
+
+	h.mu.RLock()
+	active = h.Connections[sessionCode].Trainer
+	h.mu.RUnlock()
+	if active != recovery {
+		t.Errorf("legitimate recovery with token must claim the slot, got %v", active)
+	}
+}
+
+// TestTrainerTokenNeverReEmittedToTokenlessClaim covers the second half
+// of S13: the recovery path must NOT hand the minted token to an
+// unauthenticated claimant. The previous code unconditionally ran the
+// "emit token in session_created" block once conns.Trainer was set, so
+// an attacker who claimed the empty slot received the same secret the
+// legitimate trainer held — defeating the token gate for every
+// subsequent reconnect. With the fix the unauthenticated claim is
+// rejected before the emit block runs.
+func TestTrainerTokenNeverReEmittedToTokenlessClaim(t *testing.T) {
 	cfg := &config.Config{
 		SessionTimeout:  time.Hour,
 		CleanupInterval: time.Hour,
@@ -814,30 +920,43 @@ func TestTrainerRecoveryWithoutTokenAllowed(t *testing.T) {
 	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
 	initTestHandlers(trainer)
 	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
-	sessionCode := drainUntil(t, trainer, "session_created")["sessionCode"].(string)
+	sessionCreated := drainUntil(t, trainer, "session_created")
+	sessionCode := sessionCreated["sessionCode"].(string)
 	drainUntil(t, trainer, "connected_count")
 	time.Sleep(50 * time.Millisecond)
 
-	// Simulate the trainer going away (unregister).
-	h.mu.Lock()
-	h.Connections[sessionCode].Trainer = nil
-	h.mu.Unlock()
+	// Drop the active trainer to open the empty-slot path.
+	h.Unregister <- trainer
+	time.Sleep(50 * time.Millisecond)
 
-	// A new connection without the token should recover the session — no
-	// active trainer to protect.
-	recovery := &Client{ID: "recovery000001", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
-	initTestHandlers(recovery)
-	recovery.handleMessage(mustMarshal(t, models.Message{
+	// Claimant with no token attempts recovery.
+	claimant := &Client{ID: "claimant00001", Hub: h, Send: make(chan []byte, 20), IP: "10.0.0.7"}
+	initTestHandlers(claimant)
+	claimant.handleMessage(mustMarshal(t, models.Message{
 		Type:        "trainer_join",
 		SessionCode: sessionCode,
 	}))
-	drainUntil(t, recovery, "session_created")
 
-	h.mu.RLock()
-	active := h.Connections[sessionCode].Trainer
-	h.mu.RUnlock()
-	if active != recovery {
-		t.Error("recovery without token should succeed when no active trainer is present")
+	// Drain every message the claimant received. None of them may be
+	// session_created (which would carry the token), and none may
+	// include a trainerToken field.
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case msg := <-claimant.Send:
+			var resp map[string]interface{}
+			if err := json.Unmarshal(msg, &resp); err != nil {
+				t.Fatalf("unmarshal claimant message: %v", err)
+			}
+			if resp["type"] == "session_created" {
+				t.Errorf("claimant received session_created: %v — S13 forbids token emission to unauthenticated claimants", resp)
+			}
+			if _, ok := resp["trainerToken"]; ok {
+				t.Errorf("claimant received trainerToken field: %v — S13 forbids token leakage", resp)
+			}
+		case <-deadline:
+			return
+		}
 	}
 }
 
@@ -1082,5 +1201,98 @@ func TestJoinStagiaireRetryResetsClientID(t *testing.T) {
 	stagiaires := sess.GetStagiaires()
 	if _, ok := stagiaires["origabc12345"]; !ok {
 		t.Errorf("OriginalID not registered: %v", stagiaires)
+	}
+}
+
+// TestJoinHandlerEnforcesBackoff covers S14: the per-IP exponential
+// backoff (S2) must apply to join attempts sent on an ESTABLISHED
+// WebSocket, not only to the WS upgrade handshake. Before S14 the only
+// in-connection bound was the per-client message rate (10/s burst 20),
+// so a single upgraded WebSocket could probe trainer_join /
+// stagiaire_join against arbitrary codes at that rate — the ~12,167-code
+// space enumerable in ~20 min from one connection, with the
+// "Session introuvable" oracle handing live codes to S13. The fix calls
+// Security.CheckJoinRateLimit(c.IP) at the top of both join handlers.
+func TestJoinHandlerEnforcesBackoff(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	// Prime the IP into backoff by racking up MaxFailedAttempts failed
+	// joins via the stagiaire handler. SendErrorWithBackoff accrues
+	// failures through RecordFailedJoin; after MaxFailedAttempts the
+	// next attempt is in the exponential backoff window.
+	const attackerIP = "203.0.113.7"
+	c := &Client{ID: "atk000000001", OriginalID: "atk000000001", Hub: h, Send: make(chan []byte, 30), IP: attackerIP}
+	initTestHandlers(c)
+
+	// Send MaxFailedAttempts bad-code stagiaire_joins. Each records a
+	// failure and replies with an error; drain them so the send buffer
+	// doesn't backpressure the loop. "PPP" is a syntactically-valid
+	// code (session alphabet excludes only I/O/Z) that won't exist on a
+	// fresh hub.
+	for i := 0; i < security.MaxFailedAttempts; i++ {
+		c.handleMessage(mustMarshal(t, models.Message{
+			Type:        "stagiaire_join",
+			SessionCode: "PPP", // syntactically valid, non-existent
+			Name:        "Attacker",
+		}))
+		if resp := drainUntil(t, c, "error"); resp["message"] != "Session introuvable" {
+			t.Fatalf("priming join %d: got %v, want 'Session introuvable'", i, resp["message"])
+		}
+	}
+
+	// Sanity: the IP is now in backoff. The next CheckJoinRateLimit
+	// call must deny it (not just record-then-allow).
+	if h.Security.CheckJoinRateLimit(attackerIP) {
+		t.Fatal("precondition: IP must be in backoff after MaxFailedAttempts failures")
+	}
+
+	// 1. stagiaire_join on the established connection is rejected by
+	// the per-handler S14 gate — the message never reaches the
+	// advisory "Session introuvable" path (which would emit a
+	// different error string).
+	c.handleMessage(mustMarshal(t, models.Message{
+		Type:        "stagiaire_join",
+		SessionCode: "PPP",
+		Name:        "Attacker",
+	}))
+	resp := drainUntil(t, c, "error")
+	if msg, _ := resp["message"].(string); msg != "Trop de tentatives — réessayez dans quelques minutes" {
+		t.Errorf("stagiaire_join under backoff: got %q, want backoff message", msg)
+	}
+
+	// 2. trainer_join on the same connection is also rejected by the
+	// per-handler S14 gate. Use a valid code shape so the rejection
+	// must come from the backoff check, not from the code validator.
+	c.handleMessage(mustMarshal(t, models.Message{
+		Type:        "trainer_join",
+		SessionCode: "PPP",
+	}))
+	resp = drainUntil(t, c, "error")
+	if msg, _ := resp["message"].(string); msg != "Trop de tentatives — réessayez dans quelques minutes" {
+		t.Errorf("trainer_join under backoff: got %q, want backoff message", msg)
+	}
+
+	// 3. A different IP is unaffected — backoff is per-IP, not global.
+	// This is the property that lets a shared-NAT classroom absorb one
+	// attacker's backoff without locking out everyone (the threat
+	// model from S2/S16).
+	other := &Client{ID: "other0000001", OriginalID: "other0000001", Hub: h, Send: make(chan []byte, 30), IP: "198.51.100.42"}
+	initTestHandlers(other)
+	other.handleMessage(mustMarshal(t, models.Message{
+		Type:        "stagiaire_join",
+		SessionCode: "PPP",
+		Name:        "Other",
+	}))
+	otherResp := drainUntil(t, other, "error")
+	if msg, _ := otherResp["message"].(string); msg == "Trop de tentatives — réessayez dans quelques minutes" {
+		t.Errorf("other IP wrongly throttled: backoff must be per-IP, not global (got %q)", msg)
 	}
 }
