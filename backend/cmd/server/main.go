@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -130,7 +131,12 @@ func runHealthCheck() int {
 	}
 	const timeout = 3 * time.Second
 	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get("http://127.0.0.1:" + port + "/livez")
+	livezURL := &url.URL{
+		Scheme: "http",
+		Host:   "127.0.0.1:" + port,
+		Path:   "/livez",
+	}
+	resp, err := client.Get(livezURL.String())
 	if err != nil {
 		return 1
 	}

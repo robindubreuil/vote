@@ -281,14 +281,11 @@ func (s *Store) AppendSample(sample Sample) error {
 	}
 
 	if fi, statErr := os.Stat(s.logPath); statErr == nil && fi.Size() >= s.maxLogBytes {
-		if err := s.logFile.Close(); err != nil {
-			// Close is best-effort on rotation: even if it fails the fd
-			// will be reaped by GC. Keep s.logFile nil so the reopen
-			// below establishes a fresh handle.
-			s.logFile = nil
-		} else {
-			s.logFile = nil
-		}
+		// Close is best-effort on rotation: even if it fails the fd
+		// will be reaped by GC. Keep s.logFile nil so the reopen
+		// below establishes a fresh handle.
+		_ = s.logFile.Close()
+		s.logFile = nil
 		_ = os.Remove(s.logBackup)
 		if err := os.Rename(s.logPath, s.logBackup); err != nil {
 			// Rename failed: stats.jsonl is still on disk. Reopen it

@@ -1093,10 +1093,8 @@ func TestTrainerReconnectReceivesFullConfig(t *testing.T) {
 	}
 	if lab, ok := cfgMsg["labels"].(map[string]any); !ok {
 		t.Errorf("labels not replayed: %v", cfgMsg["labels"])
-	} else {
-		if lab["rouge"] != "Pomme" || lab["bleu"] != "Ciel" {
-			t.Errorf("labels mismatch: %v", lab)
-		}
+	} else if lab["rouge"] != "Pomme" || lab["bleu"] != "Ciel" {
+		t.Errorf("labels mismatch: %v", lab)
 	}
 }
 

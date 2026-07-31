@@ -249,7 +249,7 @@ func TestRecordFailedJoinBackoffOverflow(t *testing.T) {
 	// R11: the backoff ceiling is enforced AFTER jitter, so the
 	// observable maximum is exactly MaxBackoffMs (5 min), not
 	// MaxBackoffMs×1.25 (6.25 min) the pre-fix order produced.
-	if dur := attempt.LastBackoffUntil.Sub(time.Now()); dur > MaxBackoffMs*time.Millisecond {
+	if dur := time.Until(attempt.LastBackoffUntil); dur > MaxBackoffMs*time.Millisecond {
 		t.Errorf("backoff must not exceed MaxBackoffMs (%dms) after R11; got %v", MaxBackoffMs, dur)
 	}
 }

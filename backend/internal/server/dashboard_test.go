@@ -509,9 +509,11 @@ func parseMetricsReference(text string) map[string]float64 {
 			labels = "{" + line[brace+1:close] + "}"
 			rest = strings.TrimSpace(line[close+1:])
 		} else {
-			sp := strings.Index(line, " ")
-			name = line[:sp]
-			rest = line[sp+1:]
+			var found bool
+			name, rest, found = strings.Cut(line, " ")
+			if !found {
+				continue
+			}
 		}
 		var val float64
 		if _, err := fmt.Sscanf(rest, "%g", &val); err != nil {
