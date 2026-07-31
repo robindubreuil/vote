@@ -73,11 +73,32 @@ type pendingSend struct {
 // closing) are still delivered. The closing flag protects against
 // future sends from other goroutines, not against the deliberate
 // flush of this batch (CL1).
+//
+// R24: the done case makes a post-unregister flush a clean no-op.
+// Without it, a flush running after the client's readPump exited (and
+// writePump followed via done) would buffer the message into Send —
+// data that no live writePump will ever drain, and a misleading
+// "buffer full" log if the dead channel happens to be full. Selecting
+// on done (closed in readPump's defer) silently drops the message
+// instead, which is correct: the conn is dead and the client is gone.
 func (p pendingSend) flush() {
 	data, err := json.Marshal(p.msg)
 	if err != nil {
 		slog.Error("Marshal error", append([]any{"error", err}, p.client.logAttrs()...)...)
 		return
+	}
+	// R24: check done before attempting the send. A Go select with
+	// multiple ready cases picks randomly, so without this priority
+	// check a flush for a dead client (done closed, Send has room)
+	// would sometimes deliver into Send instead of no-op-ing. The
+	// check-then-send pattern guarantees no delivery when done is
+	// closed; the tiny TOCTOU window (done closes between the check
+	// and the send) is benign — at worst one message buffers into a
+	// dead channel.
+	select {
+	case <-p.client.done:
+		return
+	default:
 	}
 	select {
 	case p.client.Send <- data:

@@ -207,18 +207,24 @@ func TestReadSamplesRingBufferWrapOrder(t *testing.T) {
 }
 
 // TestReadSamplesScannerBufferSkipsPathologicallyLongLine pins the
-// recovery contract when a line exceeds scannerBufferSize: the scan
-// stops on that token but the call still returns whatever valid samples
-// were collected before. The torn line is silently dropped (same
-// behaviour as malformed lines); the next call resumes from the next
-// newline.
+// recovery contract when a line exceeds scannerBufferSize. The prior
+// bufio.Scanner implementation returned bufio.ErrTooLong and stopped
+// unrecoverably — every valid sample after the oversized line was
+// silently dropped until the file rotated to .1. The bufio.Reader
+// rewrite (R23) consumes the oversized line in bounded chunks and
+// resumes scanning at the next newline, so a (valid, huge, valid)
+// sequence returns BOTH valid samples. This test writes exactly that
+// sequence and asserts recovery; without R23 it would see only the
+// first sample.
 func TestReadSamplesScannerBufferSkipsPathologicallyLongLine(t *testing.T) {
 	s := newTestStore(t)
+	// Valid sample BEFORE the oversized line.
 	s.AppendSample(sample(time.Unix(1700000000, 0), 1, 0, 0, 0, 0, 0))
 
-	// Inject a line larger than scannerBufferSize (1 MiB). bufio.Scanner
-	// with our explicit buffer cap returns an error from Scan, which we
-	// log but don't propagate; the call returns the prior valid samples.
+	// Inject a line larger than scannerBufferSize (1 MiB). With
+	// bufio.Scanner this yielded bufio.ErrTooLong and Scan stopped
+	// unrecoverably; with bufio.Reader the line is consumed and
+	// discarded in bounded chunks, and scanning resumes.
 	f, err := os.OpenFile(s.logPath, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
@@ -233,12 +239,22 @@ func TestReadSamplesScannerBufferSkipsPathologicallyLongLine(t *testing.T) {
 	}
 	f.Close()
 
+	// Valid sample AFTER the oversized line — the one the old
+	// bufio.Scanner path silently dropped. This is the R23 regression.
+	s.AppendSample(sample(time.Unix(1700000001, 0), 2, 0, 0, 0, 0, 0))
+
 	got, err := s.ReadSamples(0)
 	if err != nil {
 		t.Fatalf("ReadSamples on log with oversized line: %v", err)
 	}
-	if len(got) != 1 || got[0].SessionsCreated != 1 {
-		t.Errorf("expected the 1 valid sample before the huge line, got %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("R23: expected 2 valid samples (before + after the huge line), got %d", len(got))
+	}
+	if got[0].SessionsCreated != 1 {
+		t.Errorf("sample before huge line: sc=%d, want 1", got[0].SessionsCreated)
+	}
+	if got[1].SessionsCreated != 2 {
+		t.Errorf("sample after huge line: sc=%d, want 2 (R23: recovery past oversized line)", got[1].SessionsCreated)
 	}
 }
 

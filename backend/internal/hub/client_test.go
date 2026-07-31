@@ -2,9 +2,14 @@ package hub
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"vote-backend/internal/config"
 	"vote-backend/internal/models"
 	"vote-backend/internal/security"
@@ -1429,4 +1434,192 @@ func TestRateLimitKeyStableAcrossIDCycles(t *testing.T) {
 			t.Errorf("after disconnect cleanup: %d rate buckets, want 0 (entry removed)", n)
 		}
 	})
+}
+
+// goroutinesIn returns the count of live goroutines whose current stack
+// contains fnName. Used by the R24 writePump-exit test to detect a
+// lingering writePump deterministically (rather than the noisy absolute
+// runtime.NumGoroutine count that includes GC/finalizer goroutines).
+func goroutinesIn(fnName string) int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Count(string(buf[:n]), fnName)
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+}
+
+// TestPendingSendFlushNoOpAfterDone covers R24: once done is closed
+// (readPump exited), a pendingSend.flush must be a clean no-op — no
+// delivery to Send (no live writePump to drain it), no panic, no block.
+// Without the done case in flush's select, the message would buffer into
+// the dead Send channel forever or log a misleading "buffer full" warning.
+func TestPendingSendFlushNoOpAfterDone(t *testing.T) {
+	c := &Client{
+		Send: make(chan []byte, 1),
+		done: make(chan struct{}),
+	}
+	close(c.done)
+
+	p := pendingSend{client: c, msg: map[string]any{"type": "test"}}
+	p.flush()
+
+	select {
+	case msg := <-c.Send:
+		t.Errorf("flush must not deliver to Send after done is closed (R24), got %s", msg)
+	default:
+	}
+}
+
+// TestPendingSendFlushDeliversWhenDoneOpen confirms the done case
+// doesn't suppress normal delivery: when done is still open and the
+// buffer has room, flush must deliver to Send as before.
+func TestPendingSendFlushDeliversWhenDoneOpen(t *testing.T) {
+	c := &Client{
+		Send: make(chan []byte, 2),
+		done: make(chan struct{}),
+	}
+	p := pendingSend{client: c, msg: map[string]any{"type": "ok"}}
+	p.flush()
+
+	select {
+	case msg := <-c.Send:
+		var resp map[string]any
+		if err := json.Unmarshal(msg, &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if resp["type"] != "ok" {
+			t.Errorf("delivered wrong message: %v", resp["type"])
+		}
+	default:
+		t.Error("flush must deliver when done is open and buffer has room")
+	}
+}
+
+// TestWritePumpExitsPromptlyOnEviction is the R24 integration test.
+//
+// Before R24, writePump's only exit paths were a write error, a ping
+// error (up to PingInterval away), or ctx cancel (shutdown). On a
+// per-client eviction (slow-buffer disconnect) or trainer takeover,
+// only markClosing + Conn.Close ran — writePump stayed parked on its
+// select with an empty Send buffer and only woke on the next pingTick.C
+// where the ping write failed on the dead conn. With PingInterval = 30s
+// (the default) that is a 30s goroutine + 512-entry Send-buffer linger
+// per evicted client. Under a reconnect storm at the resource caps
+// (200 stagiaires × 1000 sessions) this was a real transient spike.
+//
+// The fix adds case <-c.done to writePump's select; done is closed in
+// readPump's defer (LIFO: after Conn.Close). This test wires a real WS
+// connection, evicts it, and asserts writePump's goroutine exits within
+// a short bound — not PingInterval. Without R24 (PingInterval = 1h in
+// this test) the writePump goroutine would linger for up to 1 hour and
+// the test would time out.
+func TestWritePumpExitsPromptlyOnEviction(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Hour, // without R24, writePump lingers up to 1h
+		WriteTimeout:    time.Second,
+		AllowedOrigins:  []string{"*"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		clientID, ok := h.GenerateUniqueClientID()
+		if !ok {
+			conn.Close()
+			return
+		}
+		c := NewClient(h, conn, "127.0.0.1")
+		c.ID = clientID
+		c.Type = "trainer"
+		c.SessionID = "EVT" // valid 3-letter code from the safe alphabet
+		select {
+		case h.Register <- c:
+		case <-time.After(time.Second):
+			conn.Close()
+			return
+		}
+		c.Start()
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + srv.URL[len("http"):]
+
+	dialer := websocket.Dialer{HandshakeTimeout: 2 * time.Second}
+	wsConn, _, err := dialer.Dial(wsURL, http.Header{"Origin": []string{srv.URL}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	// Wait for the hub to register the client and start both pumps.
+	deadline := time.Now().Add(2 * time.Second)
+	var serverClient *Client
+	for time.Now().Before(deadline) {
+		h.mu.RLock()
+		if conns, ok := h.Connections["EVT"]; ok && conns.Trainer != nil {
+			serverClient = conns.Trainer
+		}
+		h.mu.RUnlock()
+		if serverClient != nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if serverClient == nil {
+		t.Fatal("client was not registered within 2s")
+	}
+
+	// Both pumps must be live at this point.
+	if n := goroutinesIn("writePump"); n != 1 {
+		t.Fatalf("precondition: expected 1 writePump goroutine, got %d", n)
+	}
+	if n := goroutinesIn("readPump"); n != 1 {
+		t.Fatalf("precondition: expected 1 readPump goroutine, got %d", n)
+	}
+
+	// Pump the client-side read so we observe the server-side close
+	// (otherwise the conn lingers in a TCP close-wait state).
+	go func() {
+		for {
+			if _, _, err := wsConn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Evict: markClosing + Conn.Close — the same path as trySend's
+	// slow-buffer eviction (client.go) and reconnect-by-ID takeover
+	// (hub.go).
+	serverClient.markClosing()
+	serverClient.Conn.Close()
+
+	// With R24: readPump exits (ReadMessage errors on closed conn) →
+	// defer closes done → writePump's case <-c.done fires → writePump
+	// exits. Both goroutines gone within milliseconds.
+	//
+	// Without R24: readPump exits but writePump lingers parked on its
+	// select — its only wake is pingTick.C at PingInterval (1 hour)
+	// where the ping write fails on the dead conn.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if goroutinesIn("writePump") == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := goroutinesIn("writePump"); n != 0 {
+		t.Errorf("writePump did not exit within 5s of eviction (R24): %d goroutine(s) still live "+
+			"(without R24 it would linger up to PingInterval=%v)", n, cfg.PingInterval)
+	}
 }

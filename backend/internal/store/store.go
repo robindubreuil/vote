@@ -26,6 +26,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"math"
@@ -318,17 +319,59 @@ func (s *Store) AppendSample(sample Sample) error {
 	return nil
 }
 
-// scannerBufferSize caps a bufio.Scanner's buffer growth so a single
-// pathological line (e.g. a corrupt line with no newline for many MB)
-// can't make ReadSamples allocate unboundedly. A normal sample is ~150 B;
-// samples that exceed this after a write-torn line are skipped, which is
-// the same recovery behaviour as the prior bytes.Split path.
+// scannerBufferSize caps the line length that ReadSamples will accept.
+// A normal sample is ~150 B; a line longer than this (disk corruption,
+// a torn multi-MB write, log injection) is consumed and discarded in
+// bounded chunks so scanning resumes at the next newline — genuinely,
+// not the unrecoverable bufio.Scanner stop that R23 fixed. The value
+// bounds both the bufio.Reader's internal buffer and the per-line
+// allocation budget.
 const scannerBufferSize = 1 << 20 // 1 MiB
 
+// readBoundedLine reads one line (up to and including '\n') from r and
+// returns the line without the trailing newline. Lines longer than the
+// reader's buffer size are consumed in bounded chunks and discarded — the
+// caller sees a nil slice and a nil error and continues to the next line.
+//
+// R23: the prior implementation used bufio.Scanner, which stops
+// unrecoverably on a token larger than its max buffer (bufio.ErrTooLong).
+// One corrupt line without an embedded newline therefore poisoned every
+// valid sample after it until the file rotated to .1. readBoundedLine
+// uses bufio.Reader.ReadSlice, which returns bufio.ErrBufferFull for an
+// oversized line; the discard loop consumes the remainder in buffer-sized
+// chunks (no unbounded allocation) and scanning resumes at the next
+// newline. The returned slice references the reader's internal buffer and
+// is valid only until the next read call — callers must parse it
+// immediately.
+func readBoundedLine(r *bufio.Reader) (line []byte, err error) {
+	chunk, err := r.ReadSlice('\n')
+	if err == bufio.ErrBufferFull {
+		// Oversized line: consume the remainder until the newline or
+		// EOF, then signal skip (nil data, nil error). The caller
+		// continues scanning — this is the recovery that Scanner could
+		// not do.
+		for {
+			if _, dErr := r.ReadSlice('\n'); dErr != bufio.ErrBufferFull {
+				break
+			}
+		}
+		return nil, nil
+	}
+	// Strip the trailing newline when present (ReadSlice includes it on
+	// a successful delimiter match; at EOF the last line may lack one).
+	if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
+		chunk = chunk[:len(chunk)-1]
+	}
+	return chunk, err
+}
+
 // ReadSamples returns up to limit most-recent samples (oldest→newest). When
-// limit <= 0 all available samples are returned. Malformed lines are skipped so
-// a torn write never poisons the whole history. Both the current log and its
-// rotated backup are read and merged in chronological order.
+// limit <= 0 all available samples are returned. Malformed lines are skipped
+// so a torn write never poisons the whole history. Lines longer than
+// scannerBufferSize (disk corruption, a stray dd, log injection) are also
+// skipped — and crucially, scanning resumes at the next newline instead of
+// stopping unrecoverably (R23). Both the current log and its rotated backup
+// are read and merged in chronological order.
 //
 // B2: the previous implementation read both files (~100 MB worst case after
 // years of sampling) fully into memory with os.ReadFile and parsed under
@@ -336,7 +379,7 @@ const scannerBufferSize = 1 << 20 // 1 MiB
 // goroutine stalled behind a slow read. This version snapshots the file
 // paths under s.mu (defending against a concurrent rotation that could
 // rename the live log away mid-read), releases the lock, then streams each
-// file line-by-line through a bufio.Scanner. When limit > 0 a fixed-size
+// file line-by-line through a bufio.Reader. When limit > 0 a fixed-size
 // ring buffer holds only the tail, bounding memory to O(limit) regardless
 // of file size.
 func (s *Store) ReadSamples(limit int) ([]Sample, error) {
@@ -365,33 +408,35 @@ func (s *Store) ReadSamples(limit int) ([]Sample, error) {
 			}
 			return nil, fmt.Errorf("store: read %s: %w", filepath.Base(p), err)
 		}
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), scannerBufferSize)
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 {
-				continue
+		// R23: bufio.Reader with ReadSlice recovers genuinely past an
+		// oversized line, unlike bufio.Scanner which stops unrecoverably
+		// on bufio.ErrTooLong. The buffer is sized to scannerBufferSize so
+		// a normal sample (≤ 1 MiB) is returned in one ReadSlice call;
+		// only lines exceeding that trigger the bounded discard loop.
+		reader := bufio.NewReaderSize(f, scannerBufferSize)
+		for {
+			line, readErr := readBoundedLine(reader)
+			if len(line) > 0 {
+				var sample Sample
+				if err := json.Unmarshal(line, &sample); err == nil && valid(sample) {
+					if ring != nil {
+						ring.push(sample)
+					} else {
+						out = append(out, sample)
+					}
+				}
 			}
-			var sample Sample
-			if err := json.Unmarshal(line, &sample); err != nil {
-				continue
+			if readErr != nil {
+				// An I/O error mid-read is non-fatal to history reads:
+				// return whatever we collected rather than failing the
+				// whole call. The append-only log is line-oriented and
+				// self-healing on the next successful write, so a
+				// transient read error shouldn't 500 the dashboard.
+				if readErr != io.EOF {
+					slog.Warn("stats log read error", "path", p, "error", readErr)
+				}
+				break
 			}
-			if !valid(sample) {
-				continue
-			}
-			if ring != nil {
-				ring.push(sample)
-			} else {
-				out = append(out, sample)
-			}
-		}
-		// An I/O error mid-scan is non-fatal to history reads: return
-		// whatever we collected rather than failing the whole call.
-		// The append-only log is line-oriented and self-healing on the
-		// next successful write, so a transient read error shouldn't
-		// 500 the dashboard.
-		if err := scanner.Err(); err != nil {
-			slog.Warn("stats log scan error", "path", p, "error", err)
 		}
 		f.Close()
 	}
