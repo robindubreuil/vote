@@ -12,11 +12,11 @@
 # (dpkg --print-architecture returns the emulated arch, so the resulting
 # .deb is named vote_<version>_arm64.deb automatically).
 #
-# Base: golang:1.24 (Debian bookworm). Bookworm ships nodejs 18, but the
-# frontend's Vite 8 / vitest 4 require node 20+ (engines); we layer node
-# 22 from NodeSource so `npm ci` resolves. The image is multi-arch
-# (manifest list), so buildx --platform linux/arm64 selects the arm64
-# variant and QEMU emulates it on the amd64 runner.
+# Base: golang:1.24 (Debian trixie). Trixie is the package's primary
+# target; it ships nodejs 22 + npm natively so no external repos are
+# needed. The image is multi-arch (manifest list), so buildx
+# --platform linux/arm64 selects the arm64 variant and QEMU emulates it
+# on the amd64 runner.
 #
 # The image is NOT pinned to a digest because (a) it is a build tool,
 # not a runtime — its compromise cannot affect the shipped server, only
@@ -24,13 +24,12 @@
 # reliably across arch matrixes. The runtime images (Dockerfile) ARE
 # digest-pinned (D16).
 
-FROM golang:1.24-bookworm
+FROM golang:1.24-trixie
 
 # Build dependencies for dpkg-buildpackage. debhelper-compat 13 matches
 # debian/compat (implicit via debhelper-compat in Build-Depends).
 # brotli is needed by frontend/scripts/compress-assets.js to emit the
-# .br sidecars. git is needed by debian/rules (gitCommit ldflag) and by
-# the NodeSource installer (verifies the apt repo).
+# .br sidecars. git is needed by debian/rules (gitCommit ldflag).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         debhelper-compat \
@@ -38,10 +37,8 @@ RUN apt-get update \
         brotli \
         git \
         ca-certificates \
-        curl \
-        xz-utils \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
