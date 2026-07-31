@@ -127,12 +127,14 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls vote_*_amd64.deb | head -1)
-          # apt install resolves Depends (adduser etc.); dpkg -i alone
-          # would fail on a missing runtime dep that the .deb declares.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ./"$DEB" >/dev/null
-          # postinst is --no-start (D19); start explicitly so the probe
-          # has something to hit. PORT=8080 is the shipped default.
+          # Install and capture full output (postinst failures land here).
+          sudo apt-get install -y ./"$DEB" || {
+            echo "::error::apt install failed; dumping dpkg status"
+            sudo dpkg --audit
+            sudo dpkg -L vote || true
+            exit 1
+          }
           sudo systemctl start vote
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8080/livez >/dev/null; then
