@@ -146,7 +146,7 @@ Two security findings, both in `internal/server/auth.go`, both verified. S17 is
 a real silent failure of a documented control in the recommended deploy; S18 is
 a constant-time discipline slip.
 
-- [ ] **S17** [Medium] Dashboard cookie loses its `Secure` flag behind the
+- [x] **S17** [Medium] Dashboard cookie loses its `Secure` flag behind the
   documented Caddy deploy. `backend/internal/server/auth.go:189-197`
   `shouldUseSecureCookie` derives its decision from `r.TLS` and `r.RemoteAddr`:
   loopback `RemoteAddr` → `Secure=false` (to let local dev persist the cookie
@@ -165,7 +165,7 @@ a constant-time discipline slip.
   true }` inside the loopback branch. Safe to trust that header because the
   loopback case already implies the dialer is in `TrustedProxies`. (Pair with
   HSTS set at Caddy.)
-- [ ] **S18** [Low] `subtle.ConstantTimeCompare` on the dashboard password leaks
+- [x] **S18** [Low] `subtle.ConstantTimeCompare` on the dashboard password leaks
   the secret length. `backend/internal/server/auth.go:252`:
   `subtle.ConstantTimeCompare([]byte(password), s.auth.secret)`.
   `ConstantTimeCompare` returns `0` **immediately** when `len(x) != len(y)` — it
@@ -177,11 +177,14 @@ a constant-time discipline slip.
   constant-time discipline slips. **Fix:** hash both sides and compare the fixed
   32-byte digests — `got := sha256.Sum256([]byte(password)); want :=
   sha256.Sum256(s.auth.secret); subtle.ConstantTimeCompare(got[:], want[:])`.
-- [ ] Tests: `auth_test.go` (+`shouldUseSecureCookie` returns true when
-  `RemoteAddr` is loopback and `X-Forwarded-Proto: https` is set; +false for
-  plain loopback dev; S17), (+password compare is constant-time across
-  mismatched lengths — exercised via a timing-tolerant property test or by
-  asserting the digest-compare path, S18). `go test -race ./...` green.
+- [x] Tests: `server/dashboard_test.go` (extended `TestShouldUseSecureCookie`
+  with loopback + `X-Forwarded-Proto`/`Forwarded` cases — true for `https`
+  behind a proxy, false for plain-HTTP dev; S17), (+`TestSecretMatches`
+  behavioural table + `TestSecretMatchesNoLengthOracle` timing-tolerant
+  property test verifying the at-length probe is not privileged by the length
+  short-circuit, asserted by temporarily reverting to the buggy direct compare
+  and confirming it fails; S18). `go test -race ./...` green; `go vet` /
+  `make fmt-check` clean.
 
 ---
 
