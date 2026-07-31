@@ -1296,3 +1296,137 @@ func TestJoinHandlerEnforcesBackoff(t *testing.T) {
 		t.Errorf("other IP wrongly throttled: backoff must be per-IP, not global (got %q)", msg)
 	}
 }
+
+// TestHandleUpdateNameRejectsTrainer covers B1: handleUpdateName was the
+// only mutation handler without a role gate. Today the fallthrough is
+// harmless (UpdateStagiaireName returns ErrStagiaireNotFound for a trainer
+// ID), but it is a single-point inconsistency a future refactor could turn
+// into a real privilege issue. The gate mirrors every other mutation
+// handler and makes the rejection explicit.
+func TestHandleUpdateNameRejectsTrainer(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu", "jaune"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	trainer := &Client{ID: "trainer1abcde", Hub: h, Send: make(chan []byte, 20), IP: "127.0.0.1"}
+	initTestHandlers(trainer)
+	trainer.handleMessage(mustMarshal(t, models.Message{Type: "trainer_join", SessionCode: "new"}))
+	sessionCode := drainUntil(t, trainer, "session_created")["sessionCode"].(string)
+
+	// trainer_join set c.Type = "trainer". A trainer (or pre-join
+	// anonymous client) must not mutate stagiaire state via update_name.
+	trainer.SessionID = sessionCode
+	trainer.handleMessage(mustMarshal(t, models.Message{
+		Type: "update_name",
+		Name: "Whatever",
+	}))
+
+	resp := drainUntil(t, trainer, "error")
+	if msg, _ := resp["message"].(string); msg == "" {
+		t.Fatalf("trainer update_name should be rejected with an error, got %v", resp)
+	}
+
+	// No stagiaire identity may have been created or mutated: the role
+	// gate must run before UpdateStagiaireName is even called.
+	session, ok := h.VoteManager.GetSession(sessionCode)
+	if !ok {
+		t.Fatal("session should exist")
+	}
+	if _, exists := session.GetStagiaires()[trainer.ID]; exists {
+		t.Errorf("trainer ID must not appear in Stagiaires after rejected update_name")
+	}
+}
+
+// TestRateLimitKeyStableAcrossIDCycles covers R22: readPump's defer calls
+// RemoveMessageRate(c.ID), but c.ID is mutable across stagiaire_join
+// messages (R1 resets it to OriginalID, then a presented ID overwrites
+// it). Keying the rate limiter by the mutable c.ID leaked earlier buckets
+// on disconnect (only the final c.ID's entry was removed) AND refreshed
+// the MaxBurstMessages budget per ID cycle. rateLimitKey() returns the
+// immutable OriginalID so one connection owns exactly one bucket.
+func TestRateLimitKeyStableAcrossIDCycles(t *testing.T) {
+	t.Run("rateLimitKey returns immutable OriginalID", func(t *testing.T) {
+		c := &Client{ID: "presented1234", OriginalID: "origabc12345"}
+		if got := c.rateLimitKey(); got != "origabc12345" {
+			t.Errorf("rateLimitKey = %q, want OriginalID %q", got, "origabc12345")
+		}
+		// Fallback when OriginalID is unset (legacy fixtures bypassing
+		// handleWebSocket).
+		c2 := &Client{ID: "onlyid1234567"}
+		if got := c2.rateLimitKey(); got != "onlyid1234567" {
+			t.Errorf("rateLimitKey with empty OriginalID = %q, want c.ID %q", got, "onlyid1234567")
+		}
+	})
+
+	t.Run("cycling c.ID shares one bucket and does not refresh quota", func(t *testing.T) {
+		cfg := &config.Config{
+			SessionTimeout:  time.Hour,
+			CleanupInterval: time.Hour,
+			PingInterval:    time.Second,
+		}
+		h := NewHub(cfg)
+		h.Run()
+		defer h.Shutdown()
+
+		c := &Client{
+			ID:         "origabc12345",
+			OriginalID: "origabc12345",
+			Hub:        h,
+			Send:       make(chan []byte, 20),
+			IP:         "127.0.0.1",
+		}
+
+		// Seed the stable bucket. The rate limiter allows a burst then
+		// throttles to MaxMessagesPerSecond once messageCount reaches
+		// that threshold within the 1s window (see CheckMessageRate).
+		if !h.Security.CheckMessageRate(c.rateLimitKey()) {
+			t.Fatal("first message should be allowed")
+		}
+		if n := h.Security.MessageRateEntryCount(); n != 1 {
+			t.Errorf("after first message: %d rate buckets, want 1 (keyed by OriginalID)", n)
+		}
+
+		// Simulate handleStagiaireJoin overwriting c.ID with a presented
+		// stale ID (client.go:458). The next message must land in the
+		// SAME bucket (OriginalID), not mint a fresh one under the
+		// cycled ID. Before R22 this seeded a new MaxBurstMessages
+		// budget and leaked the prior entry.
+		c.ID = "staleabcdef1"
+		if !h.Security.CheckMessageRate(c.rateLimitKey()) {
+			t.Error("second message against the stable bucket should be allowed")
+		}
+		if n := h.Security.MessageRateEntryCount(); n != 1 {
+			t.Errorf("after ID cycle: %d rate buckets, want 1 (no leak, no fresh bucket)", n)
+		}
+		if h.Security.HasMessageRateEntry("staleabcdef1") {
+			t.Error("no bucket should exist under the cycled (mutable) c.ID")
+		}
+
+		// Exhaust the steady-state rate (MaxMessagesPerSecond messages in
+		// a tight loop) so the next call is throttled. Then cycle the ID
+		// again and confirm the throttle still holds — cycling must not
+		// refresh the quota.
+		for i := 0; i < security.MaxMessagesPerSecond; i++ {
+			h.Security.CheckMessageRate(c.rateLimitKey())
+		}
+		if h.Security.CheckMessageRate(c.rateLimitKey()) {
+			t.Error("bucket should be throttled after MaxMessagesPerSecond tight messages")
+		}
+		c.ID = "againabcdef1"
+		if h.Security.CheckMessageRate(c.rateLimitKey()) {
+			t.Error("cycling c.ID must NOT refresh the throttle (R22 quota refresh)")
+		}
+
+		// Disconnect cleanup (readPump's defer) removes the single bucket.
+		h.Security.RemoveMessageRate(c.rateLimitKey())
+		if n := h.Security.MessageRateEntryCount(); n != 0 {
+			t.Errorf("after disconnect cleanup: %d rate buckets, want 0 (entry removed)", n)
+		}
+	})
+}

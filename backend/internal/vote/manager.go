@@ -176,6 +176,12 @@ func (m *Manager) JoinStagiaire(sessionID, stagiaireID, name, reclaimToken strin
 	if name != "" && !IsValidName(name) {
 		return JoinStagiaireResult{}, ErrInvalidInput
 	}
+	// C3: IsValidName trims internally for its length/charset check, but
+	// the original (untrimmed) value was what got stored in
+	// session.Stagiaires and broadcast as the canonical identity. Trim
+	// once at the validation boundary so every downstream store and
+	// collision check sees the normalised form.
+	name = strings.TrimSpace(name)
 
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
@@ -535,6 +541,8 @@ func (m *Manager) UpdateStagiaireName(sessionID, stagiaireID, name string) error
 	if !IsValidName(name) {
 		return ErrInvalidInput
 	}
+	// C3: store the trimmed canonical form (see JoinStagiaire).
+	name = strings.TrimSpace(name)
 
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]

@@ -1084,3 +1084,55 @@ func TestVotesPerSessionLifetime(t *testing.T) {
 		t.Errorf("lifetime=6 sample must not land in le=5 bucket, delta=%d", delta)
 	}
 }
+
+// TestStoredNameIsTrimmed covers C3: IsValidName (and the manager's guard)
+// trim before checking length/charset, but the original untrimmed string
+// was what got stored in session.Stagiaires. The stored form is the
+// canonical identity used in stagiaireName broadcasts and the trainer's
+// stagiaire list, so it must carry no stray leading/trailing whitespace.
+func TestStoredNameIsTrimmed(t *testing.T) {
+	t.Run("fresh join", func(t *testing.T) {
+		m := NewManager()
+		m.CreateSession("ABC", "trainer1")
+
+		if _, err := m.JoinStagiaire("ABC", "stag1ab12cde", "  Jean  ", ""); err != nil {
+			t.Fatalf("JoinStagiaire with padded name: %v", err)
+		}
+		session, _ := m.GetSession("ABC")
+		if got := session.Stagiaires["stag1ab12cde"]; got != "Jean" {
+			t.Errorf("stored name = %q, want %q (trimmed)", got, "Jean")
+		}
+	})
+
+	t.Run("update_name", func(t *testing.T) {
+		m := NewManager()
+		m.CreateSession("ABC", "trainer1")
+		m.JoinStagiaire("ABC", "stag1ab12cde", "Jean", "")
+
+		if err := m.UpdateStagiaireName("ABC", "stag1ab12cde", "  Paul  "); err != nil {
+			t.Fatalf("UpdateStagiaireName with padded name: %v", err)
+		}
+		session, _ := m.GetSession("ABC")
+		if got := session.Stagiaires["stag1ab12cde"]; got != "Paul" {
+			t.Errorf("stored name = %q, want %q (trimmed)", got, "Paul")
+		}
+	})
+
+	t.Run("reclaim rename", func(t *testing.T) {
+		m := NewManager()
+		m.CreateSession("ABC", "trainer1")
+		res, err := m.JoinStagiaire("ABC", "stag1ab12cde", "Jean", "")
+		if err != nil {
+			t.Fatalf("initial join: %v", err)
+		}
+
+		// Reclaim the identity and rename in the same call.
+		if _, err := m.JoinStagiaire("ABC", "stag1ab12cde", "  Paul  ", res.ReclaimToken); err != nil {
+			t.Fatalf("reclaim-rename with padded name: %v", err)
+		}
+		session, _ := m.GetSession("ABC")
+		if got := session.Stagiaires["stag1ab12cde"]; got != "Paul" {
+			t.Errorf("stored name = %q, want %q (trimmed)", got, "Paul")
+		}
+	})
+}

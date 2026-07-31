@@ -729,7 +729,8 @@ func (h *Hub) registerClient(client *Client) {
 					correctColors := session.GetCorrectColors()
 					scores := session.GetScores()
 					gameScores := session.GetGameScores()
-					rank, total := computeRank(scores, gameScores, client.ID)
+					stagiaires := session.GetStagiaires()
+					rank, total := computeRank(scores, gameScores, stagiaires, client.ID)
 					queue(client, map[string]any{
 						"type":            "answers_revealed",
 						"correctColors":   correctColors,
@@ -1034,14 +1035,27 @@ func buildScoreboard(stagiaires map[string]string, votes map[string][]string, sc
 	return entries
 }
 
-func computeRank(voteScores, gameScores map[string]int, id string) (int, int) {
-	total := len(voteScores)
+func computeRank(voteScores, gameScores map[string]int, stagiaires map[string]string, id string) (int, int) {
+	// C1: total (and the rank denominator) is derived from the live
+	// identity set, not the at-reveal Scores snapshot. A stagiaire
+	// joining a Competitive session during Closed+Revealed is added to
+	// session.Stagiaires but not to session.Scores (Scores is populated
+	// only inside RevealAnswers' Stagiaires iteration). The previous
+	// implementation set total = len(voteScores) = N (pre-reveal class
+	// size, excluding the joiner) and counted rank only over existing
+	// scorers, so a scoreless joiner with everyone else positive got
+	// rank = N+1 of N — an impossible "rank exceeds total" the classroom
+	// saw until the next reveal normalised it. Iterating the live
+	// stagiaires map makes total reflect the current class size and
+	// ranks the joiner (score 0) correctly against everyone, including
+	// other 0-scorers they tie with.
+	total := len(stagiaires)
 	if total == 0 {
 		return 0, 0
 	}
 	myScore := voteScores[id] + gameScores[id]
 	rank := 1
-	for otherID := range voteScores {
+	for otherID := range stagiaires {
 		if otherID == id {
 			continue
 		}
