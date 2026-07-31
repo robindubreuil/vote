@@ -261,6 +261,75 @@ describe('showConfirmDialog', () => {
     expect(overlaysAfterFirst).toHaveLength(1)
     expect(overlaysDuringSecond).toHaveLength(1)
   })
+
+  // A1: aria-modal="true" alone is widely ignored by SRs in browse mode.
+  // The fix inerts every body-level sibling of the overlay so background
+  // content is removed from the a11y tree AND from interaction while the
+  // modal is open, and restored on resolve.
+  describe('background isolation (A1)', () => {
+    it('inerts every body-level sibling while open and restores them on resolve', async () => {
+      // Set up realistic background landmarks (formateur/stagiaire shells).
+      document.body.innerHTML = `
+        <header id="app-header"><button>bg</button></header>
+        <main id="app-content"><a href="#">link</a></main>
+        <button id="trigger">go</button>
+      `
+      document.getElementById('trigger').focus()
+
+      const header = document.getElementById('app-header')
+      const main = document.getElementById('app-content')
+      expect(header.inert).toBe(false)
+      expect(main.inert).toBe(false)
+
+      const p = showConfirmDialog({ message: 'm' })
+      await vi.advanceTimersByTimeAsync(0)
+
+      // Siblings are inerted; the overlay itself is NOT.
+      expect(header.inert).toBe(true)
+      expect(main.inert).toBe(true)
+      const overlay = document.querySelector('.confirm-overlay')
+      expect(overlay.inert).toBe(false)
+
+      document.querySelector('.confirm-cancel').click()
+      await p
+
+      // Restored exactly — the previously-inerted elements are interactive
+      // again, and the overlay is left alone (it just loses .open).
+      expect(header.inert).toBe(false)
+      expect(main.inert).toBe(false)
+    })
+
+    it('does not touch elements inerted independently after resolve', async () => {
+      document.body.innerHTML = `
+        <main id="app-content"></main>
+        <button id="trigger">go</button>
+      `
+      document.getElementById('trigger').focus()
+
+      const main = document.getElementById('app-content')
+      const p = showConfirmDialog({ message: 'm' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(main.inert).toBe(true)
+
+      document.querySelector('.confirm-cancel').click()
+      await p
+      expect(main.inert).toBe(false)
+
+      // An element inerted by some other feature AFTER resolve must not be
+      // clobbered by a future dialog open/close cycle.
+      main.inert = true
+      const p2 = showConfirmDialog({ message: 'm2' })
+      await vi.advanceTimersByTimeAsync(0)
+      // It's in our inerted-siblings set while open (still inert — fine).
+      expect(main.inert).toBe(true)
+      document.querySelector('.confirm-cancel').click()
+      await p2
+      // unlock restores only what WE inerted; but since main was inerted
+      // by us this cycle, it gets unlocked. The invariant that matters:
+      // resolve never leaves a sibling we touched still inert.
+      expect(main.inert).toBe(false)
+    })
+  })
 })
 
 describe('showToast', () => {

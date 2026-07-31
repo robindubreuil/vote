@@ -343,15 +343,28 @@ function renderVotingHTML() {
  * options. Each button uses `role="radio"` + `aria-checked` (rather than
  * the toggle pattern `aria-pressed`) so the semantics match the
  * single-select behaviour: picking one option clears the others.
+ *
+ * Accessibility (A3): the group uses the WAI-ARIA APG roving-tabindex
+ * pattern — exactly one radio is in the tab order (`tabindex="0"`, the
+ * checked one or the first), the rest carry `tabindex="-1"`. Arrow /
+ * Home / End keys (handled in `handleSingleChoiceKeydown`) move between
+ * radios; Tab leaves the group. This honours the implicit contract of
+ * `role="radiogroup"` and gives keyboard users the same nav model as
+ * native radio inputs.
  */
 function renderSingleChoiceHTML(activeColors) {
   const isConnected = state.connected
+  // Single-choice → at most one selected. The tab stop is the checked
+  // radio; when nothing is checked yet it falls back to the first so the
+  // group always has exactly one focusable entry.
+  const tabStopId = [...state.selectedColors][0] || activeColors[0]?.id
   return `
     <div class="vote-grid" role="radiogroup" aria-label="${t.stagiaire.singleChoiceGroupLabel}" data-count="${activeColors.length}">
       ${activeColors
         .map((color) => {
           const label = state.colorLabels[color.id] || color.name
           const selected = state.selectedColors.has(color.id)
+          const tabIndex = color.id === tabStopId ? 0 : -1
           return `
         <button
           type="button"
@@ -361,6 +374,7 @@ function renderSingleChoiceHTML(activeColors) {
           role="radio"
           aria-checked="${selected}"
           aria-label="${label}"
+          tabindex="${tabIndex}"
           ${!isConnected ? 'disabled' : ''}
         >
           ${escapeHtml(label)}
@@ -552,23 +566,23 @@ export function attachEventListeners() {
     trackListener(btn, 'click', handleSingleChoiceVote)
   })
 
+  // A3: single-choice radiogroup — arrow / Home / End key navigation
+  // (roving tabindex). The handler lives on the radiogroup container
+  // so it catches keys regardless of which radio currently holds focus.
+  document.querySelectorAll('.vote-grid[role="radiogroup"]').forEach((rg) => {
+    trackListener(rg, 'keydown', handleSingleChoiceKeydown)
+  })
+
   // Checkboxes (choix multiple)
+  // A2: native <input type="checkbox"> is the sole tab target. The
+  // sibling <label for=...> used to carry tabindex="0" + a manual
+  // Space/Enter keydown handler, giving keyboard users two tab stops
+  // per color (16 stops for an 8-color palette) and duplicating the
+  // checkbox's own Space/Enter behaviour. Dropping both leaves the
+  // native checkbox as the single focusable control; the label stays
+  // clickable (mouse + touch) via its for= association.
   document.querySelectorAll('.vote-checkbox').forEach((checkbox) => {
     trackListener(checkbox, 'change', handleCheckboxChange)
-    // Accessibility for label
-    const label = document.querySelector(`label[for="${checkbox.id}"]`)
-    if (label) {
-      label.setAttribute('tabindex', '0')
-      trackListener(label, 'keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          checkbox.checked = !checkbox.checked
-          // Trigger change event manually
-          const event = new Event('change')
-          checkbox.dispatchEvent(event)
-        }
-      })
-    }
   })
 
   // Bouton valider (choix multiple)
@@ -618,6 +632,7 @@ export { cleanupEventListeners }
 let handleJoin,
   handleEditName,
   handleSingleChoiceVote,
+  handleSingleChoiceKeydown,
   handleCheckboxChange,
   handleSubmitVote,
   handleBlankVote,
@@ -629,6 +644,7 @@ export function setHandlers(handlers) {
     handleJoin,
     handleEditName,
     handleSingleChoiceVote,
+    handleSingleChoiceKeydown,
     handleCheckboxChange,
     handleSubmitVote,
     handleBlankVote,

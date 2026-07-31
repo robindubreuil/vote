@@ -113,6 +113,7 @@ const {
   handleCheckboxChange,
   handleSubmitVote,
   handleSingleChoiceVote,
+  handleSingleChoiceKeydown,
   handleBlankVote,
   submitVote,
   leaveSession,
@@ -316,6 +317,144 @@ describe('stagiaire handlers — submit / join / leave', () => {
     })
   })
 
+  // A3: role="radiogroup" must honour the WAI-ARIA APG arrow-key
+  // contract. The roving-tabindex markup is asserted in renderers.test;
+  // these cover the interaction — arrow / Home / End keys move the
+  // selection, focus, AND submit the vote (same path as a click).
+  describe('A3: handleSingleChoiceKeydown — radiogroup arrow navigation', () => {
+    function keyEvent(key, radiogroup) {
+      return { key, currentTarget: radiogroup, preventDefault: vi.fn() }
+    }
+
+    function setupSelection(startColor) {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.multipleChoice = false
+      state.availableColors = ['rouge', 'vert', 'bleu']
+      state.selectedColors = new Set(startColor ? [startColor] : [])
+      state.connected = true
+      render()
+      const grid = document.querySelector('.vote-grid[role="radiogroup"]')
+      const rouge = document.querySelector('[data-testid="vote-btn-rouge"]')
+      const vert = document.querySelector('[data-testid="vote-btn-vert"]')
+      const bleu = document.querySelector('[data-testid="vote-btn-bleu"]')
+      return { grid, rouge, vert, bleu }
+    }
+
+    it('ArrowRight moves selection forward by one, wraps focus, and submits', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, rouge, vert } = setupSelection('rouge')
+      rouge.focus()
+      expect(document.activeElement).toBe(rouge)
+
+      handleSingleChoiceKeydown(keyEvent('ArrowRight', grid))
+
+      expect(state.selectedColors.has('vert')).toBe(true)
+      expect(state.selectedColors.size).toBe(1)
+      expect(document.activeElement).toBe(vert)
+      // Tab stop roved to the newly-active radio.
+      expect(vert.tabIndex).toBe(0)
+      expect(rouge.tabIndex).toBe(-1)
+      // aria-checked tracks the new selection.
+      expect(vert.getAttribute('aria-checked')).toBe('true')
+      expect(rouge.getAttribute('aria-checked')).toBe('false')
+      // A vote was submitted for the new color (same path as a click).
+      expect(fakeClient.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'vote', colors: ['vert'] }))
+    })
+
+    it('ArrowLeft moves selection backward by one', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, rouge, vert } = setupSelection('vert')
+      vert.focus()
+
+      handleSingleChoiceKeydown(keyEvent('ArrowLeft', grid))
+
+      expect(state.selectedColors.has('rouge')).toBe(true)
+      expect(document.activeElement).toBe(rouge)
+    })
+
+    it('ArrowDown/ArrowUp behave like Right/Left', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, rouge, vert } = setupSelection('rouge')
+      rouge.focus()
+
+      handleSingleChoiceKeydown(keyEvent('ArrowDown', grid))
+      expect(state.selectedColors.has('vert')).toBe(true)
+      expect(document.activeElement).toBe(vert)
+
+      handleSingleChoiceKeydown(keyEvent('ArrowUp', grid))
+      expect(state.selectedColors.has('rouge')).toBe(true)
+      expect(document.activeElement).toBe(rouge)
+    })
+
+    it('ArrowRight wraps from last back to first', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, rouge, bleu } = setupSelection('bleu')
+      bleu.focus()
+
+      handleSingleChoiceKeydown(keyEvent('ArrowRight', grid))
+
+      expect(state.selectedColors.has('rouge')).toBe(true)
+      expect(document.activeElement).toBe(rouge)
+    })
+
+    it('ArrowLeft wraps from first forward to last', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, bleu, rouge } = setupSelection('rouge')
+      rouge.focus()
+
+      handleSingleChoiceKeydown(keyEvent('ArrowLeft', grid))
+
+      expect(state.selectedColors.has('bleu')).toBe(true)
+      expect(document.activeElement).toBe(bleu)
+    })
+
+    it('Home jumps to the first radio, End to the last', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, rouge, vert, bleu } = setupSelection('vert')
+      vert.focus()
+
+      handleSingleChoiceKeydown(keyEvent('End', grid))
+      expect(state.selectedColors.has('bleu')).toBe(true)
+      expect(document.activeElement).toBe(bleu)
+
+      handleSingleChoiceKeydown(keyEvent('Home', grid))
+      expect(state.selectedColors.has('rouge')).toBe(true)
+      expect(document.activeElement).toBe(rouge)
+    })
+
+    it('ignores non-navigation keys (lets the event bubble, no submit)', () => {
+      const fakeClient = { send: vi.fn(() => true) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { grid, rouge } = setupSelection('rouge')
+      rouge.focus()
+
+      const ev = keyEvent('a', grid)
+      handleSingleChoiceKeydown(ev)
+      // No preventDefault, no selection change, no submit.
+      expect(ev.preventDefault).not.toHaveBeenCalled()
+      expect(state.selectedColors.has('rouge')).toBe(true)
+      expect(fakeClient.send).not.toHaveBeenCalled()
+    })
+
+    it('does not submit when the socket is down (submitVote surfaces the error)', () => {
+      mockGetClient.mockReturnValue({ send: vi.fn(() => false) })
+      const { grid, rouge, vert } = setupSelection('rouge')
+      rouge.focus()
+
+      expect(() => handleSingleChoiceKeydown(keyEvent('ArrowRight', grid))).not.toThrow()
+      // Selection + focus still moved even though the vote didn't land.
+      expect(state.selectedColors.has('vert')).toBe(true)
+      expect(document.activeElement).toBe(vert)
+    })
+  })
+
   describe('handleCheckboxChange', () => {
     it('checking a color adds it to the selection and marks the label', () => {
       state.appState = AppState.VOTING
@@ -510,6 +649,37 @@ describe('stagiaire handlers — submit / join / leave', () => {
       expect(state.prenom).toBe('NewName')
       expect(state.prenomEdit).toBe(false)
       expect(state.pendingRename).toBeNull()
+    })
+
+    // F28: client.send returns false when the socket dropped between the
+    // click and the send. Without the guard, pendingRename would stay set
+    // forever (no name_updated ever arrives to clear it) and the modal
+    // gives no signal the rename failed. On false: clear the in-flight
+    // flag, surface a connection message in the inline slot, mark the
+    // field invalid, keep the modal open with the user's input preserved.
+    it('F28: when client.send returns false, clears pendingRename, surfaces an inline error, and keeps the modal open', () => {
+      const fakeClient = { send: vi.fn(() => false) }
+      mockGetClient.mockReturnValue(fakeClient)
+      const { input } = fillEditForm('NewName')
+      const inlineError = document.getElementById('edit-name-error')
+      const ev = submitEvent()
+
+      handleEditName(ev)
+
+      // pendingRename cleared so a later unrelated error isn't misrouted.
+      expect(state.pendingRename).toBeNull()
+      // The send was attempted exactly once.
+      expect(fakeClient.send).toHaveBeenCalledTimes(1)
+      expect(fakeClient.send).toHaveBeenCalledWith({ type: 'update_name', name: 'NewName' })
+      // Inline error slot surfaces the connection message.
+      expect(inlineError.textContent).not.toBe('')
+      expect(inlineError.style.display).toBe('block')
+      // Field flagged invalid for AT users.
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      // Modal stays open + prenom NOT committed (deferred to the server
+      // response that will now never arrive — the user retries manually).
+      expect(state.prenomEdit).toBe(true)
+      expect(state.prenom).toBe('Old')
     })
   })
 

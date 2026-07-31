@@ -26,6 +26,8 @@ const {
   cleanupAllListeners,
   renderMainContent,
   renderFullLayout,
+  renderCombinationsHTML,
+  renderStagiairesVotesHTML,
   setActionHandlers,
   _trackerSizesForTests,
   _resetAppShortcutForTests
@@ -589,9 +591,7 @@ describe('trainer competitive scoreboard (F26)', () => {
   })
 
   it('renders the rank column and totalScore column per row', () => {
-    state.scoreboard = [
-      { id: 'b', name: 'Bob', vote: ['vert'], voteScore: 200, totalScore: 3000, rank: 1 }
-    ]
+    state.scoreboard = [{ id: 'b', name: 'Bob', vote: ['vert'], voteScore: 200, totalScore: 3000, rank: 1 }]
     const list = mountScoreboard()
     const row = list.querySelector('.scoreboard-row')
     expect(row.querySelector('.scoreboard-rank').textContent.trim()).toBe('1')
@@ -601,9 +601,7 @@ describe('trainer competitive scoreboard (F26)', () => {
   })
 
   it('renders a header labelling the round and total columns', () => {
-    state.scoreboard = [
-      { id: 'b', name: 'Bob', vote: ['vert'], voteScore: 0, totalScore: 0, rank: 1 }
-    ]
+    state.scoreboard = [{ id: 'b', name: 'Bob', vote: ['vert'], voteScore: 0, totalScore: 0, rank: 1 }]
     mountScoreboard()
     const header = document.querySelector('.scoreboard-header')
     expect(header).not.toBeNull()
@@ -618,5 +616,83 @@ describe('trainer competitive scoreboard (F26)', () => {
     expect(row.querySelector('.scoreboard-total').textContent.trim()).toBe('0')
     expect(row.querySelector('.scoreboard-rank').textContent.trim()).toBe('—')
     expect(row.className).not.toContain('rank-')
+  })
+})
+
+// X1: three `title="${color?.name || colorId}"` interpolations used to
+// flow the raw colorId into the attribute when COLORS.find() missed
+// (today impossible — votes are server-validated — but a future custom
+// palette or a tampered BroadcastChannel message in the connection-aid
+// path could let an unsanitized ID through). F10 hardened the parallel
+// style="background-color" path with sanitizeColor; the title path was
+// missed. Each site must escape the fallback so `"><script>` can't
+// break out of the attribute.
+describe('color swatch title escaping (X1)', () => {
+  // A colorId that is NOT in COLORS and carries an attribute-breakout
+  // payload. If this reaches title="..." unescaped it injects markup.
+  const EVIL = 'x"><img src=x onerror=alert(1)>'
+
+  beforeEach(() => {
+    _confirmResult = false
+    state.sessionCode = 'ABC'
+    state.voteState = 'closed'
+    state.competitive = true
+    state.allowBlank = false
+    state.gameEnabled = false
+    state.multipleChoice = false
+    state.connected = true
+    state.selectedColors = new Set(['rouge'])
+    state.colorLabels = {}
+    state.correctColors = new Set()
+    state.revealed = true
+    state.stagiaires = []
+    state.scoreboard = []
+    _resetAppShortcutForTests()
+  })
+
+  afterEach(() => {
+    cleanupAllListeners()
+  })
+
+  it('renderScoreboardHTML escapes an unknown colorId in the swatch title', () => {
+    state.scoreboard = [{ id: 'a', name: 'Alice', vote: [EVIL], voteScore: 0, totalScore: 0, rank: 1 }]
+    buildAppShell()
+    renderFullLayout(document.getElementById('app'))
+    renderMainContent()
+    const swatch = document.querySelector('.scoreboard-swatch')
+    expect(swatch).not.toBeNull()
+    // Attribute VALUE preserves the literal fallback string.
+    expect(swatch.getAttribute('title')).toBe(EVIL)
+    // XSS guard: the breakout must not have produced a real attribute
+    // or a parsed <img> child anywhere in the scoreboard.
+    expect(swatch.getAttribute('onerror')).toBeNull()
+    expect(document.querySelector('.scoreboard-list img')).toBeNull()
+    // And the quote that would close the attribute is escaped.
+    expect(swatch.outerHTML).toContain('&quot;')
+    expect(swatch.outerHTML).not.toContain('title="x">')
+  })
+
+  it('renderCombinationsHTML escapes an unknown colorId in the segment title', () => {
+    state.stagiaires = [{ id: 'a', name: 'Alice', vote: [EVIL], connected: true }]
+    document.body.innerHTML = renderCombinationsHTML()
+    const segment = document.querySelector('.combo-segment')
+    expect(segment).not.toBeNull()
+    expect(segment.getAttribute('title')).toBe(EVIL)
+    expect(segment.getAttribute('onerror')).toBeNull()
+    expect(document.querySelector('img')).toBeNull()
+    expect(segment.outerHTML).toContain('&quot;')
+    expect(segment.outerHTML).not.toContain('title="x">')
+  })
+
+  it('renderStagiairesVotesHTML escapes an unknown colorId in the vote swatch title', () => {
+    state.stagiaires = [{ id: 'a', name: 'Alice', vote: [EVIL], connected: true }]
+    document.body.innerHTML = renderStagiairesVotesHTML()
+    const swatch = document.querySelector('.stagiaire-vote-swatch')
+    expect(swatch).not.toBeNull()
+    expect(swatch.getAttribute('title')).toBe(EVIL)
+    expect(swatch.getAttribute('onerror')).toBeNull()
+    expect(document.querySelector('img')).toBeNull()
+    expect(swatch.outerHTML).toContain('&quot;')
+    expect(swatch.outerHTML).not.toContain('title="x">')
   })
 })

@@ -98,7 +98,8 @@ function renderBoard() {
   if (progEl) {
     const prog = getLevelProgress(boardState.best)
     progEl.style.width = `${prog.pct}%`
-    progEl.title = prog.toNext > 0 ? t.stagiaire.gameLevelProgressTitle(prog.toNext, boardState.level + 1) : t.stagiaire.gameLevelMax
+    progEl.title =
+      prog.toNext > 0 ? t.stagiaire.gameLevelProgressTitle(prog.toNext, boardState.level + 1) : t.stagiaire.gameLevelMax
   }
   const streakEl = document.getElementById('gameStreak')
   if (streakEl) streakEl.textContent = String(boardState.streak)
@@ -547,10 +548,27 @@ export function handleEditName(e) {
   // 5s toast that disappears before the user can correct the input).
   // Cleared by name_updated on success.
   state.pendingRename = newPrenom
-  client.send({
+  // F28: client.send returns false when the socket dropped between the
+  // click and the send (mirrors F24's formateur guard). Without this
+  // pendingRename would stay set forever — no name_updated ever arrives
+  // to clear it, the inline error slot stays empty, and the modal gives
+  // no signal that the rename failed. On false: clear the in-flight
+  // flag, surface a connection message in the inline slot, mark the
+  // field invalid, and keep the modal open with the user's input
+  // preserved (same shape as the R8 server-rejection path).
+  const ok = client.send({
     type: 'update_name',
     name: newPrenom
   })
+  if (!ok) {
+    state.pendingRename = null
+    const sendError = document.getElementById('edit-name-error')
+    if (sendError) {
+      sendError.textContent = t.stagiaire.connectionError
+      sendError.style.display = 'block'
+    }
+    setFieldInvalid(input, true)
+  }
   // Intentionally do NOT set state.prenom / close the modal here — wait
   // for the server's authoritative response.
 }
@@ -565,6 +583,73 @@ export function handleSingleChoiceVote(e) {
   state.selectedColors.add(colorId)
 
   submitVote(e.target)
+}
+
+/**
+ * A3: arrow-key navigation for the single-choice radiogroup.
+ *
+ * `role="radiogroup"` carries an implicit WAI-ARIA Authoring Practices
+ * contract that Arrow keys move between radios (Tab leaves the group).
+ * Tab-only navigation left the keyboard interaction at odds with the
+ * declared role.
+ *
+ * Implements the APG roving-tabindex pattern: exactly one radio holds
+ * `tabindex="0"` (the checked one, else the first), the rest are `-1`.
+ * On each arrow / Home / End move we update selection, ARIA state, and
+ * tabindex in place — no re-render, since focus must land on the
+ * newly-active radio — then commit + submit exactly like a click so the
+ * vote flow is identical whether driven by mouse, Tab+Space, or arrows.
+ * @param {KeyboardEvent} e
+ */
+export function handleSingleChoiceKeydown(e) {
+  const radiogroup = e.currentTarget
+  if (!radiogroup) return
+  const buttons = Array.from(radiogroup.querySelectorAll('.vote-button'))
+  if (buttons.length === 0) return
+
+  const key = e.key
+  let forward = null
+  let jumpTo = null
+  if (key === 'ArrowRight' || key === 'ArrowDown') {
+    forward = true
+  } else if (key === 'ArrowLeft' || key === 'ArrowUp') {
+    forward = false
+  } else if (key === 'Home') {
+    jumpTo = 'home'
+  } else if (key === 'End') {
+    jumpTo = 'end'
+  } else {
+    return
+  }
+
+  e.preventDefault()
+
+  const currentIndex = Math.max(
+    0,
+    buttons.findIndex((b) => b === document.activeElement)
+  )
+  let nextIndex
+  if (jumpTo === 'home') nextIndex = 0
+  else if (jumpTo === 'end') nextIndex = buttons.length - 1
+  else if (forward) nextIndex = (currentIndex + 1) % buttons.length
+  else nextIndex = (currentIndex - 1 + buttons.length) % buttons.length
+
+  const nextBtn = buttons[nextIndex]
+  if (!nextBtn) return
+
+  // Roving tabindex + ARIA + visual state, updated in place so focus
+  // stays on the active radio without a re-render.
+  buttons.forEach((b) => {
+    const selected = b === nextBtn
+    b.classList.toggle('selected', selected)
+    b.setAttribute('aria-checked', String(selected))
+    b.tabIndex = selected ? 0 : -1
+  })
+  nextBtn.focus()
+
+  state.selectedColors.clear()
+  state.selectedColors.add(nextBtn.dataset.color)
+  submitVote(nextBtn)
 }
 
 export function handleBlankVote() {

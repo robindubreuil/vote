@@ -240,12 +240,26 @@ export class VoteClient {
   }
 
   send(data) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("Tentative d'envoi sur WebSocket déconnecté")
+      return false
+    }
+    // P1: both the JSON serialisation and the underlying ws.send() can
+    // throw after the readyState check passed — JSON.stringify rejects
+    // circular references, and ws.send throws InvalidStateError if the
+    // socket transitioned out of OPEN between the check and the call.
+    // All eight call sites assume send() is a true/false predicate, so
+    // a thrown error would escape to the click handler and surface as a
+    // misleading "unexpected error" via the global boundary. Catch,
+    // warn, and report the send as failed so the caller runs its
+    // connection-error path (the same path as a dropped socket).
+    try {
       this.ws.send(JSON.stringify(data))
       return true
+    } catch (e) {
+      console.warn('Échec d’envoi WebSocket', e)
+      return false
     }
-    console.warn("Tentative d'envoi sur WebSocket déconnecté")
-    return false
   }
 
   close() {

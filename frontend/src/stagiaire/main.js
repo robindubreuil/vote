@@ -24,6 +24,7 @@ function init() {
     handleJoin: handlers.handleJoin,
     handleEditName: handlers.handleEditName,
     handleSingleChoiceVote: handlers.handleSingleChoiceVote,
+    handleSingleChoiceKeydown: handlers.handleSingleChoiceKeydown,
     handleCheckboxChange: handlers.handleCheckboxChange,
     handleSubmitVote: handlers.handleSubmitVote,
     handleBlankVote: handlers.handleBlankVote,
