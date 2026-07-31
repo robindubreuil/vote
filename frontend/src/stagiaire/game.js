@@ -150,6 +150,7 @@ export class Mastermind {
     this.baseScore = null
     this.multiplier = 1
     this.isRecord = false
+    this.saveFailed = false
     this.leveledUp = false
   }
 
@@ -198,13 +199,20 @@ export class Mastermind {
       this.solvedAt = Date.now()
       this.score = this._computeScore()
       const prevBest = loadHighScore()
-      this.isRecord = saveHighScore(this.score)
+      // F32: saveHighScore returns { isRecord, persisted }. isRecord is
+      // true even when persistence failed (quota / private mode) so the
+      // "Nouveau record !" badge still shows; saveFailed lets the handler
+      // surface that the best didn't actually land.
+      const result = saveHighScore(this.score)
+      this.isRecord = result.isRecord
+      this.saveFailed = result.isRecord && !result.persisted
       this.leveledUp = this.isRecord && getDifficulty(this.score).level > getDifficulty(prevBest).level
       saveStreak(loadStreak() + 1)
     } else if (this.guesses.length >= this.maxAttempts) {
       this.status = 'lost'
       this.score = 0
       this.isRecord = false
+      this.saveFailed = false
       this.leveledUp = false
       saveStreak(0)
     }
@@ -242,6 +250,7 @@ export class Mastermind {
       baseScore: this.baseScore,
       multiplier: this.multiplier || 1,
       isRecord: Boolean(this.isRecord),
+      saveFailed: Boolean(this.saveFailed),
       best: loadHighScore(),
       level: this.level,
       attemptsUsed: this.guesses.length,

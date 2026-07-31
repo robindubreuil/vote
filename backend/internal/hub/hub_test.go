@@ -2,6 +2,7 @@ package hub
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 	"vote-backend/internal/config"
@@ -610,4 +611,62 @@ func TestComputeRankPostRevealJoiner(t *testing.T) {
 			t.Errorf("empty class: rank=%d total=%d, want 0 0", rank, total)
 		}
 	})
+}
+
+// TestCleanupLoopAtomicProtectedReap (R26) verifies that the cleanupLoop's
+// protected-snapshot + reap are atomic w.r.t. concurrent registration.
+// Before the fix, the snapshot was taken under RLock, released, THEN
+// CleanupExpiredSessions ran — leaving a window where a freshly-registered
+// session wasn't in `protected` and could be reaped if its LastActivity
+// read as stale. With SessionTimeout ≈ 0 every session is "expired", so
+// the ONLY thing keeping a live-trainer session alive is the protection
+// mechanism. We register many sessions concurrently with a tight cleanup
+// loop and assert none are reaped.
+func TestCleanupLoopAtomicProtectedReap(t *testing.T) {
+	codes := []string{"AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH", "JJJ", "KKK"}
+	cfg := &config.Config{
+		SessionTimeout:  1 * time.Nanosecond, // everything is "expired"
+		CleanupInterval: 2 * time.Millisecond,
+		PingInterval:    time.Hour,
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	var wg sync.WaitGroup
+	reaped := make([]bool, len(codes))
+	for i, code := range codes {
+		wg.Add(1)
+		go func(idx int, c string) {
+			defer wg.Done()
+			if _, err := h.VoteManager.CreateSession(c, "trainer"); err != nil {
+				t.Errorf("CreateSession %q: %v", c, err)
+				return
+			}
+			// Register a live trainer connection so the session is
+			// protected. This mirrors what registerClient does under
+			// h.mu.Lock.
+			h.mu.Lock()
+			h.Connections[c] = &SessionConnections{
+				Trainer:    &Client{ID: "t-" + c},
+				Stagiaires: make(map[string]*Client),
+			}
+			h.mu.Unlock()
+			// Let a few cleanup cycles fire while the session is live.
+			time.Sleep(20 * time.Millisecond)
+			h.mu.RLock()
+			_, exists := h.VoteManager.GetSession(c)
+			h.mu.RUnlock()
+			if !exists {
+				reaped[idx] = true
+			}
+		}(i, code)
+	}
+	wg.Wait()
+
+	for i, code := range codes {
+		if reaped[i] {
+			t.Errorf("R26: protected session %q was reaped despite a live trainer (TOCTOU in cleanupLoop)", code)
+		}
+	}
 }

@@ -5,11 +5,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // synchronously without rendering a real modal. We need to control the
 // resolved value per-test, so we expose a setter on the mock.
 let _confirmResult = false
+// F31: controllable dialog-open flag so the app handler's guard can be
+// tested without the real modal. Defaults to false (no dialog open).
+let _dialogOpen = false
 vi.mock('@shared/ui.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
-    showConfirmDialog: () => Promise.resolve(_confirmResult)
+    showConfirmDialog: () => Promise.resolve(_confirmResult),
+    isConfirmDialogOpen: () => _dialogOpen
   }
 })
 
@@ -78,6 +82,7 @@ function flushMicrotasks() {
 describe('listener tracker split (C3 + M1 regression)', () => {
   beforeEach(() => {
     _confirmResult = false
+    _dialogOpen = false
     state.sessionCode = 'ABC'
     state.voteState = 'idle'
     state.connectedCount = 0
@@ -125,6 +130,29 @@ describe('listener tracker split (C3 + M1 regression)', () => {
     dispatchKey('Escape')
     await flushMicrotasks()
     expect(leave).not.toHaveBeenCalled()
+    cleanupAllListeners()
+  })
+
+  it('F31: Escape shortcut does NOT re-enter showConfirmDialog while a dialog is already open', async () => {
+    buildAppShell()
+    renderFullLayout(document.getElementById('app'))
+    const leave = vi.fn()
+    attachAppKeyboardShortcuts(leave)
+
+    // Simulate a confirm dialog already being on screen (e.g. opened by
+    // clicking the leave button). The app handler's guard must skip the
+    // re-entrant showConfirmDialog call so the original promise isn't
+    // leaked. Without the guard, pressing Escape would call
+    // showConfirmDialog a second time, overwriting confirmResolve.
+    _dialogOpen = true
+    _confirmResult = true
+    dispatchKey('Escape')
+    await flushMicrotasks()
+
+    // The guard short-circuited: leave never fires because the handler
+    // bailed before awaiting showConfirmDialog.
+    expect(leave).not.toHaveBeenCalled()
+
     cleanupAllListeners()
   })
 

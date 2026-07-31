@@ -32,19 +32,29 @@ export function markRulesSeen() {
 
 /**
  * Persist the new score only if it beats the previous best.
- * @returns {boolean} true if the score was a new record
+ *
+ * F32: distinguishes "not a record" from "record but storage failed" so
+ * the caller can still celebrate the record (badge) while surfacing that
+ * the save didn't land (toast). Previously a quota throw returned false
+ * indistinguishably from a non-record, so a genuine best score was
+ * silently framed as "not your best" and the HUD kept showing the old
+ * value.
+ *
+ * @returns {{ isRecord: boolean, persisted: boolean }} isRecord is true
+ *   when the score beats the previous best; persisted is false when the
+ *   write was rejected (quota / private mode) even though it was a record.
  */
 export function saveHighScore(score) {
   const n = Math.floor(Number(score) || 0)
-  if (n <= 0) return false
+  if (n <= 0) return { isRecord: false, persisted: false }
   const prev = loadHighScore()
-  if (n <= prev) return false
+  if (n <= prev) return { isRecord: false, persisted: false }
   try {
     localStorage.setItem(HIGH_SCORE_KEY, String(n))
   } catch {
-    return false
+    return { isRecord: true, persisted: false }
   }
-  return true
+  return { isRecord: true, persisted: true }
 }
 
 export function resetHighScore() {

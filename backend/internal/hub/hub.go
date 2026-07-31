@@ -1001,6 +1001,17 @@ func (h *Hub) cleanupLoop() {
 	for {
 		select {
 		case <-ticker.C:
+			// R26: hold h.mu.RLock across the protected-snapshot AND the
+			// reap so the two are atomic w.r.t. register/unregister (which
+			// need h.mu.Lock). A session published in the window between
+			// the old snapshot-then-RUnlock and CleanupExpiredSessions was
+			// not in `protected`; if its LastActivity read as stale (clock
+			// skew, a long STW pause) it was reaped out from under the
+			// trainer. Lock ordering is h.mu → m.mu → session.mu (the
+			// established invariant), so nesting m.mu.Lock inside
+			// h.mu.RLock is safe. Cleanup runs at CleanupInterval, not on
+			// the hot path, so the brief serialization with register is
+			// acceptable.
 			h.mu.RLock()
 			protected := make(map[string]bool)
 			for id, conns := range h.Connections {
@@ -1008,9 +1019,9 @@ func (h *Hub) cleanupLoop() {
 					protected[id] = true
 				}
 			}
-			h.mu.RUnlock()
 
 			h.VoteManager.CleanupExpiredSessions(h.Config.SessionTimeout, protected)
+			h.mu.RUnlock()
 
 			h.mu.Lock()
 			for id, conns := range h.Connections {

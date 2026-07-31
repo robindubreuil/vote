@@ -15,7 +15,7 @@ import {
   upload,
   checkPlain
 } from '@shared/icons.js'
-import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog } from '@shared/ui.js'
+import { renderFooterHTML, renderSessionCodeButton, showConfirmDialog, isConfirmDialogOpen } from '@shared/ui.js'
 import { t } from '@shared/strings.js'
 import { createListenerTracker } from '@shared/dom/listeners.js'
 import { listPresets } from '@shared/presets.js'
@@ -1065,8 +1065,12 @@ export function attachAppKeyboardShortcuts(leaveSessionFn) {
   _appShortcutAttached = true
 
   const keyHandler = async (e) => {
-    // Escape key - leave session with confirmation
-    if (e.key === 'Escape' && state.sessionCode) {
+    // Escape key - leave session with confirmation.
+    // F31: skip when a confirm dialog is already open. Without this guard
+    // (paired with the capture-phase keydown in ui.js), pressing Escape
+    // while a confirm is visible re-enters showConfirmDialog synchronously,
+    // overwrites confirmResolve, and leaks the original caller's promise.
+    if (e.key === 'Escape' && state.sessionCode && !isConfirmDialogOpen()) {
       e.preventDefault()
       const ok = await showConfirmDialog({
         title: t.formateur.leaveSessionTitle,
