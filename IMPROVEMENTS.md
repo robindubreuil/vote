@@ -79,7 +79,7 @@ vote UI carries ARIA contracts it doesn't fully honour. All findings are
 isolated frontend edits with no backend coupling, so they bundle cleanly into
 one polish session.
 
-- [ ] **F28** [Medium] Stagiaire `handleEditName` ignores `client.send` return
+- [x] **F28** [Medium] Stagiaire `handleEditName` ignores `client.send` return
   value (F24 leftover). `frontend/src/stagiaire/handlers.js:549-553` sets
   `state.pendingRename = newPrenom` BEFORE `client.send({ type: 'update_name',
   ... })` and discards the return value. If send returns false (WS dropped in
@@ -92,7 +92,7 @@ one polish session.
   **Fix:** capture the return; on false, clear `state.pendingRename`, surface a
   connection message in the inline error slot (`#edit-name-error`), keep the
   modal open with the user's input preserved (mirror the R8 rejection path).
-- [ ] **A1** [Medium] `showConfirmDialog` declares `aria-modal="true"` but never
+- [x] **A1** [Medium] `showConfirmDialog` declares `aria-modal="true"` but never
   inerts/hides the background. `frontend/shared/ui.js:90-100`; CSS at
   `frontend/shared/styles/base.css:551-616`. The overlay covers the viewport and
   `body.confirm-lock` scroll-locks the body, but background content is not
@@ -106,7 +106,7 @@ one polish session.
   `aria-hidden="true"`) on `<main id="app-content">` and the header; remove on
   `resolveConfirm`. `inert` is supported in all current evergreen browsers
   (Chrome 102+, Firefox 112+, Safari 15.5+) — well within the F13 baseline.
-- [ ] **A2** [Medium] Multi-choice vote: duplicate tab stops (native checkbox +
+- [x] **A2** [Medium] Multi-choice vote: duplicate tab stops (native checkbox +
   tabbable label sibling). `frontend/src/stagiaire/renderers.js:386-411` +
   `:556-572`. Each color renders a native `<input type="checkbox">` (focusable
   by default) AND a sibling `<label for="color-X" tabindex="0">` with its own
@@ -116,7 +116,7 @@ one polish session.
   checkbox itself. F7 (DONE) wrapped the group in `<fieldset>`/`<legend>` but
   didn't address the double tab stop. **Fix:** drop `tabindex="0"` from the
   label (the native checkbox is the tab target), one line.
-- [ ] **A3** [Medium] Single-choice vote grid uses `role="radio"` but provides
+- [x] **A3** [Medium] Single-choice vote grid uses `role="radio"` but provides
   no arrow-key navigation. `frontend/src/stagiaire/renderers.js:347-373`. Wrapper
   has `role="radiogroup"`, each button has `role="radio"` + `aria-checked`.
   WAI-ARIA Authoring Practices prescribe `Arrow Up/Down/Left/Right` to move
@@ -129,7 +129,7 @@ one polish session.
   `state.selectedColors` to the next/previous color and re-renders (or focus the
   new button). Alternatively, drop `role="radio"` and use a plain button group
   with `aria-pressed` if Tab-only is the intended UX.
-- [ ] **X1** [Low] Unescaped `colorId` fallback in three `title="..."`
+- [x] **X1** [Low] Unescaped `colorId` fallback in three `title="..."`
   interpolations. `frontend/src/formateur/renderers.js:812`
   (`renderScoreboardHTML`), `:908` (`renderCombinationsHTML`), `:972`
   (`renderStagiairesVotesHTML`). Pattern `title="${color?.name || colorId}"`
@@ -141,7 +141,7 @@ one polish session.
   could let an unsanitized ID reach the attribute and break out via
   `"><script>`. **Fix:** `title="${escapeHtml(color?.name || colorId)}"` at all
   three sites.
-- [ ] **P1** [Low] `WebSocket.send()` not wrapped in try/catch.
+- [x] **P1** [Low] `WebSocket.send()` not wrapped in try/catch.
   `frontend/shared/websocket-client.js:242-249`. `send()` checks
   `readyState === OPEN` then calls `this.ws.send(JSON.stringify(data))`
   unguarded. `JSON.stringify` can throw on circular references; `ws.send` can
@@ -152,7 +152,7 @@ one polish session.
   and surfaces via the global error boundary as a misleading "unexpected error"
   toast. **Fix:** wrap in `try { ...; return true } catch (e) {
   console.warn(e); return false }`.
-- [ ] Tests: `stagiaire/handlers.test.js` (+handleEditName: when `client.send`
+- [x] Tests: `stagiaire/handlers.test.js` (+handleEditName: when `client.send`
   returns false, `pendingRename` is cleared, inline error populated, modal stays
   open, F28), `shared/ui.test.js` (+showConfirmDialog sets `inert` on
   `<main>`/header while open, removes on close, A1), `stagiaire/renderers.test.js`

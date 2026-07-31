@@ -140,6 +140,50 @@ describe('VoteClient', () => {
     client.close()
   })
 
+  // P1: both JSON.stringify (circular ref) and ws.send (InvalidStateError
+  // after a readyState transition) can throw AFTER the OPEN check passes.
+  // All call sites treat send() as a true/false predicate, so a thrown
+  // error would escape to the click handler and surface via the global
+  // error boundary as a misleading "unexpected error". The try/catch
+  // reports the failure as a normal send=false instead.
+  describe('send() failure isolation (P1)', () => {
+    it('returns false and does not throw when JSON.stringify rejects a circular reference', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const client = new VoteClient('ws://x')
+      client.connect()
+      const ws = MockWebSocket.instances[0]
+      ws.fireOpen()
+
+      const circular = { a: 1 }
+      circular.self = circular
+      expect(client.send(circular)).toBe(false)
+      // Nothing was handed to the socket.
+      expect(ws.sent).toHaveLength(0)
+      expect(warnSpy).toHaveBeenCalled()
+      warnSpy.mockRestore()
+      client.close()
+    })
+
+    it('returns false and does not throw when ws.send throws after the readyState check (post-check state transition)', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const client = new VoteClient('ws://x')
+      client.connect()
+      const ws = MockWebSocket.instances[0]
+      ws.fireOpen()
+
+      // Simulate the socket closing between the OPEN check and ws.send:
+      // readyState is still OPEN for the guard, but the underlying send
+      // throws InvalidStateError (mirrors a real browser race).
+      ws.send = () => {
+        throw new DOMException('readyState != OPEN', 'InvalidStateError')
+      }
+      expect(client.send({ type: 'x' })).toBe(false)
+      expect(warnSpy).toHaveBeenCalled()
+      warnSpy.mockRestore()
+      client.close()
+    })
+  })
+
   it('close() prevents any further reconnect attempts', () => {
     const client = new VoteClient('ws://x')
     client.connect()

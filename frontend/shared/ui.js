@@ -86,6 +86,30 @@ export function hideError() {
 let confirmDialogEl = null
 let confirmResolve = null
 let confirmLastFocus = null
+// A1: background siblings inerted while the dialog is open. Tracked so
+// resolve() restores exactly these — never an element another feature
+// inerted independently. `inert` is the standards-based way to remove
+// siblings from the accessibility tree AND interaction; `aria-modal`
+// alone is widely ignored by SRs in browse mode.
+let inertedSiblings = []
+
+function lockBackground() {
+  inertedSiblings = []
+  for (const child of document.body.children) {
+    if (child === confirmDialogEl) continue
+    // Skip text nodes / non-elements (SVG, comments).
+    if (child.nodeType !== Node.ELEMENT_NODE) continue
+    child.inert = true
+    inertedSiblings.push(child)
+  }
+}
+
+function unlockBackground() {
+  for (const el of inertedSiblings) {
+    if (el && typeof el.inert !== 'undefined') el.inert = false
+  }
+  inertedSiblings = []
+}
 
 function ensureConfirmDialog() {
   if (confirmDialogEl && document.body.contains(confirmDialogEl)) return confirmDialogEl
@@ -159,6 +183,8 @@ function resolveConfirm(value) {
     dialog.classList.remove('open')
     document.body.classList.remove('confirm-lock')
   }
+  // A1: restore background interactivity + accessibility-tree presence.
+  unlockBackground()
   if (confirmLastFocus && typeof confirmLastFocus.focus === 'function') {
     confirmLastFocus.focus()
   }
@@ -192,6 +218,10 @@ export function showConfirmDialog(opts) {
     confirmResolve = resolve
     dialog.classList.add('open')
     document.body.classList.add('confirm-lock')
+    // A1: inert every body-level sibling so SRs and keyboard users
+    // cannot reach background content while the modal is open. Honours
+    // the aria-modal="true" contract that ATs widely ignore otherwise.
+    lockBackground()
     // Focus the confirm button so Enter works immediately; Escape still cancels.
     requestAnimationFrame(() => okBtn.focus())
   })

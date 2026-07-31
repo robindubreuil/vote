@@ -819,7 +819,7 @@ function renderScoreboardHTML() {
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
           const isCorrect = state.correctColors.has(colorId)
-          return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${sanitizeColor(color?.color)}" title="${color?.name || colorId}"></span>`
+          return `<span class="scoreboard-swatch ${isCorrect ? 'correct' : 'wrong'}" style="background-color: ${sanitizeColor(color?.color)}" title="${escapeHtml(color?.name || colorId)}"></span>`
         })
         .join('')
       const voteDisplay = isBlank ? '<span class="scoreboard-blank">blanc</span>' : colorsHTML || '—'
@@ -927,7 +927,7 @@ export function renderCombinationsHTML() {
       const segments = combo.colors
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
-          return `<span class="combo-segment" style="background-color: ${sanitizeColor(color?.color)}" title="${color?.name || colorId}"></span>`
+          return `<span class="combo-segment" style="background-color: ${sanitizeColor(color?.color)}" title="${escapeHtml(color?.name || colorId)}"></span>`
         })
         .join('')
 
@@ -991,7 +991,7 @@ export function renderStagiairesVotesHTML() {
         .filter((colorId) => colorId !== 'blank')
         .map((colorId) => {
           const color = COLORS.find((c) => c.id === colorId)
-          return `<span class="stagiaire-vote-swatch" style="background-color: ${sanitizeColor(color?.color)}" title="${color?.name || colorId}"></span>`
+          return `<span class="stagiaire-vote-swatch" style="background-color: ${sanitizeColor(color?.color)}" title="${escapeHtml(color?.name || colorId)}"></span>`
         })
         .join('')
 

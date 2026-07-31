@@ -508,6 +508,95 @@ describe('stagiaire renderers', () => {
     })
   })
 
+  // A2: multi-choice used to render a native checkbox (focusable) AND a
+  // sibling <label tabindex="0"> with its own keydown handler — two tab
+  // stops per color (16 for an 8-color palette). The fix drops the
+  // label's tabindex + manual handler so the native checkbox is the
+  // single tab target, matching the fieldset/checkbox semantics.
+  describe('A2: multi-choice single tab stop per color', () => {
+    it('labels carry no tabindex (native checkbox is the sole tab target)', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert', 'bleu']
+      state.multipleChoice = true
+      state.connected = true
+      render()
+      const labels = document.querySelectorAll('label.vote-checkbox-label')
+      expect(labels).toHaveLength(3)
+      labels.forEach((label) => {
+        // No explicit tabindex attribute — the old code set tabindex="0"
+        // here, giving a duplicate tab stop next to the native checkbox.
+        expect(label.getAttribute('tabindex')).toBeNull()
+      })
+    })
+
+    it('exactly one tab stop per color in the fieldset (not two)', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert', 'bleu']
+      state.multipleChoice = true
+      state.connected = true
+      render()
+      const fieldset = document.querySelector('fieldset.vote-grid')
+      const tabbable = fieldset.querySelectorAll('input, button, a[href], select, textarea, [tabindex="0"]')
+      // Only the three native checkboxes — no extra tabindex=0 labels.
+      expect(tabbable).toHaveLength(3)
+      tabbable.forEach((el) => expect(el.tagName).toBe('INPUT'))
+    })
+  })
+
+  // A3: role="radiogroup" must honour the WAI-ARIA APG roving-tabindex
+  // contract — exactly one radio in the tab order, arrow keys move
+  // between radios. The markup contract (tabindex values) is asserted
+  // here; the arrow-key interaction lives in handlers.test.js.
+  describe('A3: single-choice radiogroup roving tabindex', () => {
+    it('with no selection, the first radio is the tab stop and others are -1', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert', 'bleu']
+      state.multipleChoice = false
+      state.selectedColors = new Set()
+      render()
+      const rouge = document.querySelector('[data-testid="vote-btn-rouge"]')
+      const vert = document.querySelector('[data-testid="vote-btn-vert"]')
+      const bleu = document.querySelector('[data-testid="vote-btn-bleu"]')
+      expect(rouge.tabIndex).toBe(0)
+      expect(vert.tabIndex).toBe(-1)
+      expect(bleu.tabIndex).toBe(-1)
+    })
+
+    it('with a selection, the checked radio is the tab stop and others are -1', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert', 'bleu']
+      state.multipleChoice = false
+      state.selectedColors = new Set(['vert'])
+      render()
+      const rouge = document.querySelector('[data-testid="vote-btn-rouge"]')
+      const vert = document.querySelector('[data-testid="vote-btn-vert"]')
+      const bleu = document.querySelector('[data-testid="vote-btn-bleu"]')
+      expect(vert.tabIndex).toBe(0)
+      expect(rouge.tabIndex).toBe(-1)
+      expect(bleu.tabIndex).toBe(-1)
+      // aria-checked still tracks the selection.
+      expect(vert.getAttribute('aria-checked')).toBe('true')
+      expect(rouge.getAttribute('aria-checked')).toBe('false')
+    })
+
+    it('exactly one tab stop exists in the radiogroup', () => {
+      state.appState = AppState.VOTING
+      state.sessionCode = 'ABC'
+      state.availableColors = ['rouge', 'vert', 'bleu']
+      state.multipleChoice = false
+      state.selectedColors = new Set(['bleu'])
+      render()
+      const grid = document.querySelector('.vote-grid[role="radiogroup"]')
+      const tabStops = grid.querySelectorAll('[tabindex="0"]')
+      expect(tabStops).toHaveLength(1)
+      expect(tabStops[0].dataset.color).toBe('bleu')
+    })
+  })
+
   describe('F8: form-validation aria wiring', () => {
     it('join form inputs reference the error element via aria-describedby', () => {
       state.appState = AppState.JOINING
