@@ -25,9 +25,9 @@ esac
 
 # D19: the systemd enable / daemon-reload / start sequence is fully
 # owned by debhelper: dh_installsystemd (invoked via `dh $@` because we
-# ship a .service) injects the matching snippets at `#DEBHELPER#`. The
-# previous manual `systemctl enable/daemon-reload` calls were redundant
-# (idempotent, but parallel-management). Combined with
+# ship a .service) injects the matching snippets at the marker below.
+# The previous manual `systemctl enable/daemon-reload` calls were
+# redundant (idempotent, but parallel-management). Combined with
 # `override_dh_installsystemd --no-start` in debian/rules, the service
 # is enabled on install but NOT auto-started — the operator first
 # reviews /etc/default/vote (default dev origins) and then `systemctl

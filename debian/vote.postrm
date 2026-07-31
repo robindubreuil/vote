@@ -23,8 +23,8 @@ case "$1" in
 esac
 
 # D19: daemon-reload / unit cleanup is owned by debhelper
-# (dh_installsystemd snippets at #DEBHELPER#). Manual daemon-reload was
-# redundant parallel-management.
+# (dh_installsystemd snippets at the marker below). Manual daemon-reload
+# was redundant parallel-management.
 #DEBHELPER#
 
 exit 0
