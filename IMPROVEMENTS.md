@@ -87,7 +87,7 @@ Two verified backend reliability bugs. Both are real today (not theoretical),
 both live in the `internal/hub` + `internal/store` cluster, and they keep the
 crash/graceful-shutdown and reconnect reasoning in one head.
 
-- [ ] **R23** [High] `ReadSamples` stops unrecoverably on a > 1 MiB line, so one
+- [x] **R23** [High] `ReadSamples` stops unrecoverably on a > 1 MiB line, so one
   corrupt line poisons the rest of the history file. `backend/internal/store/
   store.go:369-370` uses `scanner.Buffer(make([]byte, 0, 64*1024),
   scannerBufferSize)` then `for scanner.Scan()`. Per the `bufio.Scanner` docs, a
@@ -103,11 +103,11 @@ crash/graceful-shutdown and reconnect reasoning in one head.
   `TestReadSamplesScannerBufferSkipsPathologicallyLongLine`
   (`store_test.go:215`) only writes (valid, huge) and asserts `len == 1` — it
   never appends a valid sample *after* the huge line, so the regression is
-  unguarded. **Fix:** switch to `bufio.Reader.ReadBytes('\n')` and skip lines
-  longer than `scannerBufferSize` (`if len(line) > scannerBufferSize { continue
-  }`), so recovery is genuine. Add a regression test writing
+  unguarded. **Fix:** switch to `bufio.Reader.ReadSlice('\n')` and skip lines
+  longer than `scannerBufferSize` (bounded discard loop, no unbounded
+  allocation), so recovery is genuine. Added a regression test writing
   (valid, huge, valid) and asserting both valid samples return.
-- [ ] **R24** [Medium] `writePump` goroutines linger up to `PingInterval` (30 s)
+- [x] **R24** [Medium] `writePump` goroutines linger up to `PingInterval` (30 s)
   after every disconnect/eviction. `backend/internal/hub/client.go`: `c.Send` is
   **never closed** (verified — no `close(c.Send)` outside tests), so writePump's
   `case message, ok := <-c.Send; if !ok { return }` branch (lines 240–243) is
@@ -122,19 +122,21 @@ crash/graceful-shutdown and reconnect reasoning in one head.
   readPump's defer because that would race `pendingSend.flush`
   (`hub.go:82-86`), which deliberately bypasses the `closing` flag and sends
   after the hub lock is released — a send-to-closed-channel panic. **Fix:**
-  introduce a separate `done chan struct{}` on `Client`, closed in readPump's
-  defer (LIFO: after `Conn.Close`, before `wg.Done`). Have writePump `select` on
-  `<-c.Done` to exit promptly. Update `pendingSend.flush` to
-  `select { case p.client.Send <- data: case <-p.client.done: }` so post-unlock
-  flushes become no-ops instead of panicking. This recovers the prompt-exit
-  property without regressing the CC3 flush-safety argument.
-- [ ] Tests: `store_test.go` (+ReadSamples returns both valid samples when a
-  huge line sits between them, R23; +`store_bench_test.go` unchanged),
-  `hub/client_test.go` (+writePump exits within a short bound after an eviction
-  / takeover when `done` is closed; +a post-unregister `pendingSend.flush` is a
-  no-op, not a panic, R24), `hub_test.go` (+reconnect-storm goroutine count
-  stays bounded, R24). `go test -race ./...` green; `make fmt-check` / `go vet`
-  clean.
+  introduced a separate `done chan struct{}` on `Client`, closed in readPump's
+  defer (LIFO: after `Conn.Close`, before `wg.Done`). writePump now `select`s on
+  `<-c.done` to exit promptly. `pendingSend.flush` uses a check-then-send
+  pattern (non-blocking `<-done` check first, then send-or-drop select) so
+  post-unregister flushes become clean no-ops instead of buffering into a dead
+  channel. This recovers the prompt-exit property without regressing the CC3
+  flush-safety argument.
+- [x] Tests: `store/read_streaming_test.go` (enhanced
+  `TestReadSamplesScannerBufferSkipsPathologicallyLongLine` now writes
+  valid+huge+valid and asserts BOTH valid samples return, R23),
+  `hub/client_test.go` (+`TestWritePumpExitsPromptlyOnEviction` using real WS +
+  `goroutinesIn` stack-frame counter to assert writePump exits within 5s of
+  eviction with PingInterval=1h, R24; +`TestPendingSendFlushNoOpAfterDone` and
+  `TestPendingSendFlushDeliversWhenDoneOpen` for the flush invariant, R24).
+  `go test -race ./...` green; `make fmt-check` / `go vet` clean.
 
 ---
 

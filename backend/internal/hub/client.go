@@ -92,6 +92,15 @@ type Client struct {
 	pingTick     *time.Ticker
 	IP           string
 	handlers     map[string]func(models.Message)
+	// done is closed in readPump's defer (LIFO: after Conn.Close, before
+	// wg.Done) to signal that the connection's lifecycle is over. writePump
+	// selects on it so it exits promptly on disconnect/eviction/takeover
+	// instead of lingering up to PingInterval (30 s) waiting for the next
+	// ping to fail on the already-closed conn (R24). pendingSend.flush also
+	// selects on it so a post-unregister flush (which bypasses the closing
+	// flag by design, CC3) becomes a clean no-op instead of buffering into
+	// a Send channel that no live writePump will ever drain.
+	done chan struct{}
 	// closing is set when the connection is being torn down
 	// (slow-buffer eviction, reconnect-by-ID takeover, trainer
 	// takeover). Once set, SendJSON short-circuits so stale
@@ -109,6 +118,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, ip string) *Client {
 		Send:     make(chan []byte, ClientSendBufferSize),
 		pingTick: time.NewTicker(hub.Config.PingInterval),
 		IP:       ip,
+		done:     make(chan struct{}),
 	}
 
 	c.handlers = map[string]func(models.Message){
@@ -188,6 +198,16 @@ func (c *Client) readPump() {
 		case <-c.Hub.Context().Done():
 		}
 		c.Conn.Close()
+		// R24: signal writePump and pendingSend.flush that the
+		// connection is dead. Closed AFTER Conn.Close (so writePump's
+		// defer Close is a harmless no-op on the already-closed conn)
+		// and BEFORE wg.Done (so a concurrent Shutdown.Wait still sees
+		// the writePump goroutine as live until done is closed —
+		// guaranteeing it exits on this signal, not on a lingering ping
+		// timeout). Without this, writePump parks on its select with an
+		// empty Send buffer and only wakes on the next pingTick.C where
+		// the ping write fails — up to PingInterval (30 s) later.
+		close(c.done)
 		if c.pingTick != nil {
 			c.pingTick.Stop()
 		}
@@ -254,6 +274,16 @@ func (c *Client) writePump() {
 		case <-c.Hub.Context().Done():
 			// CM1: shutdown — stop writing. readPump's defer will close
 			// the conn once Shutdown calls Conn.Close.
+			return
+		case <-c.done:
+			// R24: readPump exited (disconnect, slow-buffer eviction, or
+			// trainer takeover closed the conn → readPump's defer closed
+			// done). Exit promptly instead of lingering up to
+			// PingInterval waiting for a ping write to fail on the dead
+			// conn. This is the per-client eviction path (shutdown goes
+			// through Context().Done above); without it a reconnect storm
+			// at the resource caps (200 stagiaires × 1000 sessions)
+			// spikes transient goroutine + Send-buffer usage.
 			return
 		}
 	}
