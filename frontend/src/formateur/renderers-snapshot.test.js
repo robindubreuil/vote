@@ -339,6 +339,8 @@ describe('formateur renderers — idempotency snapshots', () => {
       const html = renderVoteHTML()
       expect(html).toMatch(/id="revealBtn"/)
       expect(html).toMatch(/id="newVote"/)
+      expect(html).toContain('Révéler les réponses')
+      expect(html).not.toContain('Corriger les réponses')
     })
 
     it('keeps the reveal button after reveal so the answer key can be corrected (R14)', () => {
@@ -349,6 +351,10 @@ describe('formateur renderers — idempotency snapshots', () => {
       const html = renderVoteHTML()
       expect(html).toMatch(/id="revealBtn"/)
       expect(html).toMatch(/id="newVote"/)
+      // Label flips to "Corriger" once revealed so re-reveal reads as a
+      // distinct action, not a redundant repeat of the same button.
+      expect(html).toContain('Corriger les réponses')
+      expect(html).not.toContain('Révéler les réponses')
     })
 
     it('keeps the reveal section (correct-color checkboxes) after reveal (R14)', () => {

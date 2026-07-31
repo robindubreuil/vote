@@ -1,3 +1,9 @@
+vote (1.4.2-1) unstable; urgency=medium
+
+  * Fix: reveal button relabels to "Corriger les réponses" after first reveal so re-reveal reads as a distinct action (verified live that re-reveal already re-applies scores correctly; the static label made it feel like a no-op)
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Fri, 31 Jul 2026 23:30:51 +0200
+
 vote (1.4.1-1) unstable; urgency=medium
 
   * Fix: gap restored between multiple-choice vote options and "Valider mon vote" (fieldset margin reset clobbered the grid's bottom margin)

@@ -755,7 +755,7 @@ export function renderVoteHTML() {
         `
             : state.competitive
               ? `
-          <button class="btn btn-primary" id="revealBtn" data-testid="reveal-btn" ${!isConnected ? 'disabled' : ''}>${checkPlain(' class="icon icon-md"')} ${t.formateur.revealAnswers}</button>
+          <button class="btn btn-primary" id="revealBtn" data-testid="reveal-btn" ${!isConnected ? 'disabled' : ''}>${checkPlain(' class="icon icon-md"')} ${state.revealed ? t.formateur.correctAnswers : t.formateur.revealAnswers}</button>
           <button class="btn btn-success" id="newVote" data-testid="new-vote-btn" ${!isConnected ? 'disabled' : ''}>${refresh(' class="icon icon-md"')} ${t.formateur.newVote}</button>
         `
               : `
