@@ -92,14 +92,19 @@ export function getLastConfig() {
   return sanitizeConfig(raw)
 }
 
+// F32: returns true when the write landed, false on a quota / private-mode
+// throw so the caller can surface that the just-committed config won't
+// autoload next session. Previously the failure was silently swallowed and
+// the trainer's next session restored the *previous* config with no signal.
 export function setLastConfig(config) {
   const clean = sanitizeConfig(config)
-  if (!clean) return
+  if (!clean) return false
   try {
     localStorage.setItem(LAST_CONFIG_KEY, JSON.stringify({ ...clean, _v: SCHEMA_VERSION }))
   } catch {
-    // Quota exceeded or storage disabled (private mode) — silently ignore.
+    return false
   }
+  return true
 }
 
 // ---------------------------------------------------------------------------

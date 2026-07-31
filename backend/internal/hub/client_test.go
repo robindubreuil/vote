@@ -2,10 +2,12 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1539,8 +1541,7 @@ func TestWritePumpExitsPromptlyOnEviction(t *testing.T) {
 			conn.Close()
 			return
 		}
-		c := NewClient(h, conn, "127.0.0.1")
-		c.ID = clientID
+		c := NewClient(h, conn, "127.0.0.1", clientID)
 		c.Type = "trainer"
 		c.SessionID = "EVT" // valid 3-letter code from the safe alphabet
 		select {
@@ -1622,4 +1623,78 @@ func TestWritePumpExitsPromptlyOnEviction(t *testing.T) {
 		t.Errorf("writePump did not exit within 5s of eviction (R24): %d goroutine(s) still live "+
 			"(without R24 it would linger up to PingInterval=%v)", n, cfg.PingInterval)
 	}
+}
+
+// TestClientIdentityAtomicityRace exercises the R25 data race: c.ID / c.Type
+// / c.SessionID / c.Name are written in readPump (handleStagiaireJoin) but
+// read cross-goroutine by logAttrs (writePump write errors, BroadcastSession
+// fanout via trySend). Before the atomic.Pointer[clientIdentity] fix, Go's
+// non-atomic string assignment triggered a -race detector report. This test
+// runs the writer and reader concurrently under -race and asserts no report.
+func TestClientIdentityAtomicityRace(t *testing.T) {
+	cfg := &config.Config{
+		SessionTimeout:  time.Hour,
+		CleanupInterval: time.Hour,
+		PingInterval:    time.Hour,
+		WriteTimeout:    time.Second,
+		ValidColors:     []string{"rouge", "vert", "bleu"},
+	}
+	h := NewHub(cfg)
+	h.Run()
+	defer h.Shutdown()
+
+	c := NewClient(h, nil, "127.0.0.1", "orig-id-12345")
+	c.Send = make(chan []byte, 1) // tiny buffer so trySend's default branch fires
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Writer goroutine: simulates readPump cycling IDs/Type/SessionID/Name
+	// via stagiaire_join messages (the mutation sites at client.go:520, 523,
+	// 526, 527, 555, 841).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			c.ID = fmt.Sprintf("id-%d", i)
+			c.Type = "stagiaire"
+			c.SessionID = "ABC"
+			c.Name = fmt.Sprintf("name-%d", i)
+			c.snapshotIdentity()
+		}
+	}()
+
+	// Reader goroutine: simulates writePump / BroadcastSession fanout
+	// calling logAttrs and trySend on a client whose identity is being
+	// mutated by its own readPump.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// logAttrs reads ID/SessionID/Type cross-goroutine.
+			_ = c.logAttrs()
+			// trySend's default branch reads Type cross-goroutine.
+			c.trySend([]byte("{}"))
+			// Drain the channel so the buffer doesn't fill and we
+			// alternate between the send and default paths.
+			select {
+			case <-c.Send:
+			default:
+			}
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }

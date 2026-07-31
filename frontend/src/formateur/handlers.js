@@ -195,15 +195,22 @@ export function startVote(client) {
   }
 
   // Persist the committed config so the next session auto-restores it.
-  setLastConfig({
-    selectedColors: Array.from(state.selectedColors),
-    colorLabels: state.colorLabels,
-    multipleChoice: state.multipleChoice,
-    gameEnabled: state.gameEnabled,
-    competitive: state.competitive,
-    allowBlank: state.allowBlank,
-    correctColors: Array.from(state.correctColors)
-  })
+  // F32: surface a toast when the write failed (quota / private mode) so
+  // the trainer knows the next session won't autoload this config instead
+  // of silently restoring the previous one.
+  if (
+    !setLastConfig({
+      selectedColors: Array.from(state.selectedColors),
+      colorLabels: state.colorLabels,
+      multipleChoice: state.multipleChoice,
+      gameEnabled: state.gameEnabled,
+      competitive: state.competitive,
+      allowBlank: state.allowBlank,
+      correctColors: Array.from(state.correctColors)
+    })
+  ) {
+    showToast(t.formateur.configSaveFailed, { type: 'info', duration: 5000 })
+  }
 
   // F24: client.send returns false when the socket is down — surface the
   // failure instead of letting the click drop silently (mirrors the

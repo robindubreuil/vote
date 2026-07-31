@@ -158,13 +158,33 @@ describe('showConfirmDialog', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     const ev = fireKey('Escape')
-    // The dialog's listener runs first (registered earlier) and stops
-    // immediate propagation, so otherHandler must not see it.
+    // The dialog's capture-phase listener fires before bubble-phase
+    // listeners and stops propagation, so otherHandler must not see it.
     expect(ev.defaultPrevented).toBe(true)
     expect(otherHandler).not.toHaveBeenCalled()
     expect(await p).toBe(false)
 
     document.removeEventListener('keydown', otherHandler)
+  })
+
+  it('F31: capture-phase handler fires before a bubble handler registered at init (before dialog open)', async () => {
+    // Reproduces the exact F31 scenario: an app-level Escape handler is
+    // registered at init (before any dialog opens), so a bubble-phase
+    // dialog handler registered lazily on first open would lose the
+    // dispatch race. The capture-phase registration inverts the order
+    // regardless of registration time, so the dialog handler wins.
+    const appHandler = vi.fn()
+    document.addEventListener('keydown', appHandler) // registered FIRST
+
+    const p = showConfirmDialog({ message: 'm' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const ev = fireKey('Escape')
+    expect(ev.defaultPrevented).toBe(true)
+    expect(appHandler).not.toHaveBeenCalled()
+    expect(await p).toBe(false)
+
+    document.removeEventListener('keydown', appHandler)
   })
 
   it('Enter confirms', async () => {

@@ -151,17 +151,30 @@ function ensureConfirmDialog() {
 
   // Key handler lives on document so Escape/Enter work regardless of where
   // focus currently sits (the trigger button may still be focused before
-  // requestAnimationFrame moves focus into the dialog). stopImmediatePropagation
-  // prevents other app-level Escape handlers (e.g. formateur "Esc to leave")
-  // from firing while the dialog is open.
+  // requestAnimationFrame moves focus into the dialog).
+  //
+  // F31: registered in the CAPTURE phase so it fires BEFORE any app-level
+  // Escape handler registered at init (e.g. formateur "Esc to leave",
+  // attachAppKeyboardShortcuts). A bubble-phase listener registered lazily
+  // on first dialog open fires AFTER the init-time app handler, so the app
+  // handler ran first, synchronously re-invoked showConfirmDialog, and
+  // overwrote confirmResolve — leaking the original caller's promise. The
+  // capture phase inverts dispatch order regardless of registration time,
+  // and stopImmediatePropagation + stopPropagation prevent the event from
+  // reaching the bubble phase at all. (At AT_TARGET the spec invokes all
+  // listeners in registration order, so an app handler registered at init
+  // would still win when the event targets document directly; the
+  // isConfirmDialogOpen guard in the app handler closes that residual.)
   document.addEventListener('keydown', (e) => {
     if (!confirmResolve) return
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       e.stopImmediatePropagation()
       resolveConfirm(false)
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      e.stopPropagation()
       e.stopImmediatePropagation()
       resolveConfirm(true)
     } else if (e.key === 'Tab') {
@@ -171,15 +184,28 @@ function ensureConfirmDialog() {
       const last = focusable[focusable.length - 1]
       if (e.shiftKey && document.activeElement === first) {
         e.preventDefault()
+        e.stopPropagation()
         last.focus()
       } else if (!e.shiftKey && document.activeElement === last) {
         e.preventDefault()
+        e.stopPropagation()
         first.focus()
       }
     }
-  })
+  }, true)
 
   return confirmDialogEl
+}
+
+/**
+ * Whether a confirm dialog is currently open. Used by app-level keyboard
+ * shortcuts (F31) to avoid re-invoking showConfirmDialog while one is
+ * already on screen — a re-entrant call overwrites confirmResolve and
+ * leaks the original caller's promise.
+ * @returns {boolean}
+ */
+export function isConfirmDialogOpen() {
+  return confirmResolve !== null
 }
 
 function resolveConfirm(value) {

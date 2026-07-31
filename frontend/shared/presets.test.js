@@ -105,13 +105,23 @@ describe('getLastConfig / setLastConfig', () => {
     expect(getLastConfig()).toBeNull()
   })
 
-  it('survives quota errors', () => {
+  it('returns true on a successful write', () => {
+    expect(setLastConfig({ selectedColors: ['rouge'], colorLabels: {}, multipleChoice: false })).toBe(true)
+  })
+
+  // F32: returns false on a quota throw so the caller can surface that the
+  // config won't autoload next session. Previously it returned void and
+  // silently swallowed the failure.
+  it('F32: returns false on quota errors', () => {
     const original = localStorage.setItem
     localStorage.setItem = () => {
       throw new DOMException('quota', 'QuotaExceededError')
     }
-    expect(() => setLastConfig({ selectedColors: ['rouge'], colorLabels: {}, multipleChoice: false })).not.toThrow()
-    localStorage.setItem = original
+    try {
+      expect(setLastConfig({ selectedColors: ['rouge'], colorLabels: {}, multipleChoice: false })).toBe(false)
+    } finally {
+      localStorage.setItem = original
+    }
   })
 })
 

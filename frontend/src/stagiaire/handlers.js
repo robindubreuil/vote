@@ -1,5 +1,5 @@
 import { validateName, validateSessionCode } from '@shared/validation.js'
-import { showError, showConfirmDialog } from '@shared/ui.js'
+import { showError, showConfirmDialog, showToast } from '@shared/ui.js'
 import { loader } from '@shared/icons.js'
 import { CONSTANTS } from '@shared/config.js'
 import { t } from '@shared/strings.js'
@@ -277,6 +277,12 @@ function showEndScreen(boardState) {
   if (bestEl) {
     bestEl.hidden = !boardState.isRecord
     if (boardState.isRecord) bestEl.textContent = t.stagiaire.gameNewBest
+  }
+  // F32: a record that couldn't be persisted (quota / private mode) still
+  // shows the badge, but surface a toast so the trainee knows the best
+  // score won't survive a reload.
+  if (boardState.saveFailed) {
+    showToast(t.stagiaire.gameSaveFailed, { type: 'info', duration: 5000 })
   }
   const secretEl = document.getElementById('gameOverSecret')
   if (secretEl) {

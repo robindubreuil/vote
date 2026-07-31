@@ -80,6 +80,7 @@ export const t = {
     gameFinalScore: (n) => `Score : ${n}`,
     gameBaseMultiplier: (base, mult) => `${base} × ${mult}`,
     gameNewBest: 'Nouveau record !',
+    gameSaveFailed: 'Record non enregistré (stockage plein)',
     gameRulesTitle: 'Comment jouer',
     gameRules: [
       'Le code secret est composé de 4 couleurs (avec répétitions possibles).',
@@ -161,6 +162,7 @@ export const t = {
     presetDeleted: 'Modèle supprimé',
     presetNameRequired: 'Le nom est requis',
     presetSaveFailed: "Échec de l'enregistrement",
+    configSaveFailed: 'Configuration non mémorisée (stockage plein)',
     noPresets: 'Aucun modèle enregistré.',
     presetSwatchTitle: (name, colors) => `${name} — ${colors} couleur${colors > 1 ? 's' : ''}`,
     exportPresets: 'Exporter',

@@ -54,8 +54,7 @@ func TestShutdownWaitsForClientGoroutines(t *testing.T) {
 			conn.Close()
 			return
 		}
-		c := NewClient(h, conn, "127.0.0.1")
-		c.ID = clientID
+		c := NewClient(h, conn, "127.0.0.1", clientID)
 		c.Type = "trainer"
 		c.SessionID = "SD"  // shared session so Shutdown iterates them all
 		c.TrainerToken = "" // first trainer, no takeover

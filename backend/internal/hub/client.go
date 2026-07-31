@@ -109,17 +109,42 @@ type Client struct {
 	// messages onto a dead channel and spamming the log on every
 	// subsequent broadcast until pongWait evicts the entry (CL1, CM3).
 	closing atomic.Bool
+	// identity is an atomic snapshot of the mutable logging fields (ID,
+	// Name, SessionID, Type). R25: these fields are written in readPump
+	// (handleTrainerJoin / handleStagiaireJoin / handleUpdateName) but read
+	// cross-goroutine by logAttrs (writePump write errors, BroadcastSession
+	// fanout via trySend) and by trySend's role check. Go string assignment
+	// is a two-word write, not atomic, so the unsynchronized read/write is a
+	// data race under -race. All mutations go through snapshotIdentity
+	// (single-goroutine: readPump), all cross-goroutine reads go through
+	// identity.Load(). Same-goroutine reads (handlers, rateLimitKey) keep
+	// using the direct fields — they race no one.
+	identity atomic.Pointer[clientIdentity]
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, ip string) *Client {
+// clientIdentity is the immutable snapshot stored atomically on Client so
+// logAttrs and trySend can read the logging identity from any goroutine
+// without racing readPump's writes to the mutable ID/Name/SessionID/Type
+// fields (R25).
+type clientIdentity struct {
+	ID        string
+	Name      string
+	SessionID string
+	Type      string
+}
+
+func NewClient(hub *Hub, conn *websocket.Conn, ip, clientID string) *Client {
 	c := &Client{
-		Hub:      hub,
-		Conn:     conn,
-		Send:     make(chan []byte, ClientSendBufferSize),
-		pingTick: time.NewTicker(hub.Config.PingInterval),
-		IP:       ip,
-		done:     make(chan struct{}),
+		Hub:        hub,
+		Conn:       conn,
+		Send:       make(chan []byte, ClientSendBufferSize),
+		pingTick:   time.NewTicker(hub.Config.PingInterval),
+		IP:         ip,
+		ID:         clientID,
+		OriginalID: clientID,
+		done:       make(chan struct{}),
 	}
+	c.snapshotIdentity()
 
 	c.handlers = map[string]func(models.Message){
 		"trainer_join":      c.handleTrainerJoin,
@@ -146,6 +171,31 @@ func (c *Client) Start() {
 	go c.writePump()
 }
 
+// identitySnapshot returns the current atomic identity, or a fallback
+// built from the raw fields when the pointer was never stored (test
+// fixtures that bypass NewClient — production always stores via
+// snapshotIdentity in NewClient). Returns a value so callers never
+// dereference nil.
+func (c *Client) identitySnapshot() clientIdentity {
+	if id := c.identity.Load(); id != nil {
+		return *id
+	}
+	return clientIdentity{ID: c.ID, Name: c.Name, SessionID: c.SessionID, Type: c.Type}
+}
+
+// snapshotIdentity atomically publishes the current ID/Name/SessionID/Type
+// so cross-goroutine readers (logAttrs, trySend) see a consistent set
+// without racing readPump's writes (R25). Called only from readPump
+// (single writer), after every mutation of those fields.
+func (c *Client) snapshotIdentity() {
+	c.identity.Store(&clientIdentity{
+		ID:        c.ID,
+		Name:      c.Name,
+		SessionID: c.SessionID,
+		Type:      c.Type,
+	})
+}
+
 // logAttrs returns the slog attributes that identify this client on a log
 // line (B7). Used by hub/client and hub/hub error paths so an operator
 // reading a server log can correlate a hub-side error with the HTTP access
@@ -153,20 +203,26 @@ func (c *Client) Start() {
 // classroom flap (via session + remote IP). Returns nil for an anonymous
 // client (pre-join) so call sites can splat ...c.logAttrs() without
 // polluting early-readPump lines.
+//
+// R25: reads the mutable identity (ID/SessionID/Type) from the atomic
+// snapshot instead of the raw fields, so this is safe to call from any
+// goroutine (writePump, BroadcastSession fanout). IP and RequestID are
+// immutable after the WS handshake, so they are read directly.
 func (c *Client) logAttrs() []any {
 	if c == nil {
 		return nil
 	}
+	id := c.identitySnapshot()
 	attrs := []any{
-		slog.String("client_id", c.ID),
-		slog.String("session", c.SessionID),
+		slog.String("client_id", id.ID),
+		slog.String("session", id.SessionID),
 		slog.String("ip", c.IP),
 	}
 	if c.RequestID != "" {
 		attrs = append(attrs, slog.String("request_id", c.RequestID))
 	}
-	if c.Type != "" {
-		attrs = append(attrs, slog.String("role", c.Type))
+	if id.Type != "" {
+		attrs = append(attrs, slog.String("role", id.Type))
 	}
 	return attrs
 }
@@ -337,7 +393,10 @@ func (c *Client) trySend(data []byte) {
 	select {
 	case c.Send <- data:
 	default:
-		if c.Type == "trainer" {
+		// R25: read Type from the atomic snapshot — trySend is reached
+		// from BroadcastSession fanout (another client's readPump), so
+		// the raw c.Type races this client's own readPump writes.
+		if c.identitySnapshot().Type == "trainer" {
 			slog.Warn("Trainer send buffer full: dropping message", c.logAttrs()...)
 		} else {
 			slog.Warn("Send channel full: disconnecting slow client", c.logAttrs()...)
@@ -428,6 +487,7 @@ func (c *Client) handleTrainerJoin(msg models.Message) {
 	c.TrainerToken = msg.TrainerToken
 	c.Type = "trainer"
 	c.SessionID = code
+	c.snapshotIdentity()
 	c.Hub.Security.ClearFailedJoin(c.IP)
 
 	select {
@@ -526,6 +586,11 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 			// on the client will be overwritten by session_joined.
 		}
 	}
+
+	// R25: publish the post-resolution identity (ID may have been
+	// overwritten above) before the Register send, so by the time this
+	// client is visible to BroadcastSession fanout the snapshot is current.
+	c.snapshotIdentity()
 
 	c.Hub.Security.ClearFailedJoin(c.IP)
 
@@ -788,6 +853,7 @@ func (c *Client) handleUpdateName(msg models.Message) {
 	// whitespace.
 	name := strings.TrimSpace(msg.Name)
 	c.Name = name
+	c.snapshotIdentity()
 	c.SendJSON(map[string]any{"type": "name_updated", "name": name})
 
 	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "stagiaire_names_updated")

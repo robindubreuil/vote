@@ -46,38 +46,65 @@ describe('game-storage', () => {
 
   describe('saveHighScore', () => {
     it('saves and reports a new record on empty store', () => {
-      expect(saveHighScore(100)).toBe(true)
+      const result = saveHighScore(100)
+      expect(result.isRecord).toBe(true)
+      expect(result.persisted).toBe(true)
       expect(loadHighScore()).toBe(100)
     })
 
     it('does not save a score that does not beat the best', () => {
       saveHighScore(500)
-      expect(saveHighScore(499)).toBe(false)
+      const result = saveHighScore(499)
+      expect(result.isRecord).toBe(false)
+      expect(result.persisted).toBe(false)
       expect(loadHighScore()).toBe(500)
     })
 
     it('saves a new record that beats the previous', () => {
       saveHighScore(100)
-      expect(saveHighScore(150)).toBe(true)
+      const result = saveHighScore(150)
+      expect(result.isRecord).toBe(true)
+      expect(result.persisted).toBe(true)
       expect(loadHighScore()).toBe(150)
     })
 
     it('rejects zero and negative scores', () => {
-      expect(saveHighScore(0)).toBe(false)
-      expect(saveHighScore(-50)).toBe(false)
+      expect(saveHighScore(0).isRecord).toBe(false)
+      expect(saveHighScore(-50).isRecord).toBe(false)
       expect(loadHighScore()).toBe(0)
     })
 
     it('rejects NaN and non-numeric input', () => {
-      expect(saveHighScore(NaN)).toBe(false)
-      expect(saveHighScore('abc')).toBe(false)
-      expect(saveHighScore(null)).toBe(false)
+      expect(saveHighScore(NaN).isRecord).toBe(false)
+      expect(saveHighScore('abc').isRecord).toBe(false)
+      expect(saveHighScore(null).isRecord).toBe(false)
       expect(loadHighScore()).toBe(0)
     })
 
     it('floors fractional scores', () => {
       saveHighScore(99.9)
       expect(loadHighScore()).toBe(99)
+    })
+
+    // F32: a quota throw must still report isRecord=true (the score DID
+    // beat the best) but persisted=false so the caller can surface the
+    // failure. Previously it returned false indistinguishably from a
+    // non-record, so the "Nouveau record !" badge was suppressed.
+    it('F32: reports isRecord=true + persisted=false on a quota throw', () => {
+      saveHighScore(100) // establish a baseline
+      const original = localStorage.setItem
+      localStorage.setItem = () => {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+      }
+      try {
+        const result = saveHighScore(200)
+        expect(result.isRecord).toBe(true)
+        expect(result.persisted).toBe(false)
+      } finally {
+        localStorage.setItem = original
+      }
+      // The old best is untouched (the write never landed).
+      expect(loadHighScore()).toBe(100)
     })
   })
 
