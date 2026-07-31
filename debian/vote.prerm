@@ -15,8 +15,8 @@ case "$1" in
 esac
 
 # D19: the systemd stop-before-remove sequence is owned by debhelper
-# (dh_installsystemd snippets at #DEBHELPER#). Manual `systemctl stop`
-# was redundant parallel-management.
+# (dh_installsystemd snippets at the marker below). Manual `systemctl
+# stop` was redundant parallel-management.
 #DEBHELPER#
 
 exit 0
