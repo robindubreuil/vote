@@ -580,30 +580,67 @@ func mustSign(t *testing.T, a *dashboardAuth, expiresAt time.Time) string {
 // TestShouldUseSecureCookie pins the loopback heuristic. S9: the decision
 // is driven by the TCP peer (RemoteAddr), not the client-controlled Host
 // header, so a spoofed `Host: localhost` cannot flip Secure=false.
+//
+// S17: behind the documented Caddy deploy TLS terminates at the proxy, so
+// the backend sees a plain-HTTP loopback dial (r.TLS nil, RemoteAddr
+// 127.0.0.1). Without honouring the proxy's forwarded scheme, every
+// production login would carry Secure=false and leak the admin cookie over
+// plaintext HTTP. The loopback branch now consults X-Forwarded-Proto /
+// Forwarded; the non-loopback branch is unchanged (Secure=true regardless,
+// so a remote peer forging the header cannot downgrade).
 func TestShouldUseSecureCookie(t *testing.T) {
 	cases := []struct {
-		name     string
-		tls      bool
-		remote   string
-		host     string
-		expected bool
+		name      string
+		tls       bool
+		remote    string
+		host      string
+		xfp       string // X-Forwarded-Proto
+		forwarded string // Forwarded (RFC 7239)
+		expected  bool
 	}{
-		{"tls", true, "51.0.0.1:1234", "vote.example.com", true},
-		{"loopback v4", false, "127.0.0.1:8080", "vote.example.com", false},
-		{"loopback v6", false, "[::1]:8080", "vote.example.com", false},
-		{"remote", false, "10.0.0.5:8080", "vote.example.com", true},
-		{"spoofed host does not relax", false, "10.0.0.5:8080", "localhost", true},
-		{"spoofed host v6 does not relax", false, "[2001:db8::1]:8080", "127.0.0.1", true},
+		{"tls", true, "51.0.0.1:1234", "vote.example.com", "", "", true},
+		{"loopback v4 plain dev", false, "127.0.0.1:8080", "vote.example.com", "", "", false},
+		{"loopback v6 plain dev", false, "[::1]:8080", "vote.example.com", "", "", false},
+		{"remote", false, "10.0.0.5:8080", "vote.example.com", "", "", true},
+		{"spoofed host does not relax", false, "10.0.0.5:8080", "localhost", "", "", true},
+		{"spoofed host v6 does not relax", false, "[2001:db8::1]:8080", "127.0.0.1", "", "", true},
+
+		// S17: Caddy reverse_proxy lands on the loopback branch with
+		// X-Forwarded-Proto: https (auto-injected by Caddy). Must set
+		// Secure so the cookie can't be stolen over a plaintext hop
+		// before the HSTS redirect.
+		{"loopback behind https proxy", false, "127.0.0.1:8080", "vote.example.com", "https", "", true},
+		{"loopback v6 behind https proxy", false, "[::1]:8080", "vote.example.com", "https", "", true},
+		// Case-insensitive header value.
+		{"loopback behind HTTPS proxy uppercase", false, "127.0.0.1:8080", "vote.example.com", "HTTPS", "", true},
+		// RFC 7239 Forwarded header, quoted and unquoted proto.
+		{"loopback behind https proxy via forwarded", false, "127.0.0.1:8080", "vote.example.com", "", `for=203.0.113.7; proto=https; host=vote.example.com`, true},
+		{"loopback behind https proxy via forwarded quoted", false, "127.0.0.1:8080", "vote.example.com", "", `proto="https"`, true},
+		// Forwarded present but proto=http must NOT flip Secure on.
+		{"loopback behind http proxy via forwarded", false, "127.0.0.1:8080", "vote.example.com", "http", "", false},
+		{"loopback behind http proxy via forwarded header", false, "127.0.0.1:8080", "vote.example.com", "", `proto=http`, false},
+		// No scheme signalled over loopback = genuine local dev.
+		{"loopback no scheme stays dev-friendly", false, "127.0.0.1:8080", "localhost", "", "", false},
+		// A remote peer forging X-Forwarded-Proto: https is irrelevant —
+		// Secure is already true on the non-loopback branch and the
+		// header is never consulted there.
+		{"remote forging forwarded-proto still true", false, "10.0.0.5:8080", "vote.example.com", "https", "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			req := &http.Request{Host: c.host, RemoteAddr: c.remote}
+			req := &http.Request{Host: c.host, RemoteAddr: c.remote, Header: http.Header{}}
 			if c.tls {
 				req.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
 			}
+			if c.xfp != "" {
+				req.Header.Set("X-Forwarded-Proto", c.xfp)
+			}
+			if c.forwarded != "" {
+				req.Header.Set("Forwarded", c.forwarded)
+			}
 			got := shouldUseSecureCookie(req)
 			if got != c.expected {
-				t.Errorf("tls=%v remote=%s host=%s: expected %v, got %v", c.tls, c.remote, c.host, c.expected, got)
+				t.Errorf("tls=%v remote=%s host=%s xfp=%q forwarded=%q: expected %v, got %v", c.tls, c.remote, c.host, c.xfp, c.forwarded, c.expected, got)
 			}
 		})
 	}
@@ -763,4 +800,97 @@ func TestDashboardLoginCSPRNGFailureReturns500(t *testing.T) {
 			t.Errorf("no cookie should be minted on CSPRNG failure, got %s=%s", c.Name, c.Value)
 		}
 	}
+}
+
+// TestSecretMatches is the S18 behavioural contract: the password compare
+// accepts exactly the configured secret and rejects everything else,
+// regardless of submitted length. Hashing both sides to a fixed 32-byte
+// digest before subtle.ConstantTimeCompare is what removes the old
+// length-leak, so the assertions deliberately span lengths shorter, equal,
+// and longer than the secret.
+func TestSecretMatches(t *testing.T) {
+	const secret = "correct horse battery staple"
+	a := newDashboardAuth(secret, time.Hour)
+
+	cases := []struct {
+		name string
+		got  string
+		want bool
+	}{
+		{"exact", secret, true},
+		{"empty", "", false},
+		{"prefix only", "correct horse", false},
+		{"trailing newline", secret + "\n", false},
+		{"shorter wrong", "nope", false},
+		{"same length wrong", "wrong!!horse!!battery!!staple", false},
+		{"longer wrong", secret + " extra junk that is much longer than the real secret", false},
+		{"case differs", "Correct Horse Battery Staple", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := a.secretMatches(c.got); got != c.want {
+				t.Errorf("secretMatches(%q) = %v, want %v", c.got, got, c.want)
+			}
+		})
+	}
+}
+
+// TestSecretMatchesNoLengthOracle is the S18 timing property. The original
+// bug was a length oracle: subtle.ConstantTimeCompare short-circuits on a
+// length mismatch, so a probe whose length EQUALS the secret's took the full
+// constant-time sweep (slow) while a probe of any other length returned
+// immediately (fast). Iterating probe lengths and watching for the spike
+// recovered len(secret).
+//
+// After hashing both sides the secret's length no longer gates any branch —
+// the input is hashed (cost ∝ len(input), which the attacker already knows)
+// and the secret is hashed once (a constant offset). The discriminating
+// signal between the buggy and fixed code is therefore the RELATIVE cost of
+// an at-length probe vs a longer off-length probe:
+//   - buggy:  at-length probe is SLOWER than a longer probe (sweep vs short-
+//     circuit), so ratio = at-length/longer >> 1.
+//   - fixed:  at-length probe is FASTER than a longer probe (hashes fewer
+//     bytes), so ratio = at-length/longer < 1.
+//
+// We assert the at-length probe is not slower than a longer probe by more
+// than a small factor. This never fails spuriously on the fixed code (the
+// at-length probe genuinely hashes strictly fewer bytes) and fails reliably
+// on the buggy code (the at-length probe hits the slow sweep). A starved CI
+// box inflates both means similarly, leaving the ratio < 1, so the assertion
+// is one-sided-safe: it can fail to catch a regression under load but never
+// spuriously fails.
+func TestSecretMatchesNoLengthOracle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing property test omitted in -short mode")
+	}
+	const secret = "a-secret-of-known-length" // len 25
+	a := newDashboardAuth(secret, time.Hour)
+
+	atLength := strings.Repeat("y", len(secret)) // wrong but len == len(secret)
+	longer := strings.Repeat("x", 4096)          // wrong, len != len(secret)
+
+	const iterations = 200_000
+	atLengthMean := meanCallDuration(a.secretMatches, atLength, iterations)
+	longerMean := meanCallDuration(a.secretMatches, longer, iterations)
+
+	// At-length must not be dramatically slower than longer. The buggy
+	// code makes it ~5-10x slower; the fixed code makes it faster. A 1.5x
+	// factor absorbs scheduling noise while still rejecting the oracle.
+	if atLengthMean > longerMean*3/2 {
+		t.Fatalf("secretMatches length oracle present: at-length probe mean=%v > longer probe mean=%v (expected at-length not slower)", atLengthMean, longerMean)
+	}
+}
+
+// meanCallDuration runs fn n times against got and returns the mean wall-
+// clock duration per call. Warmup calls prime caches before measurement.
+func meanCallDuration(fn func(string) bool, got string, n int) time.Duration {
+	const warmup = 2000
+	for i := 0; i < warmup; i++ {
+		fn(got)
+	}
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		fn(got)
+	}
+	return time.Since(start) / time.Duration(n)
 }

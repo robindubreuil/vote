@@ -84,6 +84,23 @@ func newDashboardAuth(secret string, maxAge time.Duration) *dashboardAuth {
 
 func (a *dashboardAuth) enabled() bool { return a != nil }
 
+// secretMatches reports whether the submitted password equals the configured
+// dashboard secret, using a constant-time comparison.
+//
+// S18: the prior direct subtle.ConstantTimeCompare([]byte(got), want) is only
+// constant-time for equal lengths — a length mismatch returns 0 immediately,
+// leaking the secret length by timing. Hashing both sides first normalises
+// every probe to a fixed 32-byte digest, so the subsequent compare is always
+// over equal lengths and fully constant-time. CheckJoinRateLimit("dash:"+IP)
+// already throttles probing to ~3/10min per IP, so the leak is low-impact on
+// its own; this closes the one spot the codebase's constant-time discipline
+// slipped.
+func (a *dashboardAuth) secretMatches(got string) bool {
+	gotSum := sha256.Sum256([]byte(got))
+	wantSum := sha256.Sum256(a.secret)
+	return subtle.ConstantTimeCompare(gotSum[:], wantSum[:]) == 1
+}
+
 // signCookie builds an HMAC-SHA256 over the payload (version + nonce +
 // expiry) and returns "payload.signature" both base64url-encoded. The nonce
 // makes each minting unique; the signature binds the expiry so a leaked
@@ -186,14 +203,51 @@ func (a *dashboardAuth) purgeRevoked() {
 // An attacker who can inject a `Host: localhost` header over plain HTTP
 // would otherwise flip Secure=false and enable cookie theft over an
 // insecure hop.
+//
+// S17: behind the recommended Caddy deploy, TLS terminates at the proxy and
+// the backend sees a plain-HTTP loopback dial (r.TLS is nil, RemoteAddr is
+// 127.0.0.1) — so the loopback branch alone would return Secure=false for
+// every production login, leaking the admin cookie over plaintext HTTP to a
+// MITM who induces any http:// request before the HSTS redirect. The fix
+// honours the proxy's forwarded scheme inside the loopback branch: a
+// loopback peer means the dialer is the local proxy (Caddy's reverse_proxy
+// auto-injects X-Forwarded-Proto), so trusting it errs toward the safe
+// Secure=true. Genuine local dev runs without a proxy, so the header is
+// absent and the dev-friendly Secure=false is preserved.
 func shouldUseSecureCookie(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
 	if isLoopbackRemoteAddr(r.RemoteAddr) {
+		if forwardedSchemeIsHTTPS(r) {
+			return true
+		}
 		return false
 	}
 	return true
+}
+
+// forwardedSchemeIsHTTPS reports whether an inbound loopback request was
+// fronted by an HTTPS proxy. Checks the de-facto X-Forwarded-Proto header
+// and the standard Forwarded header (RFC 7239), both case-insensitively.
+// Only consulted inside the loopback branch of shouldUseSecureCookie, so it
+// never governs a request whose TCP peer is a non-local client.
+func forwardedSchemeIsHTTPS(r *http.Request) bool {
+	if proto := r.Header.Get("X-Forwarded-Proto"); strings.EqualFold(proto, "https") {
+		return true
+	}
+	fwd := r.Header.Get("Forwarded")
+	if fwd == "" {
+		return false
+	}
+	for _, part := range strings.Split(fwd, ";") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(part), "="); ok && strings.EqualFold(k, "proto") {
+			if strings.EqualFold(strings.Trim(v, `"`), "https") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isLoopbackRemoteAddr reports whether the TCP peer is a loopback address.
@@ -249,7 +303,7 @@ func (s *Server) handleDashboardLogin(c *gin.Context) {
 	}
 
 	password := c.PostForm("password")
-	if subtle.ConstantTimeCompare([]byte(password), s.auth.secret) != 1 {
+	if !s.auth.secretMatches(password) {
 		s.hub.Security.RecordFailedJoin(dashKey)
 		slog.Warn("dashboard login failed", "remote", c.ClientIP())
 		c.Header("Content-Type", "text/html; charset=utf-8")
