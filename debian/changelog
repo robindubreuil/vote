@@ -1,3 +1,10 @@
+vote (1.4.1-1) unstable; urgency=medium
+
+  * Fix: gap restored between multiple-choice vote options and "Valider mon vote" (fieldset margin reset clobbered the grid's bottom margin)
+  * Fix: empty top bar no longer shown on stagiaire join screen (header `hidden` attribute was overridden by `display: flex`)
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Fri, 31 Jul 2026 22:55:28 +0200
+
 vote (1.4.0-1) unstable; urgency=medium
 
   * Security: Dashboard cookie Secure flag honoured behind TLS-terminating proxy (S17)
