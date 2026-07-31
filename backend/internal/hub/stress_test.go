@@ -308,7 +308,6 @@ func TestStressConcurrentNameRegistration(t *testing.T) {
 	// ErrNameInUse. This is the direct TOCTOU scenario: all 6 read
 	// "name free" concurrently, but only 1 wins the session-lock write.
 	const nameGroups = 5
-	const perName = stressClientCount / nameGroups
 	var successes, rejections int64
 
 	var wg sync.WaitGroup

@@ -47,7 +47,6 @@ func TestShutdownJoinsAllGoroutinesUnderLoad(t *testing.T) {
 	// iterates them (closing their conns and waiting on their pumps).
 	const registered = 12
 	var (
-		conns       []*websocket.Conn
 		readWG      sync.WaitGroup
 		closedCount atomic.Int32
 	)
@@ -57,7 +56,6 @@ func TestShutdownJoinsAllGoroutinesUnderLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial %d: %v", i, err)
 		}
-		conns = append(conns, c)
 
 		// Register as a trainer so the hub tracks this connection.
 		if err := c.WriteJSON(models.Message{Type: "trainer_join"}); err != nil {

@@ -71,3 +71,4 @@ test-results/
 playwright-report/
 coverage/
 backend/data/
+data/

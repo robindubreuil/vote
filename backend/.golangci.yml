@@ -42,6 +42,10 @@ linters:
           - errcheck
           - gosec
         path: integration/
+      - linters:
+          - staticcheck
+        text: "ST1005"
+        path: internal/vote/manager\.go
     paths:
       - third_party$
       - builtin$

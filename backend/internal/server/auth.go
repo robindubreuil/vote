@@ -219,10 +219,7 @@ func shouldUseSecureCookie(r *http.Request) bool {
 		return true
 	}
 	if isLoopbackRemoteAddr(r.RemoteAddr) {
-		if forwardedSchemeIsHTTPS(r) {
-			return true
-		}
-		return false
+		return forwardedSchemeIsHTTPS(r)
 	}
 	return true
 }

@@ -231,7 +231,8 @@ func TestRequestIDGeneratedIsLowercaseHex(t *testing.T) {
 			t.Errorf("ID length: got %d, want %d (id=%q)", len(id), requestIDBytes*2, id)
 		}
 		for _, r := range id {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+			if !isHex {
 				t.Fatalf("non-hex char %q in request ID %q", r, id)
 			}
 		}
