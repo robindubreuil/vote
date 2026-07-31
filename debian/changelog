@@ -1,3 +1,19 @@
+vote (1.4.0-1) unstable; urgency=medium
+
+  * Security: Dashboard cookie Secure flag honoured behind TLS-terminating proxy (S17)
+  * Security: Constant-time dashboard password compare via SHA-256 digests (S18)
+  * Fix: showError surfaces mid-session errors via toast fallback (F29)
+  * Fix: Reconnect backoff reaches ~16h instead of ~18min (F30)
+  * Fix: Confirm-dialog Escape no longer leaks the in-flight promise (F31)
+  * Fix: saveHighScore/setLastConfig surface quota failures instead of silent loss (F32)
+  * Fix: Persistence history recovery on oversized lines (R23)
+  * Fix: writePump exits promptly on disconnect via done channel (R24)
+  * Fix: Client identity read via atomic.Pointer, eliminating data race (R25)
+  * Fix: cleanupLoop holds RLock across reap, closing TOCTOU window (R26)
+  * Tests: 621 frontend tests, full -race backend suite green
+
+ -- Robin <63008968+robindubreuil@users.noreply.github.com>  Thu, 31 Jul 2026 12:20:00 +0100
+
 vote (1.3.1-1) unstable; urgency=medium
 
   * Fix: RevealAnswers double-scoring on re-click (idempotency via LastVoteScores)
