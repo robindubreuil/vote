@@ -208,13 +208,14 @@ describe('stagiaire handlers — submit / join / leave', () => {
   })
 
   describe('submitVote', () => {
-    it('shows an error when there is no client', () => {
+    it('F29: shows an error toast when there is no client', () => {
       mockGetClient.mockReturnValue(null)
-      // No DOM state to depend on — just verify the error path.
+      // WAITING view has no inline .error-message slot — F29 falls back
+      // to a toast so the error is visible instead of silently dropped.
       expect(() => submitVote()).not.toThrow()
-      // showError is the safe-path: 'Erreur de connexion'
-      // The error element may not exist (no .error-message rendered in WAITING),
-      // in which case showError silently no-ops. Verify via the spy-like mock.
+      const toast = document.querySelector('[data-toast-message="Erreur de connexion"]')
+      expect(toast).not.toBeNull()
+      expect(toast.className).toContain('toast--error')
     })
 
     it('disables the submit button while sending and restores it on send failure', () => {
@@ -240,6 +241,11 @@ describe('stagiaire handlers — submit / join / leave', () => {
       // send returned false → button restored, not stuck disabled.
       expect(btn.disabled).toBe(false)
       expect(btn.innerHTML).toBe(original)
+      // F29: send failure surfaces an error toast in VOTING state (no
+      // inline .error-message slot exists here).
+      const toast = document.querySelector('[data-toast-message="Erreur de connexion"]')
+      expect(toast).not.toBeNull()
+      expect(toast.className).toContain('toast--error')
     })
 
     it('keeps the button disabled after a successful send (vote_accepted will re-enable on render)', () => {

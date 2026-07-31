@@ -60,6 +60,14 @@ export function showError(message) {
     errorTimeoutId = setTimeout(() => {
       hideError()
     }, 5000)
+  } else {
+    // F29: the inline .error-message slot exists only in the
+    // landing/join/edit-name views. In WAITING/VOTING/VOTED/CLOSED it
+    // is absent, so without this fallback every mid-session error
+    // (failed vote send, server error, dead-connection sentinel) was
+    // silently dropped. Fall back to an error toast — it works in
+    // every view and reuses the existing dedup/auto-hide machinery.
+    showToast(message, { type: 'error', duration: 5000 })
   }
 }
 

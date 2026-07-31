@@ -17,11 +17,15 @@ export class VoteClient {
       onPermanentClose: () => {},
       initialReconnectDelay: 2000,
       maxReconnectDelay: 30000,
-      // Ceiling on reconnect attempts before the client gives up. Default
-      // ~50 attempts ≈ 16h at the default 2s→30s exponential backoff, which
-      // is well beyond any plausible transient outage and bounds memory/CPU
-      // use if the server is gone for good.
-      maxReconnectAttempts: 50,
+      // Ceiling on reconnect attempts before the client gives up. With
+      // the default 2s→30s exponential backoff and jitter (avg factor
+      // 0.75), 2500 attempts sum to ≈16h — well beyond any plausible
+      // transient outage (wifi flap, router reboot, DNS hiccup) while
+      // still bounding memory/CPU if the server is gone for good.
+      // F30: the prior default of 50 summed to only ≈18min, flipping
+      // every client to permanent-close on any outage longer than a
+      // coffee break.
+      maxReconnectAttempts: 2500,
       ...options
     }
 

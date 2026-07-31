@@ -34,7 +34,7 @@ that surface silently, both were verified against source, and both are isolated
 frontend edits with no backend coupling — they bundle cleanly into one
 conversation.
 
-- [ ] **F29** [Critical] `showError` silently no-ops during any active session.
+- [x] **F29** [Critical] `showError` silently no-ops during any active session.
   `frontend/shared/ui.js:45-64` does `document.querySelector('.error-message')`
   and returns early (no mutation) when the element is absent. That element
   exists only in the landing/join/edit-name views — `renderLandingPage`
@@ -55,7 +55,7 @@ conversation.
   global `.error-message` slot into both `renderLayout` / `renderFullLayout`
   outside the per-view container. The toast route is the smaller, safer change
   (one line per call site) and reuses the existing dedup/auto-hide machinery.
-- [ ] **F30** [High] Reconnect backoff gives up after ~18 min, not the claimed
+- [x] **F30** [High] Reconnect backoff gives up after ~18 min, not the claimed
   ~16 h. `frontend/shared/websocket-client.js:24` sets
   `maxReconnectAttempts: 50` with `initialReconnectDelay: 2000` /
   `maxReconnectDelay: 30000` (lines 18–19). The cap clamps at attempt 4; with
@@ -72,7 +72,7 @@ conversation.
   pending `setTimeout` and ≤ 1 attempt per 30 s — negligible. Optionally accept
   `Infinity` and rely on the auto-reset of `reconnectAttempts` on any successful
   `onopen`.
-- [ ] Tests: `shared/ui.test.js` (+showToast surfaces a mid-session error when
+- [x] Tests: `shared/ui.test.js` (+showToast surfaces a mid-session error when
   no `.error-message` exists, F29), `stagiaire/handlers.test.js`
   (+submitVote-failure path now surfaces feedback in VOTING state, F29),
   `websocket-client.test.js` (+summed backoff over `maxReconnectAttempts`
