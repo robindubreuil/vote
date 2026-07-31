@@ -69,9 +69,15 @@ describe('showError / hideError', () => {
     expect(el.style.display).toBe('none')
   })
 
-  it('showError is a no-op when the error element does not exist', () => {
+  it('F29: falls back to an error toast when no .error-message slot exists (mid-session views)', () => {
     document.body.innerHTML = ''
-    expect(() => showError('absent')).not.toThrow()
+    showError('Connexion perdue')
+    // No inline error slot — the toast container is the fallback surface.
+    const container = document.querySelector('.toast-container')
+    expect(container).not.toBeNull()
+    const toast = container.querySelector('[data-toast-message="Connexion perdue"]')
+    expect(toast).not.toBeNull()
+    expect(toast.className).toContain('toast--error')
   })
 })
 

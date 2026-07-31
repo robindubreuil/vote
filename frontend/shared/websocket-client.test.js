@@ -303,6 +303,48 @@ describe('VoteClient', () => {
       errSpy.mockRestore()
     })
 
+    // F30: the prior default of maxReconnectAttempts=50 summed to only
+    // ≈18min of backoff, so any transient outage longer than a coffee
+    // break (router reboot, DNS hiccup) flipped every client to
+    // permanent-close. The fix bumps the default to 2500, which sums to
+    // ≈16h with average jitter.
+    it('F30: default maxReconnectAttempts (2500) gives ≥15h of backoff with average jitter', () => {
+      const client = new VoteClient('ws://x')
+      const { initialReconnectDelay, maxReconnectDelay, maxReconnectAttempts } = client.options
+      expect(maxReconnectAttempts).toBe(2500)
+      client.close()
+
+      // Replicate the scheduleReconnect formula with the average jitter
+      // factor (0.5 + 0.5*0.5 = 0.75) and sum every attempt's delay.
+      const avgJitter = 0.75
+      let totalMs = 0
+      for (let i = 0; i < maxReconnectAttempts; i++) {
+        const base = Math.min(initialReconnectDelay * Math.pow(2, i), maxReconnectDelay)
+        totalMs += Math.min(base * avgJitter, maxReconnectDelay)
+      }
+
+      const fifteenHoursMs = 15 * 60 * 60 * 1000
+      expect(totalMs).toBeGreaterThanOrEqual(fifteenHoursMs)
+    })
+
+    it('F30: does not give up after 50 close cycles at default settings (old ceiling)', () => {
+      const client = new VoteClient('ws://x', {
+        initialReconnectDelay: 1,
+        maxReconnectDelay: 1
+        // maxReconnectAttempts defaults to 2500
+      })
+      client.connect()
+      // The old default was 50 — burning 50 cycles would have flipped
+      // isPermanentlyClosed. Now it must keep going.
+      for (let i = 0; i < 50; i++) {
+        MockWebSocket.instances[MockWebSocket.instances.length - 1].fireClose(1006)
+        vi.advanceTimersByTime(10)
+      }
+      expect(client.isPermanentlyClosed).toBe(false)
+      expect(MockWebSocket.instances).toHaveLength(51) // initial + 50 retries
+      client.close()
+    })
+
     // F25: the app must learn the client gave up so it can swap its
     // "Reconnexion…" banner to a recoverable "rechargez la page" state.
     // Before the fix the flag was set silently — the last
