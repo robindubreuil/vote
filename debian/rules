@@ -52,8 +52,8 @@ override_dh_auto_install:
 	# Install binary
 	install -D -m 0755 vote-server debian/vote/usr/bin/vote-server
 
-	# Install systemd service
-	install -D -m 0644 debian/vote.service debian/vote/lib/systemd/system/vote.service
+	# systemd unit is auto-installed by dh_installsystemd from
+	# debian/vote.service — no manual install needed.
 
 	# Install Default Config
 	install -D -m 0644 debian/vote.default debian/vote/etc/default/vote
