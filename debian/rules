@@ -5,6 +5,15 @@ export GOCACHE=$(CURDIR)/.gocache
 export GOMODCACHE=$(CURDIR)/.gomodcache
 export CGO_ENABLED=0
 
+# D23: reproducible build. SOURCE_DATE_EPOCH is exported by
+# dpkg-buildpackage (see Debian Policy / Reproducible Builds); if the
+# caller didn't set it, derive it from the committer timestamp of HEAD
+# so the same source commit always bakes the same BUILD_TIME into the
+# binary. Falling back to `date` would make two builds of the same
+# .deb produce different binaries and break bit-for-bit reproducibility.
+BUILD_TIME := $(shell (v=$$SOURCE_DATE_EPOCH; if [ -z "$$v" ]; then v=$$(git show -s --format=%ct HEAD 2>/dev/null); fi; [ -n "$$v" ] && TZ=UTC date -d "@$$v" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || date -u +"%Y-%m-%dT%H:%M:%SZ")
+export SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD 2>/dev/null)
+
 %:
 	dh $@
 
@@ -16,6 +25,14 @@ override_dh_auto_test:
 override_dh_dwz:
 	@echo "Skipping dh_dwz for Go binary"
 
+# D19: the .default file ships dev-only CORS origins and a documented
+# /etc/default/vote template; auto-starting on first install would
+# expose that to the network before the operator has reviewed it.
+# --no-start keeps enable + stop semantics (so upgrades and `systemctl
+# start vote` work as expected) but skips the postinst start.
+override_dh_installsystemd:
+	dh_installsystemd --no-start
+
 # Skip auto configure (we don't use autotools)
 override_dh_auto_configure:
 	@echo "Configure not needed for Go"
@@ -24,7 +41,7 @@ override_dh_auto_configure:
 override_dh_auto_build:
 	# Build Backend
 	cd backend && go build \
-		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -X main.buildTime=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ") -X main.gitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -s -w" \
+		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -s -w" \
 		-o ../vote-server ./cmd/server
 
 	# Build Frontend (single build for both formateur & stagiaire)

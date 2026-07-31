@@ -11,10 +11,6 @@ case "$1" in
         if getent passwd vote > /dev/null 2>&1; then
             deluser --system vote || true
         fi
-
-        if [ -d /run/systemd/system ]; then
-            systemctl daemon-reload || true
-        fi
         ;;
 
     remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
@@ -26,6 +22,9 @@ case "$1" in
         ;;
 esac
 
+# D19: daemon-reload / unit cleanup is owned by debhelper
+# (dh_installsystemd snippets at #DEBHELPER#). Manual daemon-reload was
+# redundant parallel-management.
 #DEBHELPER#
 
 exit 0

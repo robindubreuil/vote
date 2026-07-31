@@ -3,8 +3,15 @@
 
 # Variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# D23: reproducible build. SOURCE_DATE_EPOCH (Reproducible Builds
+# convention, set by Debian's dpkg-buildpackage) takes precedence;
+# otherwise fall back to the committer timestamp of HEAD so the same
+# commit always bakes the same BUILD_TIME — same binary, same image
+# digest, same SBOM/cosign provenance. The wall-clock fallback only
+# fires when there is no git checkout at all.
+_SDE := $(or $(SOURCE_DATE_EPOCH),$(shell git show -s --format=%ct HEAD 2>/dev/null))
+BUILD_TIME := $(shell [ -n "$(_SDE)" ] && TZ=UTC date -d "@$(_SDE)" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(GIT_COMMIT) -s -w"
 
 # Go parameters
@@ -189,6 +196,11 @@ clean-deb:
 	rm -rf debian/.debhelper/
 	rm -f debian/debhelper-build-stamp
 	rm -f debian/files
+	# D26: dpkg-buildpackage also emits per-package substvars and
+	# per-script debhelper snippets (e.g. vote.substvars,
+	# vote.postrm.debhelper). .dockerignore already lists these
+	# patterns — clean-deb just never applied them.
+	rm -f debian/*.substvars debian/*.debhelper
 	rm -rf debian/vote/
 
 ## clean-all: Clean all build artifacts
@@ -232,7 +244,10 @@ dev-frontend:
 .PHONY: build-frontend
 build-frontend:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Building frontend...$(COLOR_RESET)"
-	cd frontend && npm install && npm run build
+	# D24: mirror debian/rules — npm ci --ignore-scripts (no lockfile
+	# mutation, no install lifecycle scripts) + npm run build. Keeps the
+	# supply-chain contract identical across the two build paths.
+	cd frontend && npm ci --ignore-scripts && npm run build
 
 ## deps: Download dependencies
 .PHONY: deps

@@ -249,7 +249,7 @@ and post-hardening drift. All are config/docs/CI changes with no application
 code coupling, so the whole session runs without touching the Go/JS test
 surfaces and ships in one PR.
 
-- [ ] **CI1** [Medium] No CI concurrency control — wasted runner minutes, slow
+- [x] **CI1** [Medium] No CI concurrency control — wasted runner minutes, slow
   feedback. `.github/workflows/ci.yml`, `.github/workflows/release.yml` (no
   `concurrency:` key anywhere; verified via grep). 5 jobs run per push
   (backend/frontend/e2e/docker/security). Pushing 3 commits to a PR launches 15
@@ -263,7 +263,7 @@ surfaces and ships in one PR.
   ```
   Omit `cancel-in-progress` (or the whole key) in `release.yml` — tags are
   immutable, you don't want a release run killed mid-publish.
-- [ ] **D19** [Medium] Debian maintainer scripts double-manage systemd; "don't
+- [x] **D19** [Medium] Debian maintainer scripts double-manage systemd; "don't
   autostart" intent is false. `debian/vote.postinst:16-20` (manual `systemctl
   enable`), `debian/vote.prerm:6-10` (manual `systemctl stop`),
   `debian/vote.postrm:15-17` (manual `daemon-reload`) — all alongside
@@ -281,7 +281,7 @@ surfaces and ships in one PR.
   override_dh_installsystemd:
   	dh_installsystemd --no-start
   ```
-- [ ] **D20** [Medium] `ci.yml` `docker` job rebuilds cold every push + never
+- [x] **D20** [Medium] `ci.yml` `docker` job rebuilds cold every push + never
   warms the release cache. `.github/workflows/ci.yml:140-141` (`docker build -t
   vote:ci .`, legacy builder, no cache). D1 (DONE) added `cache-from/to:
   type=gha` to `release.yml`'s buildx push, but the PR-gate docker job uses the
@@ -293,7 +293,7 @@ surfaces and ships in one PR.
   Bonus: also run the HEALTHCHECK (`docker run --rm -d …; docker inspect
   --format=…`) instead of just `--help` (line 144) — `vote-server --health` is
   the documented probe and is never exercised in CI.
-- [ ] **M1** [Low] README drift: runtime image documented as "Alpine", is
+- [x] **M1** [Low] README drift: runtime image documented as "Alpine", is
   actually distroless. `README.md:17` — `**Docker**: multi-stage build (Go +
   Node → Alpine)`. D10 (DONE) switched the runtime stage to
   `gcr.io/distroless/static-debian12:nonroot` (~18 MB, no shell). Alpine is only
@@ -302,12 +302,12 @@ surfaces and ships in one PR.
   stage build (Go + Node → distroless static runtime)`. The `Production Build`
   block (line 119) and `Health & version` note (line 111) are already correct —
   only line 17 drifted.
-- [ ] **M2** [Low] README env table missing `VOTE_MAX_SESSIONS_PER_HOUR`.
+- [x] **M2** [Low] README env table missing `VOTE_MAX_SESSIONS_PER_HOUR`.
   `README.md:72-84`. D15 (DONE) added it to `.env.example:51`, but the README
   env reference table (which presents itself as the canonical list) omits it —
   it lists the other three S7 caps. Inconsistent source-of-truth. **Fix:** add
   the row (default `20`, sliding 1h window, `≤0` → hardcoded default).
-- [ ] **M3** [Low] CLAUDE.md claims `ResetVote` clears `session.Stagiaires` —
+- [x] **M3** [Low] CLAUDE.md claims `ResetVote` clears `session.Stagiaires` —
   it doesn't (docs/code contract violation). `internal/vote/manager.go:385-419`
   vs CLAUDE.md (two locations: the S15 note and the Stagiaire Reclaim Token
   section). The code clears `Votes`, `LastVoteScores`, `CorrectColors`,
@@ -321,7 +321,7 @@ surfaces and ships in one PR.
   votes/scores/reveal state but preserves identity (Stagiaires, ReclaimTokens,
   cumulative Scores, GameScores) for cross-round competition; fresh-identity
   reset requires leaving and creating a new session. No code change.
-- [ ] **D21** [Low] systemd unit: a few standard hardening directives missing.
+- [x] **D21** [Low] systemd unit: a few standard hardening directives missing.
   `debian/vote.service:33-55`. Present hardening is excellent, but absent:
   `CapabilityBoundingSet=` (drop all caps), `AmbientCapabilities=` (empty),
   `PrivateDevices=true`, `UMask=0077`, `ProcSubset=pid`. A Go HTTP/WS server
@@ -331,14 +331,14 @@ surfaces and ships in one PR.
   cap-floor and its absence is conspicuous given how thorough the rest is.
   **Fix:** add `CapabilityBoundingSet=` `AmbientCapabilities=` `PrivateDevices=true`
   `UMask=0077`.
-- [ ] **D22** [Low] Caddyfile missing `Permissions-Policy`.
+- [x] **D22** [Low] Caddyfile missing `Permissions-Policy`.
   `debian/Caddyfile.example:47-55` (header block). D12 (DONE) added HSTS /
   nosniff / Referrer-Policy / X-Frame-Options. A voting app never needs
   camera/microphone/geolocation/payment — explicitly disabling them is cheap
   defense-in-depth against a future third-party snippet or compromised asset.
   **Fix:** add `Permissions-Policy "camera=(), microphone=(), geolocation=(),
   payment=()"` to the `header {}` block.
-- [ ] **D23** [Low] Non-reproducible build via `BUILD_TIME=$(date …)`.
+- [x] **D23** [Low] Non-reproducible build via `BUILD_TIME=$(date …)`.
   `Makefile:6`, `.github/workflows/release.yml:142` (`build_time=$(date -u …)`).
   Same source commit → different binary → different image digest, weakening the
   cosign/SBOM/provenance supply-chain story (two builds of `v1.2.3` aren't
@@ -346,14 +346,14 @@ surfaces and ships in one PR.
   varies. **Fix:** derive from the commit: `BUILD_TIME := $(shell git show -s
   --format=%cI HEAD)` (or honour `SOURCE_DATE_EPOCH`). Timestamp stays
   meaningful + reproducible.
-- [ ] **D24** [Low] `make build-frontend` uses `npm install`, not `npm ci
+- [x] **D24** [Low] `make build-frontend` uses `npm install`, not `npm ci
   --ignore-scripts`. `Makefile:235`. D4 (DONE) explicitly switched
   `debian/rules` to `npm ci --ignore-scripts` (supply-chain: no lockfile
   mutation, no install-scripts). The Makefile target was missed — it still runs
   `npm install` (can rewrite `package-lock.json`, runs lifecycle scripts).
   Inconsistent contract for the same frontend build. **Fix:** `npm ci
   --ignore-scripts && npm run build`.
-- [ ] **D25** [Low] `apk add --no-cache git` in Dockerfile backend-builder is
+- [x] **D25** [Low] `apk add --no-cache git` in Dockerfile backend-builder is
   vestigial. `Dockerfile:10`. `go.mod` has no `replace`, no private modules, no
   VCS directives (verified) — `go mod download` resolves via the module proxy
   with `GOSUMDB`, never invoking git. `GIT_COMMIT` arrives as a build-arg
@@ -361,7 +361,7 @@ surfaces and ships in one PR.
   D16 (DONE) pinned digests but this stray dep survived. **Fix:** drop the `RUN
   apk add …` line entirely (builder stage only; zero runtime impact, but removes
   a build dep and one layer).
-- [ ] **D26** [Low] `make clean-deb` is incomplete. `Makefile:183-192`. Removes
+- [x] **D26** [Low] `make clean-deb` is incomplete. `Makefile:183-192`. Removes
   `debian/.debhelper/`, `debhelper-build-stamp`, `files`, `debian/vote/`, but
   not the top-level `debian/*.substvars` or `debian/*.debhelper` files.
   Confirmed present on disk: `debian/vote.substvars`,
@@ -369,7 +369,7 @@ surfaces and ships in one PR.
   even lists these patterns — `clean-deb` just doesn't apply them. **Fix:** add
   `rm -f debian/*.substvars debian/*.debhelper` to `clean-deb` (and align the
   existing patterns).
-- [ ] **D27** [Low] No `.deb` install smoke-test in release.
+- [x] **D27** [Low] No `.deb` install smoke-test in release.
   `.github/workflows/release.yml:100-121` (`build-deb` builds + verifies arch,
   never installs). A packaging-path regression (wrong install path, broken
   systemd unit, bad perms) builds cleanly (`dpkg-buildpackage` validates
@@ -378,7 +378,7 @@ surfaces and ships in one PR.
   10-second gate. **Fix:** add an install-and-probe step on the amd64 leg after
   the build (arm64 stays build-only since the runner can't execute the arm64
   binary without QEMU).
-- [ ] Verification: `go build ./...` clean; `npm run build` clean (no app code
+- [x] Verification: `go build ./...` clean; `npm run build` clean (no app code
   changed); `make clean-deb` leaves no stale `debian/*.substvars` /
   `*.debhelper` (D26); local `dpkg-buildpackage -uc -us -b` succeeds (D19/D21);
   `docker build` uses the GHA cache (D20). No regression against the archived

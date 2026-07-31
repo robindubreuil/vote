@@ -3,11 +3,6 @@ set -e
 
 case "$1" in
     remove|upgrade|deconfigure)
-        if [ -d /run/systemd/system ]; then
-            if [ -f /usr/lib/systemd/system/vote.service ]; then
-                systemctl stop vote.service || true
-            fi
-        fi
         ;;
 
     failed-upgrade)
@@ -19,6 +14,9 @@ case "$1" in
         ;;
 esac
 
+# D19: the systemd stop-before-remove sequence is owned by debhelper
+# (dh_installsystemd snippets at #DEBHELPER#). Manual `systemctl stop`
+# was redundant parallel-management.
 #DEBHELPER#
 
 exit 0
