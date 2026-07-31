@@ -281,7 +281,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'vote', colors: ['rouge', 'vert'] });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('un seul choix');
+    expect(error.message).toContain('Un seul choix');
 
     trainer.dispose();
     stagiaire.dispose();
