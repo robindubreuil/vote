@@ -189,6 +189,7 @@ export const t = {
     competitiveToggleHint: 'Marquer les bonnes couleurs après le vote — les stagiaires marquent des points',
     markCorrect: 'Cocher les bonnes réponses',
     revealAnswers: 'Révéler les réponses',
+    correctAnswers: 'Corriger les réponses',
     scoreboard: 'Classement',
     scoreboardName: 'Nom',
     scoreboardRound: 'Tour',
