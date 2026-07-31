@@ -61,10 +61,11 @@ test.describe('WS Protocol', () => {
     const trainer1 = await connectTrainer(null);
     const created = await trainer1.waitForMessage('session_created');
     const code = created.sessionCode;
+    const trainerToken = created.trainerToken;
     await trainer1.waitForMessage('connected_count');
     trainer1.dispose();
 
-    const trainer2 = await connectTrainer(code);
+    const trainer2 = await connectTrainer(code, undefined, trainerToken);
     const created2 = await trainer2.waitForMessage('session_created');
     expect(created2.sessionCode).toBe(code);
 
@@ -138,7 +139,7 @@ test.describe('WS Protocol', () => {
 
     const stagiaire = await connectStagiaire(sessionCode, undefined, 'Alice');
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('no trainer');
+    expect(error.message).toContain('formateur');
     stagiaire.dispose();
   });
 
@@ -280,7 +281,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'vote', colors: ['rouge', 'vert'] });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('one color');
+    expect(error.message).toContain('un seul choix');
 
     trainer.dispose();
     stagiaire.dispose();
@@ -297,7 +298,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'vote', colors: ['rouge'] });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('not active');
+    expect(error.message).toContain('Aucun vote');
 
     trainer.dispose();
     stagiaire.dispose();
@@ -317,7 +318,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'vote', colors: ['bleu'] });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('invalid color');
+    expect(error.message).toContain('Couleur invalide');
 
     trainer.dispose();
     stagiaire.dispose();
@@ -337,7 +338,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'vote', colors: [] });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('at least one color');
+    expect(error.message).toContain('Au moins une couleur');
 
     trainer.dispose();
     stagiaire.dispose();
@@ -378,7 +379,8 @@ test.describe('WS Protocol', () => {
 
   test('trainer reconnect restores active vote state', async () => {
     const trainer1 = await connectTrainer(null);
-    const { sessionCode, trainerId } = await trainer1.waitForMessage('session_created');
+    const created1 = await trainer1.waitForMessage('session_created');
+    const { sessionCode, trainerId, trainerToken } = created1;
     await trainer1.waitForMessage('connected_count');
 
     const s1 = await connectStagiaire(sessionCode, undefined, 'Alice');
@@ -395,7 +397,7 @@ test.describe('WS Protocol', () => {
 
     trainer1.dispose();
 
-    const trainer2 = await connectTrainer(sessionCode);
+    const trainer2 = await connectTrainer(sessionCode, undefined, trainerToken);
     const created = await trainer2.waitForMessage('session_created');
     expect(created.sessionCode).toBe(sessionCode);
 
@@ -416,7 +418,8 @@ test.describe('WS Protocol', () => {
 
   test('trainer reconnect restores idle state with config', async () => {
     const trainer1 = await connectTrainer(null);
-    const { sessionCode } = await trainer1.waitForMessage('session_created');
+    const created1 = await trainer1.waitForMessage('session_created');
+    const { sessionCode, trainerToken } = created1;
     await trainer1.waitForMessage('connected_count');
 
     trainer1.send({ type: 'start_vote', colors: ['rouge', 'vert'], multipleChoice: true });
@@ -427,7 +430,7 @@ test.describe('WS Protocol', () => {
 
     trainer1.dispose();
 
-    const trainer2 = await connectTrainer(sessionCode);
+    const trainer2 = await connectTrainer(sessionCode, undefined, trainerToken);
     await trainer2.waitForMessage('session_created');
 
     const config = await trainer2.waitForMessage('config_updated');
@@ -461,10 +464,11 @@ test.describe('WS Protocol', () => {
 
   test('duplicate trainer kicks old connection', async () => {
     const trainer1 = await connectTrainer(null);
-    const { sessionCode } = await trainer1.waitForMessage('session_created');
+    const created1 = await trainer1.waitForMessage('session_created');
+    const { sessionCode, trainerToken } = created1;
     await trainer1.waitForMessage('connected_count');
 
-    const trainer2 = await connectTrainer(sessionCode);
+    const trainer2 = await connectTrainer(sessionCode, undefined, trainerToken);
     await trainer2.waitForMessage('session_created');
 
     const error = await trainer1.waitForMessage('error');
@@ -679,7 +683,7 @@ test.describe('WS Protocol', () => {
 
     trainer.send({ type: 'start_vote', colors: [], multipleChoice: false });
     const error = await trainer.waitForMessage('error');
-    expect(error.message).toContain('color');
+    expect(error.message).toContain('couleur');
 
     trainer.dispose();
   });
@@ -691,7 +695,7 @@ test.describe('WS Protocol', () => {
 
     trainer.send({ type: 'start_vote', colors: ['magenta'], multipleChoice: false });
     const error = await trainer.waitForMessage('error');
-    expect(error.message).toContain('Invalid color');
+    expect(error.message).toContain('invalide');
 
     trainer.dispose();
   });
@@ -703,7 +707,7 @@ test.describe('WS Protocol', () => {
 
     trainer.send({ type: 'start_vote', colors: ['rouge', 'rouge'], multipleChoice: false });
     const error = await trainer.waitForMessage('error');
-    expect(error.message).toContain('Duplicate');
+    expect(error.message).toContain('double');
 
     trainer.dispose();
   });
@@ -719,7 +723,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'start_vote', colors: ['rouge', 'vert'], multipleChoice: false });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('autorise');
+    expect(error.message).toContain('autorisé');
 
     trainer.dispose();
     stagiaire.dispose();
@@ -739,7 +743,7 @@ test.describe('WS Protocol', () => {
 
     stagiaire.send({ type: 'close_vote' });
     const error = await stagiaire.waitForMessage('error');
-    expect(error.message).toContain('autorise');
+    expect(error.message).toContain('autorisé');
 
     trainer.dispose();
     stagiaire.dispose();
