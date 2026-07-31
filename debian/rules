@@ -40,7 +40,7 @@ override_dh_auto_configure:
 # Build the Go binary and Frontends
 override_dh_auto_build:
 	# Build Backend
-	cd backend && go build \
+	cd backend && go build -buildvcs=false \
 		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -s -w" \
 		-o ../vote-server ./cmd/server
 
