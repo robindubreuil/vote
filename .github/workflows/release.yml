@@ -114,6 +114,39 @@ jobs:
           fi
           echo "Built: $DEB"
 
+      # D27: install smoke-test on the amd64 leg. The runner is a
+      # real systemd-capable Ubuntu VM, so `apt install ./*.deb &&
+      # systemctl start && curl /livez` is a ~10s gate that catches
+      # packaging-path regressions (wrong install path, broken unit,
+      # bad perms, missing runtime deps) that dpkg-buildpackage's
+      # structural checks happily let through. The arm64 leg stays
+      # build-only — the x86_64 runner can't exec the arm64 binary
+      # without QEMU.
+      - name: Install smoke-test (amd64)
+        if: matrix.deb_arch == 'amd64'
+        run: |
+          set -euo pipefail
+          DEB=$(ls vote_*_amd64.deb | head -1)
+          # apt install resolves Depends (adduser etc.); dpkg -i alone
+          # would fail on a missing runtime dep that the .deb declares.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ./"$DEB" >/dev/null
+          # postinst is --no-start (D19); start explicitly so the probe
+          # has something to hit. PORT=8080 is the shipped default.
+          sudo systemctl start vote
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/livez >/dev/null; then
+              echo "livez: ok"
+              sudo systemctl stop vote
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::installed vote service never returned /livez"
+          sudo journalctl -u vote --no-pager | tail -50 || true
+          sudo systemctl stop vote || true
+          exit 1
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -138,8 +171,18 @@ jobs:
 
       - name: Build timestamp
         id: bmeta
+        # D23: reproducible build. Derive BUILD_TIME from the committer
+        # timestamp of HEAD (honouring SOURCE_DATE_EPOCH if set by the
+        # caller) so two builds of the same tag produce byte-identical
+        # images — and the cosign/SBOM/provenance supply-chain story
+        # actually holds.
         run: |
-          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          if [ -n "$SOURCE_DATE_EPOCH" ]; then
+            BT=$(TZ=UTC date -d "@$SOURCE_DATE_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
+          else
+            BT=$(TZ=UTC date -d "@$(git show -s --format=%ct HEAD)" +"%Y-%m-%dT%H:%M:%SZ")
+          fi
+          echo "build_time=$BT" >> "$GITHUB_OUTPUT"
           echo "git_commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx

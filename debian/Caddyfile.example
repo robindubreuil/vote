@@ -50,6 +50,10 @@ vote.example.com {
 		Referrer-Policy strict-origin-when-cross-origin
 		# Prevent the app frames from being embedded by third parties.
 		X-Frame-Options DENY
+		# D22: a voting app never needs camera/microphone/geolocation/
+		# payment. Explicitly disabling them is cheap defense-in-depth
+		# against a future third-party snippet or compromised asset.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		-Server
 		Cache-Control "no-cache"
 	}

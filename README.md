@@ -14,7 +14,7 @@ cd frontend && npm run dev  # Frontend → :5173 (proxies /ws to backend)
 - **Trainer**: create sessions, pick colors, single/multiple choice, live stats
 - **Trainee**: join by code, vote, auto-reconnect
 - **Real-time**: WebSocket communication
-- **Docker**: multi-stage build (Go + Node → Alpine)
+- **Docker**: multi-stage build (Go + Node → distroless static runtime)
 
 ## Project Structure
 
@@ -82,6 +82,7 @@ See `.env.example`:
 | `VOTE_MAX_SESSIONS` | `1000` | Global cap on live sessions. Blocks runaway session creation (memory growth). `0` or negative disables. |
 | `VOTE_MAX_CLIENTS_PER_SESSION` | `200` | Per-session client cap (counts the trainer slot, so the stagiaire limit is N−1). `0` or negative disables. |
 | `VOTE_MAX_CONNECTIONS_PER_IP` | `50` | Per-IP concurrent WS connection cap. Enforced before the WS upgrade so a rejected dial never consumes a goroutine. `0` or negative disables. |
+| `VOTE_MAX_SESSIONS_PER_HOUR` | `20` | Per-IP sliding-window (1h) cap on session creation. Blocks session-creation floods (memory + rate-limiting abuse). `0` or negative falls back to the hardcoded default. |
 
 ## Metrics & Dashboard
 

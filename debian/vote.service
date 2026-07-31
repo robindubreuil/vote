@@ -32,7 +32,15 @@ RestartPreventExitStatus=143
 
 # Security hardening
 NoNewPrivileges=true
+# D21: the server binds >1024, never forks/execs, and never touches
+# /dev. Drop ALL Linux capabilities (bounding + ambient) so even a
+# future setcap helper can't elevate. Combined with nonroot +
+# NoNewPrivileges the residual risk is nil, but `CapabilityBoundingSet=`
+# is the standard cap-floor and its absence is conspicuous.
+CapabilityBoundingSet=
+AmbientCapabilities=
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
@@ -42,6 +50,7 @@ ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
+ProcSubset=pid
 LockPersonality=true
 ReadWritePaths=/var/lib/vote /run
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
@@ -53,6 +62,11 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 MemoryDenyWriteExecute=true
+# D21: tight default-create umask so on-disk stats files are 0600 by
+# construction even before our explicit 0600 chmod, and so any future
+# file the server happens to write outside the fsync-atomic path can't
+# leak group/other-readable.
+UMask=0077
 
 # Resource limits
 LimitNOFILE=65536

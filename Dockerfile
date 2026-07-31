@@ -7,7 +7,10 @@
 # tags + digests together on a weekly cadence — when it does, verify
 # the changelog of the bumped tag before merging.
 FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS backend-builder
-RUN apk add --no-cache git
+# D25: no apk/git here — go.mod has no `replace`, no private modules,
+# no VCS directives, so `go mod download` resolves via the proxy +
+# GOSUMDB and never invokes git. GIT_COMMIT arrives as a build-arg from
+# the host checkout, not from inside the stage.
 WORKDIR /build
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
