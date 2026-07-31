@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -160,10 +161,28 @@ func (c *Client) logAttrs() []any {
 	return attrs
 }
 
+// rateLimitKey returns the stable per-connection identifier that keys the
+// per-client message rate limiter. c.ID is mutable across stagiaire_join
+// messages — handleStagiaireJoin resets it to OriginalID at the top of
+// every attempt (R1), then a presented-and-known stagiaireId overwrites
+// it (client.go:458). Keying CheckMessageRate / RemoveMessageRate by
+// c.ID therefore leaks earlier buckets on disconnect (only the final
+// c.ID's entry is removed) AND hands a cycling client a fresh
+// MaxBurstMessages budget per ID. OriginalID is minted once at the WS
+// handshake and never changes for the connection's lifetime, so it is
+// the correct stable key. The c.ID fallback keeps legacy test fixtures
+// that bypass handleWebSocket (and so leave OriginalID empty) working.
+func (c *Client) rateLimitKey() string {
+	if c.OriginalID != "" {
+		return c.OriginalID
+	}
+	return c.ID
+}
+
 func (c *Client) readPump() {
 	defer c.Hub.wg.Done()
 	defer func() {
-		c.Hub.Security.RemoveMessageRate(c.ID)
+		c.Hub.Security.RemoveMessageRate(c.rateLimitKey())
 		select {
 		case c.Hub.Unregister <- c:
 		case <-c.Hub.Context().Done():
@@ -193,7 +212,7 @@ func (c *Client) readPump() {
 			break
 		}
 
-		if !c.Hub.Security.CheckMessageRate(c.ID) {
+		if !c.Hub.Security.CheckMessageRate(c.rateLimitKey()) {
 			slog.Warn("Rate limit exceeded", c.logAttrs()...)
 			c.SendError("Trop de messages, veuillez ralentir")
 			continue
@@ -426,7 +445,9 @@ func (c *Client) handleStagiaireJoin(msg models.Message) {
 	}
 
 	c.Type = "stagiaire"
-	c.Name = msg.Name
+	// C3: store the trimmed form (IsValidName already passed above);
+	// matches the canonical form the manager writes to Stagiaires.
+	c.Name = strings.TrimSpace(msg.Name)
 	c.SessionID = msg.SessionCode
 	c.ReclaimToken = msg.ReclaimToken
 
@@ -723,13 +744,21 @@ func (c *Client) handleReportGameScore(msg models.Message) {
 }
 
 func (c *Client) handleUpdateName(msg models.Message) {
+	if c.Type != "stagiaire" {
+		c.SendError(vote.ErrNotAuthorized.Error())
+		return
+	}
 	err := c.Hub.VoteManager.UpdateStagiaireName(c.SessionID, c.ID, msg.Name)
 	if err != nil {
 		c.SendError(vote.UserFacingError(err))
 		return
 	}
-	c.Name = msg.Name
-	c.SendJSON(map[string]any{"type": "name_updated", "name": msg.Name})
+	// C3: mirror the manager's trimmed canonical form onto c.Name and
+	// the wire payload so broadcasts and log lines carry no stray
+	// whitespace.
+	name := strings.TrimSpace(msg.Name)
+	c.Name = name
+	c.SendJSON(map[string]any{"type": "name_updated", "name": name})
 
 	c.Hub.NotifyTrainerStagiaireList(c.SessionID, "stagiaire_names_updated")
 }

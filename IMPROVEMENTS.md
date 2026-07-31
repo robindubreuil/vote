@@ -174,7 +174,7 @@ one. Same package cluster (`internal/hub/`, `internal/vote/`,
 `internal/security/`), so the lock-ordering and identity-invariant reasoning
 stays in one head.
 
-- [ ] **B1** [Medium] `handleUpdateName` is the only mutation handler without a
+- [x] **B1** [Medium] `handleUpdateName` is the only mutation handler without a
   role gate. `backend/internal/hub/client.go:725`. All six peer handlers gate
   (`handleStartVote:497`, `handleVote:559`, `handleCloseVote:592`,
   `handleResetVote:605`, `handleRevealAnswers:648`, `handleReportGameScore:705`);
@@ -186,7 +186,7 @@ stays in one head.
   `update_name` case. **Fix:** add `if c.Type != "stagiaire" {
   c.SendError(vote.ErrNotAuthorized.Error()); return }` as the first line.
   One-line change, mirrors every other mutation handler.
-- [ ] **C1** [Low/Medium] `computeRank` returns `rank > totalStagiaires` for
+- [x] **C1** [Low/Medium] `computeRank` returns `rank > totalStagiaires` for
   post-reveal joiners. `backend/internal/hub/hub.go:1037-1053` (called from
   `:732-740`). A stagiaire joining a Competitive session during `Closed+Revealed`
   is not in `session.Scores` (populated only inside `RevealAnswers`'s Stagiaires
@@ -203,7 +203,7 @@ stays in one head.
   `session.GetStagiaires()` once, look up each score), or simpler: if `id` not
   in `voteScores`, return `(len(stagiaires), len(stagiaires))` — they're ranked
   last, total reflects current class size.
-- [ ] **C3** [Low] `c.Name = msg.Name` stores untrimmed input.
+- [x] **C3** [Low] `c.Name = msg.Name` stores untrimmed input.
   `backend/internal/hub/client.go:731` (also
   `backend/internal/vote/manager.go:221,237,561`). `IsValidName` (and the
   manager's guard) trims before checking length/charset, but the original
@@ -214,7 +214,7 @@ stays in one head.
   stagiaire list. Worst case is weird whitespace in toasts/log lines. **Fix:**
   trim once at the validation boundary (`name = strings.TrimSpace(name)` before
   storing), at all four sites. Or have `IsValidName` return the trimmed form.
-- [ ] **R22** [Low] Rate-limit entries leak when a client cycles `stagiaireId`.
+- [x] **R22** [Low] Rate-limit entries leak when a client cycles `stagiaireId`.
   `backend/internal/hub/client.go:166`. `readPump`'s defer calls
   `c.Hub.Security.RemoveMessageRate(c.ID)` — but `c.ID` is mutable across
   `stagiaire_join` messages (R1 in DONE log resets it to `OriginalID`, then a
@@ -230,7 +230,7 @@ stays in one head.
   documented R1 fix. **Fix:** either (a) remove by `OriginalID` in addition to
   final `c.ID`, or (b) key `CheckMessageRate` by a stable per-connection
   identifier (e.g., `OriginalID`) instead of the mutable `c.ID`.
-- [ ] Tests: `client_test.go` (+handleUpdateName rejects a trainer client with
+- [x] Tests: `client_test.go` (+handleUpdateName rejects a trainer client with
   `ErrNotAuthorized` and does not call `UpdateStagiaireName`, B1),
   `hub_test.go` (+computeRank for a post-reveal joiner: total reflects current
   Stagiaires count, rank is `total` for a scoreless joiner, C1),

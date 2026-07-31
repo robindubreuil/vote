@@ -545,3 +545,69 @@ func TestRegisterClientSameIDReRegisterIsNoOp(t *testing.T) {
 		t.Errorf("connected_count should be 1, got %d", count)
 	}
 }
+
+// TestComputeRankPostRevealJoiner covers C1: a stagiaire joining a
+// Competitive session during Closed+Revealed is added to
+// session.Stagiaires but not to session.Scores (Scores is populated only
+// inside RevealAnswers' Stagiaires iteration). computeRank must derive
+// its total from the live identity set (not the at-reveal Scores
+// snapshot) so a late arrival never sees an impossible "rank N+1 of N".
+func TestComputeRankPostRevealJoiner(t *testing.T) {
+	t.Run("scoreless joiner ranked last with live total", func(t *testing.T) {
+		// Three existing stagiaires all scored positively at reveal.
+		voteScores := map[string]int{"a1": 2000, "a2": 1500, "a3": 500}
+		gameScores := map[string]int{}
+		// Live identity set includes the joiner, who has no Scores entry.
+		stagiaires := map[string]string{"a1": "A", "a2": "B", "a3": "C", "late": "Late"}
+
+		rank, total := computeRank(voteScores, gameScores, stagiaires, "late")
+		if total != 4 {
+			t.Errorf("total = %d, want 4 (live Stagiaires count, not the 3-entry reveal snapshot)", total)
+		}
+		if rank != 4 {
+			t.Errorf("rank = %d, want 4 (last — every other stagiaire scored > 0)", rank)
+		}
+		if rank > total {
+			t.Errorf("rank %d must never exceed total %d", rank, total)
+		}
+	})
+
+	t.Run("joiner ties with zero-scorers", func(t *testing.T) {
+		// One positive scorer, two existing 0-scorers, and the joiner
+		// (also 0). Competition ranking: only the one positive scorer is
+		// strictly ahead, so the joiner shares 2nd place.
+		voteScores := map[string]int{"a1": 2000, "a2": 0, "a3": 0}
+		stagiaires := map[string]string{"a1": "A", "a2": "B", "a3": "C", "late": "Late"}
+
+		rank, total := computeRank(voteScores, nil, stagiaires, "late")
+		if total != 4 {
+			t.Errorf("total = %d, want 4", total)
+		}
+		if rank != 2 {
+			t.Errorf("rank = %d, want 2 (tied with the two 0-scorers behind the one positive)", rank)
+		}
+	})
+
+	t.Run("game scores counted in comparison", func(t *testing.T) {
+		// A joiner whose game score puts them ahead of a positive vote
+		// scorer must rank above them.
+		voteScores := map[string]int{"a1": 500}
+		gameScores := map[string]int{"late": 1000}
+		stagiaires := map[string]string{"a1": "A", "late": "Late"}
+
+		rank, total := computeRank(voteScores, gameScores, stagiaires, "late")
+		if total != 2 {
+			t.Errorf("total = %d, want 2", total)
+		}
+		if rank != 1 {
+			t.Errorf("rank = %d, want 1 (1000 game score beats 500 vote score)", rank)
+		}
+	})
+
+	t.Run("empty class", func(t *testing.T) {
+		rank, total := computeRank(nil, nil, map[string]string{}, "nobody")
+		if rank != 0 || total != 0 {
+			t.Errorf("empty class: rank=%d total=%d, want 0 0", rank, total)
+		}
+	})
+}

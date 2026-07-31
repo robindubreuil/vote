@@ -279,6 +279,27 @@ func (s *Security) FailedJoinCount(ip string) int {
 	return a.Count
 }
 
+// MessageRateEntryCount returns the total number of per-client
+// message-rate buckets currently held. Test-only helper: lets the hub
+// package assert the R22 invariant (one stable bucket per connection,
+// removed on disconnect) without reaching into the unexported
+// messageRates map.
+func (s *Security) MessageRateEntryCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.messageRates)
+}
+
+// HasMessageRateEntry reports whether a per-client message-rate bucket
+// currently exists for clientID. Test-only helper (see
+// MessageRateEntryCount).
+func (s *Security) HasMessageRateEntry(clientID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.messageRates[clientID]
+	return ok
+}
+
 func (s *Security) CheckMessageRate(clientID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
