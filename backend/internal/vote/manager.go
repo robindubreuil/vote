@@ -465,14 +465,38 @@ func (m *Manager) RevealAnswers(sessionID, trainerID string, correctColors []str
 		entry := ScoreEntry{StagiaireID: id, Name: name}
 		if vote, hasVote := session.Votes[id]; hasVote {
 			entry.Vote = vote
+			// A "blank" vote is an abstention: it scores 0 (no rewards,
+			// no missed-correct penalties), even in multiple-choice.
+			isBlank := false
+			votedSet := make(map[string]bool, len(vote))
 			for _, color := range vote {
+				votedSet[color] = true
 				if color == "blank" {
+					isBlank = true
 					continue
 				}
 				if correctSet[color] {
 					entry.VoteScore += PointsPerCorrect
 				} else {
 					entry.VoteScore += PointsPerWrong
+				}
+			}
+			// Multiple-choice expects the FULL correct set. A correct
+			// color the trainee failed to pick is as wrong as a wrong
+			// pick, so penalize each unpicked correct color. Single-
+			// choice is excluded: picking one color inherently means
+			// not picking the others, so a wrong pick is already fully
+			// penalized — charging for the missed correct too would
+			// double-count a single mistake. Blank abstentions stay
+			// neutral (score 0).
+			if session.MultipleChoice && !isBlank {
+				for color := range correctSet {
+					if color == "blank" {
+						continue
+					}
+					if !votedSet[color] {
+						entry.VoteScore += PointsPerWrong
+					}
 				}
 			}
 		}

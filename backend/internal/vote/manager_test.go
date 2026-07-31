@@ -812,6 +812,62 @@ func TestRevealAnswersScoreWithBlank(t *testing.T) {
 	}
 }
 
+// TestRevealAnswersMultipleChoiceMissedCorrect covers the asymmetric-
+// scoring bug: in multiple-choice a correct color the trainee failed to
+// pick is a wrong answer and must be penalized. Voting 1 of 3 correct
+// colors scores +2000 (the one picked) −1000 (the two missed), not a
+// full +2000. Single-choice (TestRevealAnswersScoring) is unaffected.
+func TestRevealAnswersMultipleChoiceMissedCorrect(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Alice", "")
+	m.JoinStagiaire("ABC", "s2abc1234567", "Bob", "")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "vert", "bleu"}, true, nil, false, true, false)
+
+	// Alice picks only 1 of the 3 correct; Bob picks all 3.
+	m.SubmitVote("ABC", "s1abc1234567", []string{"rouge"})
+	m.SubmitVote("ABC", "s2abc1234567", []string{"rouge", "vert", "bleu"})
+	m.CloseVote("ABC", "trainer1")
+
+	entries, err := m.RevealAnswers("ABC", "trainer1", []string{"rouge", "vert", "bleu"})
+	if err != nil {
+		t.Fatalf("RevealAnswers: %v", err)
+	}
+
+	scores := map[string]int{}
+	for _, e := range entries {
+		scores[e.Name] = e.VoteScore
+	}
+	// Alice: rouge picked (+2000), vert & bleu missed (−500 each) = +1000.
+	if got := scores["Alice"]; got != PointsPerCorrect+2*PointsPerWrong {
+		t.Errorf("Alice: expected %d (1 correct − 2 missed), got %d", PointsPerCorrect+2*PointsPerWrong, got)
+	}
+	// Bob: all 3 picked & correct, no misses = +6000.
+	if got := scores["Bob"]; got != 3*PointsPerCorrect {
+		t.Errorf("Bob: expected %d (3 correct, 0 missed), got %d", 3*PointsPerCorrect, got)
+	}
+}
+
+// TestRevealAnswersSingleChoiceNoMissedPenalty guards the rule's scope:
+// single-choice must NOT penalize the unpicked correct color, otherwise a
+// single wrong pick would be double-charged (wrong pick + missed correct).
+func TestRevealAnswersSingleChoiceNoMissedPenalty(t *testing.T) {
+	m := NewManager()
+	m.CreateSession("ABC", "trainer1")
+	m.JoinStagiaire("ABC", "s1abc1234567", "Bob", "")
+	m.StartVote("ABC", "trainer1", []string{"rouge", "bleu"}, false, nil, false, true, false)
+
+	m.SubmitVote("ABC", "s1abc1234567", []string{"bleu"})
+	m.CloseVote("ABC", "trainer1")
+
+	entries, _ := m.RevealAnswers("ABC", "trainer1", []string{"rouge"})
+	for _, e := range entries {
+		if e.Name == "Bob" && e.VoteScore != PointsPerWrong {
+			t.Errorf("single-choice wrong pick should be %d (no missed penalty), got %d", PointsPerWrong, e.VoteScore)
+		}
+	}
+}
+
 func TestStartVoteClearsRevealState(t *testing.T) {
 	m := NewManager()
 	m.CreateSession("ABC", "trainer1")
