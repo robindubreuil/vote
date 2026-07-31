@@ -27,6 +27,18 @@ RUN mkdir -p -m 0700 /build/varlib
 
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS frontend-builder
 WORKDIR /build/frontend
+# .git/ is excluded from the build context (.dockerignore), so
+# gen-version.js would fall back to "unknown". Surface the CI build-args
+# as the VOTE_* env vars it prefers, so the footer shows the real
+# commit instead of "unknown".
+ARG VERSION=dev
+ARG BUILD_TIME=""
+ARG GIT_COMMIT=""
+ARG GIT_FULL_COMMIT=""
+ENV VOTE_VERSION=$VERSION \
+    VOTE_BUILD_DATE=$BUILD_TIME \
+    VOTE_GIT_COMMIT=$GIT_COMMIT \
+    VOTE_GIT_FULL_COMMIT=$GIT_FULL_COMMIT
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY frontend/ .
