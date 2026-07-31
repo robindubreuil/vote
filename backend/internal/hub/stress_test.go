@@ -202,7 +202,24 @@ func TestStressReconnectStorm(t *testing.T) {
 	waitForStagiaireCount(t, h, code, stressClientCount, 5*time.Second)
 
 	// CL1 regression check: every phase-1 client was displaced and
-	// flagged closing so stale references drop silently.
+	// flagged closing so stale references drop silently. registerClient
+	// runs asynchronously in Hub.Run; wg.Wait only guarantees the
+	// messages were received, not processed. Poll until all flags are
+	// set (bounded by the same 5s budget waitForStagiaireCount uses).
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		allClosing := true
+		for _, old := range phase1 {
+			if old != nil && !old.closing.Load() {
+				allClosing = false
+				break
+			}
+		}
+		if allClosing {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	for i, old := range phase1 {
 		if old != nil && !old.closing.Load() {
 			t.Errorf("phase-1 client %d not marked closing after takeover (CL1)", i)

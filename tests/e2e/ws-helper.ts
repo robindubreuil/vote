@@ -87,13 +87,15 @@ function createClient(url: string): Promise<WSClient> {
 
 export async function connectTrainer(
   sessionCode: string | null,
-  trainerId?: string
+  trainerId?: string,
+  trainerToken?: string
 ): Promise<WSClient> {
   const client = await createClient(WS_URL);
   client.send({
     type: 'trainer_join',
     sessionCode: sessionCode ?? '',
     ...(trainerId ? { trainerId } : {}),
+    ...(trainerToken ? { trainerToken } : {}),
   });
   return client;
 }
