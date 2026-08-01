@@ -49,6 +49,24 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      - name: Build metadata
+        id: bmeta
+        # Mirror the docker job: derive version info from git on the
+        # runner (where git works) and inject into the deb-builder
+        # container as VOTE_* env. Inside that container dpkg-buildpackage
+        # runs as root against a runner-owned .git (safe.directory), so
+        # debian/rules's own `git rev-parse` would fall back to "unknown"
+        # and bake "unknown" into the footer + gitCommit ldflag.
+        run: |
+          if [ -n "$SOURCE_DATE_EPOCH" ]; then
+            BT=$(TZ=UTC date -d "@$SOURCE_DATE_EPOCH" +"%Y-%m-%dT%H:%M:%SZ")
+          else
+            BT=$(TZ=UTC date -d "@$(git show -s --format=%ct HEAD)" +"%Y-%m-%dT%H:%M:%SZ")
+          fi
+          echo "build_time=$BT" >> "$GITHUB_OUTPUT"
+          echo "git_commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "git_full_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Verify tag matches changelog version
         run: |
           set -euo pipefail
@@ -103,6 +121,9 @@ jobs:
           docker run --rm \
             --platform ${{ matrix.platform }} \
             -v "$PWD:/work/vote" -w /work/vote -e HOME=/tmp \
+            -e "VOTE_BUILD_DATE=${{ steps.bmeta.outputs.build_time }}" \
+            -e "VOTE_GIT_COMMIT=${{ steps.bmeta.outputs.git_commit }}" \
+            -e "VOTE_GIT_FULL_COMMIT=${{ steps.bmeta.outputs.git_full_commit }}" \
             vote-deb-builder:latest \
             bash -c 'dpkg-buildpackage -us -uc -d -b && cp /work/vote_*.deb /work/vote/'
           # Verify the produced deb declares the expected arch.

@@ -14,14 +14,18 @@ export CGO_ENABLED=0
 BUILD_TIME := $(shell (v=$$SOURCE_DATE_EPOCH; if [ -z "$$v" ]; then v=$$(git show -s --format=%ct HEAD 2>/dev/null); fi; [ -n "$$v" ] && TZ=UTC date -d "@$$v" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || date -u +"%Y-%m-%dT%H:%M:%SZ")
 export SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD 2>/dev/null)
 
-# Frontend footer version (gen-version.js). .git may be owned by the
-# runner user while dpkg-buildpackage runs as root, tripping git's
-# safe.directory check — so surface the values as env vars instead of
-# relying on `git rev-parse` succeeding inside the container.
-VOTE_VERSION := $(shell head -1 debian/changelog | sed -n 's/.*(\([^)]*\)).*/\1/p')
-VOTE_GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-VOTE_GIT_FULL_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
-VOTE_BUILD_DATE := $(BUILD_TIME)
+# Version metadata for both the frontend footer (gen-version.js, read
+# via VOTE_* env) and the backend ldflags below. `?=` lets CI inject
+# host-derived values (release.yml's build-deb job runs git on the
+# runner, where it works, and passes them in as env). The `$(shell git
+# …)` fallback covers a local `dpkg-buildpackage`; in the CI deb
+# container git runs as root against a runner-owned .git and trips
+# safe.directory — Dockerfile.deb allows it system-wide as a backstop,
+# and the injected env is the authoritative source there.
+VOTE_VERSION ?= $(shell head -1 debian/changelog | sed -n 's/.*(\([^)]*\)).*/\1/p')
+VOTE_GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+VOTE_GIT_FULL_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+VOTE_BUILD_DATE ?= $(BUILD_TIME)
 export VOTE_VERSION VOTE_GIT_COMMIT VOTE_GIT_FULL_COMMIT VOTE_BUILD_DATE
 
 %:
@@ -51,7 +55,7 @@ override_dh_auto_configure:
 override_dh_auto_build:
 	# Build Backend
 	cd backend && go build -buildvcs=false \
-		-ldflags="-X main.version=$(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/') -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -s -w" \
+		-ldflags="-X main.version=$(VOTE_VERSION) -X main.buildTime=$(VOTE_BUILD_DATE) -X main.gitCommit=$(VOTE_GIT_COMMIT) -s -w" \
 		-o ../vote-server ./cmd/server
 
 	# Build Frontend (single build for both formateur & stagiaire)

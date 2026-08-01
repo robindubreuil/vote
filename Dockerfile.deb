@@ -41,4 +41,14 @@ RUN apt-get update \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
+# dpkg-buildpackage runs as root; the bind-mounted .git is owned by the
+# CI runner user (UID 1001), so git's safe.directory (dubious-ownership)
+# check rejects every `git rev-parse` in debian/rules — that is how both
+# the frontend footer and the backend gitCommit ldflag silently became
+# "unknown" in .deb builds. /etc/gitconfig is read regardless of HOME
+# (the release run sets HOME=/tmp), so a system-level allow is the robust
+# backstop. CI also injects the real values as VOTE_* env (release.yml),
+# so this only matters for ad-hoc builds in this image.
+RUN git config --system --add safe.directory '*'
+
 WORKDIR /src
