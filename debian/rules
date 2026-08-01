@@ -22,7 +22,11 @@ export SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD 2>/dev/null)
 # container git runs as root against a runner-owned .git and trips
 # safe.directory — Dockerfile.deb allows it system-wide as a backstop,
 # and the injected env is the authoritative source there.
-VOTE_VERSION ?= $(shell head -1 debian/changelog | sed -n 's/.*(\([^)]*\)).*/\1/p')
+#
+# NB the changelog sed must be make-$(shell)-safe: an unescaped ')' (as
+# in `[^)]`) prematurely closes the $(shell …) call, so use the balanced
+# `s/.*(\(.*\)).*/\1/` form rather than a `[^)]*` negated class.
+VOTE_VERSION ?= $(shell head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/')
 VOTE_GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VOTE_GIT_FULL_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 VOTE_BUILD_DATE ?= $(BUILD_TIME)
