@@ -24,7 +24,7 @@
 # reliably across arch matrixes. The runtime images (Dockerfile) ARE
 # digest-pinned (D16).
 
-FROM golang:1.24-trixie
+FROM golang:1.26-trixie
 
 # Build dependencies for dpkg-buildpackage. debhelper-compat 13 matches
 # debian/compat (implicit via debhelper-compat in Build-Depends).
