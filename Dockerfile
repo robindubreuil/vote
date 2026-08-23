@@ -6,7 +6,7 @@
 # right variant per platform. Dependabot's `docker` ecosystem bumps the
 # tags + digests together on a weekly cadence — when it does, verify
 # the changelog of the bumped tag before merging.
-FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS backend-builder
+FROM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS backend-builder
 # D25: no apk/git here — go.mod has no `replace`, no private modules,
 # no VCS directives, so `go mod download` resolves via the proxy +
 # GOSUMDB and never invokes git. GIT_COMMIT arrives as a build-arg from
