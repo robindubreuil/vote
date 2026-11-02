@@ -66,6 +66,33 @@ type pendingSend struct {
 	msg    map[string]any
 }
 
+// pendingSends accumulates messages queued while the hub write-lock is
+// held; flush() delivers them all after the lock is released (CC3).
+type pendingSends struct {
+	msgs []pendingSend
+}
+
+func (p *pendingSends) add(c *Client, msg map[string]any) {
+	p.msgs = append(p.msgs, pendingSend{c, msg})
+}
+
+// addErr queues an error frame. code is a stable machine-readable
+// identifier (vote.Code*) that clients branch on; empty means
+// display-only.
+func (p *pendingSends) addErr(c *Client, code, message string) {
+	m := map[string]any{"type": "error", "message": message}
+	if code != "" {
+		m["code"] = code
+	}
+	p.add(c, m)
+}
+
+func (p *pendingSends) flush() {
+	for _, ps := range p.msgs {
+		ps.flush()
+	}
+}
+
 // flush marshals and delivers the message via a direct channel send.
 // The direct send bypasses the closing-flag check in SendJSON so that
 // messages captured during the critical section (e.g. the takeover
@@ -137,6 +164,14 @@ type Hub struct {
 	// returned immediately, leaving hijacked WS conns un-drained and
 	// the process able to exit mid-writePump).
 	wg sync.WaitGroup
+
+	// takeoverTimers holds pending delayed trainer-takeover close
+	// timers so Shutdown can stop them. Without this, a timer armed
+	// during a takeover that races with Shutdown would fire after
+	// Shutdown returned — the one goroutine-like task the wg does not
+	// track. Stop is safe: Shutdown closes every conn first, so a
+	// stopped timer's callback would have been a no-op anyway.
+	takeoverTimers []*time.Timer
 }
 
 func NewHub(cfg *config.Config) *Hub {
@@ -237,6 +272,17 @@ func (h *Hub) Shutdown() {
 		}
 	}
 
+	// Stop pending takeover-close timers: the mass Close above already
+	// closed their target conns, so letting one fire after Shutdown
+	// returns would break the "nothing hub-owned outlives Shutdown"
+	// invariant for no benefit.
+	h.mu.Lock()
+	for _, t := range h.takeoverTimers {
+		t.Stop()
+	}
+	h.takeoverTimers = nil
+	h.mu.Unlock()
+
 	h.wg.Wait()
 }
 
@@ -324,22 +370,9 @@ func (h *Hub) GenerateSessionCode() string {
 	alphabet := []byte(vote.SessionAlphabet)
 	codeLen := vote.SessionCodeLength
 
-	for i := 0; i < maxCodeRetries; i++ {
-		code := make([]byte, codeLen)
-		for j := 0; j < codeLen; j++ {
-			code[j] = alphabet[rand.IntN(len(alphabet))] //nolint:gosec // non-crypto random for short session codes
-		}
-		s := string(code)
-		if _, exists := h.Connections[s]; !exists && !h.VoteManager.SessionExists(s) {
-			h.Connections[s] = &SessionConnections{Stagiaires: make(map[string]*Client)}
-			return s
-		}
-	}
-
-	// Exhaustive fallback: walk the alphabet lexicographically and return the
-	// first free code. Covers the (extremely unlikely) case where randomness
-	// collides 100 times in a row.
-	used := make(map[string]bool, len(h.Connections)+10000)
+	// Build the used-set once (O(sessions), bounded by the global
+	// session cap) so each random probe is an O(1) membership check.
+	used := make(map[string]bool, len(h.Connections)+len(h.VoteManager.GetSessionIDs()))
 	for id := range h.Connections {
 		used[id] = true
 	}
@@ -347,26 +380,26 @@ func (h *Hub) GenerateSessionCode() string {
 		used[id] = true
 	}
 
-	var walk func(prefix []byte) string
-	walk = func(prefix []byte) string {
-		if len(prefix) == codeLen {
-			s := string(prefix)
-			if !used[s] {
-				h.Connections[s] = &SessionConnections{Stagiaires: make(map[string]*Client)}
-				return s
-			}
-			return ""
+	// Random probes. With the default code space (23^4 ≈ 280k codes)
+	// and MaxSessionsGlobal 1000, the per-attempt collision
+	// probability is ~0.36%, so 100 attempts succeed with overwhelming
+	// probability. An empty return means the space is effectively
+	// saturated and the caller reports "no codes available". A
+	// deterministic exhaustive walk is deliberately NOT attempted: it
+	// is exponential in codeLen and would freeze the hub lock if the
+	// length were ever raised (R2).
+	for i := 0; i < maxCodeRetries; i++ {
+		code := make([]byte, codeLen)
+		for j := 0; j < codeLen; j++ {
+			code[j] = alphabet[rand.IntN(len(alphabet))] //nolint:gosec // non-crypto random for short session codes
 		}
-		for _, c := range alphabet {
-			next := append(append([]byte{}, prefix...), c)
-			if found := walk(next); found != "" {
-				return found
-			}
+		s := string(code)
+		if !used[s] {
+			h.Connections[s] = &SessionConnections{Stagiaires: make(map[string]*Client)}
+			return s
 		}
-		return ""
 	}
-
-	return walk(nil)
+	return ""
 }
 
 func (h *Hub) GenerateUniqueClientID() (string, bool) {
@@ -395,373 +428,343 @@ func (h *Hub) ClientIDExists(id string) bool {
 	return h.VoteManager.StagiaireExists(id)
 }
 
+// registerClient admits one client to the hub's connection registry.
+// It runs in runLoop (single-goroutine) and in cleanupLoop phase 2 —
+// the only two places Connections is mutated. All sends are queued on
+// p and flushed by the deferred flush AFTER the deferred h.mu.Unlock
+// (LIFO), so no message is ever marshalled or sent under the hub
+// write-lock (CC3).
 func (h *Hub) registerClient(client *Client) {
-	var pending []pendingSend
-
-	// Deferred flush runs AFTER the unlock defer (LIFO): all sends
-	// happen outside the hub write-lock (CC3).
-	defer func() {
-		for _, p := range pending {
-			p.flush()
-		}
-	}()
+	p := &pendingSends{}
+	defer p.flush()
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	queue := func(c *Client, msg map[string]any) {
-		pending = append(pending, pendingSend{c, msg})
-	}
-	queueErr := func(c *Client, message string) {
-		queue(c, map[string]any{"type": "error", "message": message})
-	}
-
 	conns, exists := h.Connections[client.SessionID]
-
-	// S13: any join to an already-minted Manager session requires the
-	// per-session trainer token — including the empty-slot recovery
-	// path (conns.Trainer == nil after the previous trainer's readPump
-	// exited). The previous code gated the token check on `old != nil`,
-	// so once the legitimate trainer's readPump exited and
-	// unregisterClient set conns.Trainer = nil, any client who knew the
-	// public 3-char session code (printed in every stagiaire's QR)
-	// could claim the slot AND receive the minted token in
-	// session_created — collapsing S1's takeover protection for the
-	// rest of the session. Worse, the token is minted once and never
-	// rotated, so the attacker held it for as long as the session
-	// lived.
-	//
-	// The check runs BEFORE the !exists branch so a tokenless claimant
-	// cannot bypass it by triggering the createSessionFn path (which
-	// would otherwise overwrite the existing session's minted token).
-	// The legitimate trainer always has the token (sessionStorage,
-	// scoped to the tab, populated from the session_created payload at
-	// creation time and re-confirmed on every authenticated reconnect);
-	// an unauthenticated claimant is rejected with the same "Session
-	// introuvable" message the no-session branch uses so the response
-	// does not leak that the code is live.
-	//
-	// Fresh session creation (no Manager session at this point) is the
-	// only path that mints and emits the token to a previously-
-	// unauthenticated trainer — the creator IS the legitimate trainer.
 	if client.Type == "trainer" {
-		if sess, ok := h.VoteManager.GetSession(client.SessionID); ok && sess.GetTrainerToken() != "" {
-			if !h.VoteManager.ValidateTrainerToken(client.SessionID, client.TrainerToken) {
-				queueErr(client, "Session introuvable")
-				return
-			}
+		h.registerTrainerLocked(client, conns, exists, p)
+		return
+	}
+	h.registerStagiaireLocked(client, conns, p)
+}
+
+// registerTrainerLocked handles the trainer side of registration: the
+// S13 token gate, connection-slot creation, session create/recover,
+// takeover of an outgoing trainer, and the session_created handshake.
+// Callers hold h.mu (and only h.mu); sends must go through p so they
+// flush outside the lock.
+func (h *Hub) registerTrainerLocked(client *Client, conns *SessionConnections, exists bool, p *pendingSends) {
+	// S13 invariant: any join to an already-minted Manager session
+	// requires the per-session trainer token — including the
+	// empty-slot recovery path after the previous trainer's readPump
+	// exited. The check runs BEFORE the !exists branch so a tokenless
+	// claimant cannot bypass it via the createSessionFn path (which
+	// would overwrite the minted token). Fresh session creation is the
+	// only path that mints and emits a token to a previously
+	// unauthenticated trainer. Rejections reuse the "Session
+	// introuvable" message so the response does not leak that the code
+	// is live (S14).
+	if sess, ok := h.VoteManager.GetSession(client.SessionID); ok && sess.GetTrainerToken() != "" {
+		if !h.VoteManager.ValidateTrainerToken(client.SessionID, client.TrainerToken) {
+			p.addErr(client, vote.CodeSessionNotFound, "Session introuvable")
+			return
 		}
 	}
 
 	if !exists {
-		if client.Type == "trainer" {
-			conns = &SessionConnections{
-				Stagiaires: make(map[string]*Client),
-			}
-			h.Connections[client.SessionID] = conns
-			// S13 defensive guard: if a Manager session already exists
-			// here (Connections entry was reaped while the Manager
-			// session survived — not reachable via cleanupLoop's normal
-			// contract, but defense in depth), do NOT call
-			// createSessionFn. It would overwrite the existing minted
-			// token, minting a fresh one for the claimant and defeating
-			// the S13 check above. The trainer was authenticated above;
-			// the existing session is theirs to recover.
-			if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
-				if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
-					slog.Error("Failed to create session",
-						append([]any{"error", err}, client.logAttrs()...)...)
-					delete(h.Connections, client.SessionID)
-					queueErr(client, "Impossible de créer la session")
-					return
-				}
-			}
-		} else {
-			queueErr(client, "Session introuvable")
-			return
+		conns = &SessionConnections{
+			Stagiaires: make(map[string]*Client),
 		}
-	}
-
-	if client.Type == "trainer" {
-		if old := conns.Trainer; old != nil && old != client {
-			// Active takeover. The token was validated above; this branch
-			// just closes the outgoing trainer's connection. S1's
-			// per-session token gate is what made takeover require
-			// proof of ownership; S13 extended it to the recovery path.
-			queueErr(old, "New trainer connection detected, closing this one.")
-			// CL1: flag the outgoing trainer so any in-flight broadcast
-			// captured before the swap drops silently instead of pushing
-			// onto the stale Send channel.
-			old.markClosing()
-			time.AfterFunc(trainerTakeoverCloseDelay, func() {
-				if old.Conn != nil {
-					old.Conn.Close()
-				}
-			})
-		}
-
-		conns.Trainer = client
+		h.Connections[client.SessionID] = conns
+		// S13 defensive guard: if a Manager session already exists
+		// here (Connections entry reaped while the Manager session
+		// survived — not reachable via cleanupLoop's normal contract,
+		// but defense in depth), do NOT call createSessionFn: it would
+		// overwrite the existing minted token. The trainer was
+		// authenticated above; the existing session is theirs to
+		// recover.
 		if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
 			if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
 				slog.Error("Failed to create session",
 					append([]any{"error", err}, client.logAttrs()...)...)
-				conns.Trainer = nil
-				queueErr(client, "Impossible de créer la session")
-				return
-			}
-		} else if err := updateTrainerFn(h.VoteManager, client.SessionID, client.ID); err != nil {
-			// R5: UpdateTrainer can return ErrSessionNotFound when the
-			// session is reaped between the GetSession check above and
-			// the UpdateTrainer call (cleanupLoop, concurrent reaper,
-			// etc.). Without recovery, conns.Trainer stays set with no
-			// Manager session underneath: every later op returns
-			// ErrSessionNotFound, and cleanupLoop can't reap the entry
-			// because conns.Trainer != nil. Fall back to CreateSession
-			// (the !ok branch's path) so the trainer keeps a working
-			// session; if CreateSession also fails, roll conns.Trainer
-			// back so cleanupLoop can reap.
-			slog.Warn("UpdateTrainer failed; falling back to CreateSession",
-				append([]any{"error", err}, client.logAttrs()...)...)
-			if _, cerr := createSessionFn(h.VoteManager, client.SessionID, client.ID); cerr != nil {
-				slog.Error("Failed to create session after UpdateTrainer fallback",
-					append([]any{"error", cerr}, client.logAttrs()...)...)
-				conns.Trainer = nil
-				queueErr(client, "Impossible de créer la session")
+				delete(h.Connections, client.SessionID)
+				p.addErr(client, vote.CodeCreateFailed, "Impossible de créer la session")
 				return
 			}
 		}
+	}
 
-		sessionCreated := map[string]any{
-			"type":        "session_created",
-			"sessionCode": client.SessionID,
-			"trainerId":   client.ID,
-		}
-		// Emit the token to the trainer. With S13 every trainer reaching
-		// this point is either the creator of a freshly-minted session
-		// or has already validated the per-session token above — never an
-		// unauthenticated claimant. The client persists it (sessionStorage,
-		// scoped to the tab) and re-sends on every trainer_join so
-		// reconnects can re-validate against the same gate.
-		if sess, ok := h.VoteManager.GetSession(client.SessionID); ok {
-			if token := sess.GetTrainerToken(); token != "" {
-				sessionCreated["trainerToken"] = token
-			}
-		}
-		queue(client, sessionCreated)
-
-		if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
-			pending = append(pending, *ps)
-		}
-
-		if session, ok := h.VoteManager.GetSession(client.SessionID); ok {
-			state, colors, multipleChoice, voteStartTime := session.GetState()
-			labels := session.GetActiveLabels()
-			gameEnabled := session.GetGameEnabled()
-			competitive := session.GetCompetitive()
-			allowBlank := session.GetAllowBlank()
-
-			if state == models.VoteStateActive || state == models.VoteStateClosed {
-				replayMsg := map[string]any{
-					"type":           "vote_started",
-					"colors":         colors,
-					"multipleChoice": multipleChoice,
-					"voteStartTime":  voteStartTime,
-					"voteElapsed":    time.Now().Unix() - voteStartTime,
-					"gameEnabled":    gameEnabled,
-					"competitive":    competitive,
-					"allowBlank":     allowBlank,
-				}
-				if labels != nil {
-					replayMsg["labels"] = labels
-				}
-				queue(client, replayMsg)
-
-				votes := session.GetVotes()
-				stagiaires := session.GetStagiaires()
-				for sID, vColors := range votes {
-					sName := stagiaires[sID]
-					queue(client, map[string]any{
-						"type":          "vote_received",
-						"stagiaireId":   sID,
-						"stagiaireName": sName,
-						"colors":        vColors,
-					})
-				}
-
-				if state == models.VoteStateClosed {
-					queue(client, map[string]any{"type": "vote_closed"})
-				}
-
-				if competitive && session.GetRevealed() {
-					scores := session.GetScores()
-					gameScores := session.GetGameScores()
-					correctColors := session.GetCorrectColors()
-					queue(client, map[string]any{
-						"type":          "answers_revealed",
-						"correctColors": correctColors,
-						"scores":        buildScoreboard(stagiaires, votes, scores, gameScores),
-					})
-				}
-			} else if len(colors) > 0 {
-				// Only sync config when the session has been configured (a
-				// previous trainer picked colors). On a fresh session we have
-				// nothing useful to send — empty colors would clobber the
-				// client's autoloaded last-config.
-				//
-				// FH4: include the full config surface (labels, feature
-				// flags) so a reconnecting trainer's view matches the
-				// server's canonical state rather than their localStorage
-				// snapshot. The frontend's session_created handler runs
-				// applyLastConfigIfAvailable first; this message then
-				// overrides with whatever the server actually has stored,
-				// which is the source of truth across devices/trainers.
-				replayMsg := map[string]any{
-					"type":           "config_updated",
-					"selectedColors": colors,
-					"multipleChoice": multipleChoice,
-					"gameEnabled":    gameEnabled,
-					"competitive":    competitive,
-					"allowBlank":     allowBlank,
-				}
-				if labels != nil {
-					replayMsg["labels"] = labels
-				}
-				queue(client, replayMsg)
-			}
-		}
-	} else {
-		if conns.Trainer == nil {
-			queueErr(client, "Session indisponible (aucun formateur connecté)")
-			return
-		}
-
-		// R16: a *Client that re-joins under a different stagiaireId
-		// would otherwise leave its prior slot in conns.Stagiaires
-		// pointing at the same pointer forever. Client.ID is mutable
-		// across stagiaire_join messages on one connection (R1 resets
-		// it to OriginalID, then a presented-and-known stagiaireId
-		// overwrites it); registerClient only cleaned the *current* ID
-		// slot and unregisterClient only deletes the *current* ID. So a
-		// client registering as B after joining as A left
-		// conns.Stagiaires["A"] → same *Client — inflating
-		// connected_count (a phantom the trainer can never clear) and
-		// leaking a MaxClientsPerSession slot per cycle. A malicious
-		// client cycling stolen (id, token) pairs could exhaust the cap
-		// and block legitimate joins with "Session complète". The scan
-		// runs BEFORE the cap check so the count reflects reality, and
-		// it is O(N) per join where N is bounded by the cap (the common
-		// case has zero matches).
-		for id, c := range conns.Stagiaires {
-			if c == client && id != client.ID {
-				delete(conns.Stagiaires, id)
-			}
-		}
-
-		// S7: per-session client cap. Counts the trainer slot too so the
-		// effective stagiaire limit is cap-1; the trainer is always
-		// allowed to reclaim their own session regardless. A zero or
-		// negative config disables the cap (used by tests that don't
-		// care about the bound).
-		if h.Config.MaxClientsPerSession > 0 && len(conns.Stagiaires)+1 >= h.Config.MaxClientsPerSession {
-			queueErr(client, "Session complète — réessayez plus tard")
-			return
-		}
-
-		result, err := h.VoteManager.JoinStagiaire(client.SessionID, client.ID, client.Name, client.ReclaimToken)
-		if err != nil {
-			// CC2: JoinStagiaire is the authoritative name-uniqueness
-			// arbiter (under the session lock). The advisory check in
-			// handleStagiaireJoin handles the common case; this catches
-			// the TOCTOU race. S6/S12: it is also the sole authority
-			// for reclaim-token validation. S15: it also authoritatively
-			// rejects reclaim-rename collisions. B3: every manager error
-			// routes through UserFacingError so the wire stays French
-			// and no internal entity name leaks into a classroom toast.
-			queueErr(client, vote.UserFacingError(err))
-			return
-		}
-
-		// CL1: flag an outgoing client that held this same ID (a
-		// different connection reconnecting by ID) so any in-flight
-		// broadcast captured before the swap drops silently instead of
-		// pushing onto the stale Send channel. R16: skip when the slot
-		// already belongs to this same *Client (a same-ID re-register is
-		// a no-op reconnect and must not close the client's own conn).
-		if old, ok := conns.Stagiaires[client.ID]; ok && old != client {
-			old.markClosing()
+	if old := conns.Trainer; old != nil && old != client {
+		// Active takeover. The token was validated above; this branch
+		// just closes the outgoing trainer's connection after a brief
+		// grace period so its writePump can flush the warning (S1).
+		// The timer is tracked so Shutdown can stop pending ones
+		// instead of letting them fire after Shutdown returns.
+		p.addErr(old, vote.CodeTrainerReplaced, "New trainer connection detected, closing this one.")
+		old.markClosing()
+		h.takeoverTimers = append(h.takeoverTimers, time.AfterFunc(trainerTakeoverCloseDelay, func() {
 			if old.Conn != nil {
 				old.Conn.Close()
 			}
-		}
-		conns.Stagiaires[client.ID] = client
+		}))
+	}
 
-		// S6/S12: surface the reclaim token so the client can prove
-		// ownership of this identity on future reconnects. Without the
-		// token, a stale stagiaireId alone is not enough to inherit the
-		// prior Scores/GameScores (which are the actual high-value
-		// targets — they're what the competitive leaderboard ranks on).
-		joined := map[string]any{
-			"type":         "session_joined",
-			"sessionCode":  client.SessionID,
-			"stagiaireId":  client.ID,
-			"reclaimToken": result.ReclaimToken,
+	conns.Trainer = client
+	if _, ok := h.VoteManager.GetSession(client.SessionID); !ok {
+		if _, err := createSessionFn(h.VoteManager, client.SessionID, client.ID); err != nil {
+			slog.Error("Failed to create session",
+				append([]any{"error", err}, client.logAttrs()...)...)
+			conns.Trainer = nil
+			p.addErr(client, vote.CodeCreateFailed, "Impossible de créer la session")
+			return
 		}
-		queue(client, joined)
+	} else if err := updateTrainerFn(h.VoteManager, client.SessionID, client.ID); err != nil {
+		// R5: UpdateTrainer can fail with ErrSessionNotFound when the
+		// session is reaped between the GetSession check above and the
+		// call. Fall back to CreateSession so the trainer keeps a
+		// working session; if that also fails, roll conns.Trainer back
+		// so cleanupLoop can reap the entry.
+		slog.Warn("UpdateTrainer failed; falling back to CreateSession",
+			append([]any{"error", err}, client.logAttrs()...)...)
+		if _, cerr := createSessionFn(h.VoteManager, client.SessionID, client.ID); cerr != nil {
+			slog.Error("Failed to create session after UpdateTrainer fallback",
+				append([]any{"error", cerr}, client.logAttrs()...)...)
+			conns.Trainer = nil
+			p.addErr(client, vote.CodeCreateFailed, "Impossible de créer la session")
+			return
+		}
+	}
 
-		if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
-			pending = append(pending, *ps)
+	sessionCreated := map[string]any{
+		"type":        "session_created",
+		"sessionCode": client.SessionID,
+		"trainerId":   client.ID,
+	}
+	// Emit the token to the trainer: every trainer reaching this point
+	// is the creator of a freshly-minted session or has validated the
+	// token above (S13). The client persists it (sessionStorage,
+	// tab-scoped) and re-sends it on every trainer_join so reconnects
+	// re-validate against the same gate.
+	if sess, ok := h.VoteManager.GetSession(client.SessionID); ok {
+		if token := sess.GetTrainerToken(); token != "" {
+			sessionCreated["trainerToken"] = token
+		}
+	}
+	p.add(client, sessionCreated)
+
+	if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
+		p.msgs = append(p.msgs, *ps)
+	}
+
+	h.replayTrainerStateLocked(client, p)
+}
+
+// replayTrainerStateLocked brings a (re)connecting trainer up to date
+// with the session's canonical state: an active/closed vote replayed
+// with every recorded vote, or — on an idle but configured session —
+// the config_updated snapshot (FH4) that overrides the client's
+// localStorage with the server's source of truth. Callers hold h.mu.
+func (h *Hub) replayTrainerStateLocked(client *Client, p *pendingSends) {
+	session, ok := h.VoteManager.GetSession(client.SessionID)
+	if !ok {
+		return
+	}
+	state, colors, multipleChoice, voteStartTime := session.GetState()
+	labels := session.GetActiveLabels()
+	gameEnabled := session.GetGameEnabled()
+	competitive := session.GetCompetitive()
+	allowBlank := session.GetAllowBlank()
+
+	switch {
+	case state == models.VoteStateActive || state == models.VoteStateClosed:
+		replayMsg := map[string]any{
+			"type":           "vote_started",
+			"colors":         colors,
+			"multipleChoice": multipleChoice,
+			"voteStartTime":  voteStartTime,
+			"voteElapsed":    time.Now().Unix() - voteStartTime,
+			"gameEnabled":    gameEnabled,
+			"competitive":    competitive,
+			"allowBlank":     allowBlank,
+		}
+		if labels != nil {
+			replayMsg["labels"] = labels
+		}
+		p.add(client, replayMsg)
+
+		votes := session.GetVotes()
+		stagiaires := session.GetStagiaires()
+		for sID, vColors := range votes {
+			p.add(client, map[string]any{
+				"type":          "vote_received",
+				"stagiaireId":   sID,
+				"stagiaireName": stagiaires[sID],
+				"colors":        vColors,
+			})
 		}
 
-		session, ok := h.VoteManager.GetSession(client.SessionID)
-		if ok {
-			state, colors, multipleChoice, _ := session.GetState()
-			gameEnabled := session.GetGameEnabled()
-			competitive := session.GetCompetitive()
-			allowBlank := session.GetAllowBlank()
-			switch state {
-			case models.VoteStateActive:
-				msg := map[string]any{
-					"type":           "vote_started",
-					"colors":         colors,
-					"multipleChoice": multipleChoice,
-					"gameEnabled":    gameEnabled,
-					"competitive":    competitive,
-					"allowBlank":     allowBlank,
-				}
-				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
-					msg["existingVote"] = existingVote
-				}
-				queue(client, msg)
-			case models.VoteStateClosed:
-				msg := map[string]any{
-					"type":           "vote_started",
-					"colors":         colors,
-					"multipleChoice": multipleChoice,
-					"gameEnabled":    gameEnabled,
-					"competitive":    competitive,
-					"allowBlank":     allowBlank,
-				}
-				if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
-					msg["existingVote"] = existingVote
-				}
-				queue(client, msg)
-				queue(client, map[string]any{"type": "vote_closed"})
-				if competitive && session.GetRevealed() {
-					correctColors := session.GetCorrectColors()
-					scores := session.GetScores()
-					gameScores := session.GetGameScores()
-					stagiaires := session.GetStagiaires()
-					rank, total := computeRank(scores, gameScores, stagiaires, client.ID)
-					queue(client, map[string]any{
-						"type":            "answers_revealed",
-						"correctColors":   correctColors,
-						"totalScore":      scores[client.ID],
-						"gameScore":       gameScores[client.ID],
-						"rank":            rank,
-						"totalStagiaires": total,
-					})
-				}
-			}
+		if state == models.VoteStateClosed {
+			p.add(client, map[string]any{"type": "vote_closed"})
+		}
+
+		if competitive && session.GetRevealed() {
+			scores := session.GetScores()
+			gameScores := session.GetGameScores()
+			correctColors := session.GetCorrectColors()
+			p.add(client, map[string]any{
+				"type":          "answers_revealed",
+				"correctColors": correctColors,
+				"scores":        buildScoreboard(stagiaires, votes, scores, gameScores),
+			})
+		}
+	case len(colors) > 0:
+		// Only sync config when the session has been configured; on a
+		// fresh session empty colors would clobber the client's
+		// autoloaded last-config.
+		replayMsg := map[string]any{
+			"type":           "config_updated",
+			"selectedColors": colors,
+			"multipleChoice": multipleChoice,
+			"gameEnabled":    gameEnabled,
+			"competitive":    competitive,
+			"allowBlank":     allowBlank,
+		}
+		if labels != nil {
+			replayMsg["labels"] = labels
+		}
+		p.add(client, replayMsg)
+	}
+}
+
+// registerStagiaireLocked handles the stagiaire side of registration:
+// the trainer-presence check, the duplicate-slot sweep (R16), the
+// per-session cap (S7), the authoritative JoinStagiaire call, slot
+// takeover by ID, and the session_joined handshake. Callers hold h.mu.
+func (h *Hub) registerStagiaireLocked(client *Client, conns *SessionConnections, p *pendingSends) {
+	if conns == nil {
+		p.addErr(client, vote.CodeSessionNotFound, "Session introuvable")
+		return
+	}
+	if conns.Trainer == nil {
+		p.addErr(client, vote.CodeNoTrainer, "Session indisponible (aucun formateur connecté)")
+		return
+	}
+
+	// R16: a *Client that re-joins under a different stagiaireId would
+	// otherwise leave its prior slot pointing at the same pointer
+	// forever — inflating connected_count and leaking a
+	// MaxClientsPerSession slot per cycle. The scan runs BEFORE the cap
+	// check so the count reflects reality; O(N) with N bounded by the
+	// cap (the common case has zero matches).
+	for id, c := range conns.Stagiaires {
+		if c == client && id != client.ID {
+			delete(conns.Stagiaires, id)
+		}
+	}
+
+	// S7: per-session client cap. Counts the trainer slot too so the
+	// effective stagiaire limit is cap-1. Zero or negative config
+	// disables the cap (used by tests that don't care about the bound).
+	if h.Config.MaxClientsPerSession > 0 && len(conns.Stagiaires)+1 >= h.Config.MaxClientsPerSession {
+		p.addErr(client, vote.CodeSessionFull, "Session complète — réessayez plus tard")
+		return
+	}
+
+	result, err := h.VoteManager.JoinStagiaire(client.SessionID, client.ID, client.Name, client.ReclaimToken)
+	if err != nil {
+		// CC2: JoinStagiaire is the authoritative name-uniqueness and
+		// reclaim-token arbiter (under the session lock, constant-time
+		// compare); B3 keeps the wire French with no internal entity
+		// names leaked.
+		p.addErr(client, vote.ErrorCode(err), vote.UserFacingError(err))
+		return
+	}
+
+	// CL1: flag an outgoing client that held this same ID so in-flight
+	// broadcasts drop it. R16: skip when the slot already belongs to
+	// this same *Client (a same-ID re-register is a no-op reconnect
+	// and must not close the client's own conn).
+	if old, ok := conns.Stagiaires[client.ID]; ok && old != client {
+		old.markClosing()
+		if old.Conn != nil {
+			old.Conn.Close()
+		}
+	}
+	conns.Stagiaires[client.ID] = client
+
+	// S6/S12: surface the reclaim token so the client can prove
+	// ownership of this identity on future reconnects. Without it, a
+	// stale stagiaireId alone cannot inherit the prior Scores /
+	// GameScores.
+	p.add(client, map[string]any{
+		"type":         "session_joined",
+		"sessionCode":  client.SessionID,
+		"stagiaireId":  client.ID,
+		"reclaimToken": result.ReclaimToken,
+	})
+
+	if ps := h.buildTrainerStagiaireListLocked(conns, client.SessionID, "connected_count"); ps != nil {
+		p.msgs = append(p.msgs, *ps)
+	}
+
+	h.replayStagiaireStateLocked(client, p)
+}
+
+// replayStagiaireStateLocked brings a (re)connecting stagiaire up to
+// date: an active vote (with their existing vote, if any) or a closed
+// one plus their personal reveal. Callers hold h.mu.
+func (h *Hub) replayStagiaireStateLocked(client *Client, p *pendingSends) {
+	session, ok := h.VoteManager.GetSession(client.SessionID)
+	if !ok {
+		return
+	}
+	state, colors, multipleChoice, _ := session.GetState()
+	gameEnabled := session.GetGameEnabled()
+	competitive := session.GetCompetitive()
+	allowBlank := session.GetAllowBlank()
+	switch state {
+	case models.VoteStateActive:
+		msg := map[string]any{
+			"type":           "vote_started",
+			"colors":         colors,
+			"multipleChoice": multipleChoice,
+			"gameEnabled":    gameEnabled,
+			"competitive":    competitive,
+			"allowBlank":     allowBlank,
+		}
+		if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
+			msg["existingVote"] = existingVote
+		}
+		p.add(client, msg)
+	case models.VoteStateClosed:
+		msg := map[string]any{
+			"type":           "vote_started",
+			"colors":         colors,
+			"multipleChoice": multipleChoice,
+			"gameEnabled":    gameEnabled,
+			"competitive":    competitive,
+			"allowBlank":     allowBlank,
+		}
+		if existingVote, hasVoted := session.GetVote(client.ID); hasVoted {
+			msg["existingVote"] = existingVote
+		}
+		p.add(client, msg)
+		p.add(client, map[string]any{"type": "vote_closed"})
+		if competitive && session.GetRevealed() {
+			correctColors := session.GetCorrectColors()
+			scores := session.GetScores()
+			gameScores := session.GetGameScores()
+			stagiaires := session.GetStagiaires()
+			rank, total := computeRank(scores, gameScores, stagiaires, client.ID)
+			p.add(client, map[string]any{
+				"type":            "answers_revealed",
+				"correctColors":   correctColors,
+				"totalScore":      scores[client.ID],
+				"gameScore":       gameScores[client.ID],
+				"rank":            rank,
+				"totalStagiaires": total,
+			})
 		}
 	}
 }
@@ -1143,12 +1146,6 @@ func (h *Hub) GetMetrics() Metrics {
 	}
 
 	return metrics
-}
-
-func (h *Hub) GetConnectionCount() int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.Connections)
 }
 
 // ProductStats returns the aggregate usage counters (sessions, votes,

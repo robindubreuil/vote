@@ -21,8 +21,8 @@ func TestWebSocketTrainerJoin(t *testing.T) {
 	// Should receive session_created
 	msg := client.WaitForType("session_created", 2*time.Second)
 	sessionCode, ok := msg["sessionCode"].(string)
-	if !ok || len(sessionCode) != 3 {
-		t.Errorf("Expected valid 3-letter sessionCode, got %v", msg["sessionCode"])
+	if !ok || len(sessionCode) != 4 {
+		t.Errorf("Expected valid 4-letter sessionCode (S15), got %v", msg["sessionCode"])
 	}
 	// Verify server-generated trainerId is returned
 	if _, ok := msg["trainerId"].(string); !ok {

@@ -807,7 +807,7 @@ keeps the competitive-display reasoning in one head.
   `correctColors: Array.from(state.correctColors)` through `savePreset` /
   `setLastConfig`, and `state.correctColors = new Set(preset.config.correctColors
   || [])` through both restore sites.
-- [ ] Tests: `formateur/renderers.test.js` (+scoreboard sorts by totalScore,
+- [x] Tests: `formateur/renderers.test.js` (+scoreboard sorts by totalScore,
   +renders `rank-N` row class, +renders `totalScore` column, F26);
   `formateur/handlers.test.js` + `shared/presets.test.js` (+savePreset +
   setLastConfig carry `correctColors`, +applyPreset +
@@ -1411,6 +1411,117 @@ low-to-medium severity, and each is a contained edit.
   `SessionTimeout=1ns` all survive). `go test -race ./...` green;
   `make fmt-check` / `go vet` clean; `npm test` green (621 tests);
   `npm run lint` / `npm run build` clean.
+
+---
+
+## Session 35 — Review-fixes sweep: protocol, security residuals, dead code, CI
+
+Full pass over the round-7 review findings. Everything verified against source
+before editing; all suites green afterwards. Changes left uncommitted in the
+working tree on branch `review-fixes`. Git history rewrite for the 35 MB blobs
+was deliberately skipped (destructive, owner's call).
+
+- [x] **S15** [High] Session codes lengthened 3 → 4 chars. `23^3 = 12,167`
+  codes was enumerable inside the join-backoff budget; ×23 costs nothing to
+  type. Backend `SessionCodeLength = 4`, regex `{3,4}` (legacy 3-char codes
+  stay valid — sessions are in-memory so no persisted old codes exist, the
+  tolerance is for pinned fixtures). Frontend `SESSION_CODE_REGEX` `{3,4}`,
+  join inputs `maxlength=4` / `pattern {3,4}`, placeholder `ABCD`, validation
+  message "3 ou 4 lettres". Integration tests + e2e fixtures/specs updated.
+- [x] **H1** [High] Stable machine-readable `error.code` on the wire
+  (`vote/errors.go`: `CodeSessionNotFound` etc. + `ErrorCode(err)` mapping;
+  `client.go`: `SendErrorCode` / `SendErrorWithBackoff(code, msg)` /
+  `pendingSends.addErr`). Frontend branches on codes
+  (`session_not_found`, `reclaim_expired`) with the old text matches kept as
+  pre-upgrade fallback. This fixed a live bug: the stagiaire UI matched
+  `'Session not found'` — an English string the French-only server never
+  sent — so that branch had never once fired.
+- [x] **H2** [High] App-level heartbeat: browser JS cannot observe
+  gorilla's protocol-level pings (the network stack answers them), so a
+  half-open TCP conn left the UI "connected" while votes vanished. Server
+  gained a `ping` handler (rate-limited like any frame) replying `pong`;
+  `VoteClient` sends `{type:'ping'}` every 15 s and forces the reconnect
+  path (detach dead socket → `onStatusChange(false)` → `scheduleReconnect`)
+  after 25 s of inbound silence. Any inbound frame resets the clock.
+- [x] **H3** [Medium] Vote-ack watchdog: `submitVote` armed a 10 s timer
+  (button spinner could previously spin forever on a dropped frame);
+  `vote_accepted` disarms it via `clearVoteAck()`.
+- [x] **R29** [Medium] Message rate limiter rewritten as a true sliding
+  1 s window (timestamps pruned in place, cap `MaxMessagesPerSecond`). The
+  old fixed-window + burst hybrid let a client pace just over the sustained
+  rate at 2× the advertised limit forever by straddling window boundaries.
+- [x] **R2** [Medium] `GenerateSessionCode` rewritten: used-set built once,
+  O(1) probes, and the lexicographic exhaustive-walk fallback (exponential
+  in code length — would have frozen the hub lock at 4 chars) replaced by
+  returning "" (caller reports "no codes available").
+- [x] **R28** [Low] `reveal_answers` now rejects duplicated `correctColors`
+  (would double-count the missed-correct penalty), matching `start_vote`.
+- [x] **CSP** [High] Dashboard extracted from Go raw strings to embedded
+  static assets (`internal/server/dashboardassets/`, `go:embed`, explicit
+  file list, no wildcard). CSP tightened from `script-src 'unsafe-inline'`
+  to `default-src 'none'; script-src 'self'; style-src 'self'; img-src
+  'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors
+  'none'; form-action 'self'` — zero inline script/style/handlers (bars use
+  CSSOM `style.height` assignments, which CSP does not block). Triplicated
+  login pages deduplicated into one template + `<!--LOGIN_ERROR-->`
+  placeholder. `auth.go` untouched (byte-identical).
+- [x] **hub.go refactor** 370-line `registerClient` split into
+  `registerTrainerLocked` / `registerStagiaireLocked` /
+  `replayTrainerStateLocked` / `replayStagiaireLocked` +
+  `pendingSends` accumulator (same CC3 send-outside-lock discipline).
+  `takeoverTimers` now tracked on the Hub so `Shutdown` stops pending
+  delayed closes (previously a timer could fire after Shutdown returned).
+  Dead duplicate `GetConnectionCount` removed (`cleanup_test` →
+  `SessionCount`).
+- [x] **S19** [Low] Startup warning when `VOTE_DASHBOARD_SECRET` < 16 chars;
+  `--help` env-var table completed (all `VOTE_MAX_*` caps, HOST,
+  SESSION_TIMEOUT, CLEANUP_INTERVAL, secret-length advice, stats.jsonl
+  durability caveat).
+- [x] **store cleanups** Removed the fake compile-time guard
+  (`var _ fs.FileMode = 0o600`), `TestPlatformPathNote` (skip-only, no
+  assertions) and the doc-grep "test" that asserted comment wording; kept a
+  real behavioral test of the `syncDir`/`syncPath` helpers.
+- [x] **CI/Makefile** `make test` no longer double-runs integration (CI unit
+  step excludes `/integration`, matching the separate integration job); new
+  `e2e-ui` CI job runs `ui.spec.ts` via Playwright's dual webServer (the
+  browser suite previously ran nowhere); `make test-e2e-ui` target added.
+- [x] **Frontend sweep** (verified, minimal): XSS — unescaped network-derived
+  `aria-label="${label}"` in stagiaire/renderers wrapped in `escapeHtml`
+  (only such site); keyboard a11y — Mastermind slots (`span[role=button]`)
+  now activate on Enter/Space; preset chips got `role="button"`; i18n —
+  `common.connectionError` replaces 10 hardcoded `'Erreur de connexion'`,
+  `formateur/utils.js` uses `t.formateur.votes` like its twin render path,
+  plus `sending`/level-up/secret-code keys; `websocket-client` no longer
+  burns a reconnect attempt on `onclose` while offline; stagiaire message
+  switch gained the formateur-style `default:` debug log; stale
+  `frontend/coverage/` deleted + ignored; `session-sync.test.js` moved next
+  to its module in `shared/`; a `setTimeout(...,50)` focus hack removed
+  (render is synchronous); 4 near-identical trainer send wrappers collapsed
+  into `sendVoteAction`. F27 tests already existed in commit 3d98565 —
+  ledger box ticked, no duplicate tests written.
+- [x] Tests: `shared/websocket-client.test.js` (+4 heartbeat tests: pings
+  while open, stop after close, half-open forces reconnect, any inbound
+  frame resets clock), `security_test.go` sliding-window semantics,
+  `vote/validation_test.go` 4-char table, integration length asserts, e2e
+  regexes. Node 22's experimental `localStorage` global (undefined without
+  `--localstorage-file`) shadowed happy-dom's and broke 2 F15 tests — fixed
+  with a `vi.stubGlobal` spy that also proves nothing is written to
+  localStorage.
+
+Verification: `go test -race ./...` 418/418 (10 packages, integration 26/26);
+`gofmt -l` / `go vet` clean; golangci-lint v2.12.2 (same version as CI) run
+locally — 3 findings fixed first (gocritic appendAssign in the R29 limiter,
+gosec G706 on the S19 warning → constant message, gosec G101 on the const
+*name* `loginErrorWrongSecret` → renamed `loginErrorBadAuth`; 0 issues
+after). `npm test` 626/626, eslint clean, `npm run build` clean. Playwright
+installed locally — ws-protocol 35/35; ui 7/7 after fixing the vite webServer
+readiness URL (the MPA 404s `/` — poll `/formateur/` instead) and 3 rotted
+ui.spec assertions (start-vote button is enabled with the 3-color default
+preset; the native color checkbox is display:none so tests click
+`label[for="color-X"]`; leaving uses the styled confirm dialog `.confirm-ok`,
+not window.confirm). Repo history rewritten with git-filter-repo
+(`--strip-blobs-bigger-than 10M`) to purge 8 accidentally-committed server
+binaries: `.git` 57 MB → 1.4 MB, all 133 commits and tags preserved.
 
 ---
 

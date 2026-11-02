@@ -43,7 +43,8 @@ vote/
 | `make dev` | Hot reload (requires [air](https://github.com/air-verse/air)) |
 | `make test` | Unit tests (`-race -cover`) |
 | `make test-integration` | WebSocket integration tests |
-| `make test-e2e` | Playwright E2E (requires running backend) |
+| `make test-e2e` | Playwright WS-protocol tests (CI-friendly, no frontend needed) |
+| `make test-e2e-ui` | Full UI E2E (auto-starts backend + Vite via Playwright) |
 | `make test-all` | Unit + Integration + E2E |
 | `make test-cover` | Generate HTML coverage report |
 | `make lint` | golangci-lint |
@@ -88,7 +89,7 @@ See `.env.example`:
 
 `GET /metrics` exposes a [Prometheus](https://prometheus.io/docs/instrumenting/exposition_formats/)-format text endpoint with both runtime gauges (active sessions, connected trainers/stagiaires, goroutines, memory) and product counters/histograms (`vote_sessions_created_total`, `vote_votes_cast_total`, `vote_trainees_joined_total`, feature-adoption counters, and per-session distribution histograms). It is public and scrape-friendly.
 
-`GET /dashboard` is an **authed** self-contained maintainer dashboard (no build step, no external deps) that polls `/metrics`, keeps a compact ring buffer of snapshots in `localStorage`, and renders SVG sparklines + histogram bars. **Usage data persists server-side** in `VOTE_DATA_DIR`: counters survive restarts (restored from `counters.json` on boot) and a 5-min append-only history (`stats.jsonl`) is collected 24/7 regardless of whether anyone has the dashboard open. On login the dashboard fetches `GET /dashboard/history` (authed) and seeds the trend from server data, so a maintainer logging in after a month sees all-time totals + the full usage trend.
+`GET /dashboard` is an **authed** maintainer dashboard (static assets embedded in the binary via `go:embed` — no build step, no external deps, served under a strict CSP with no inline script/style) that polls `/metrics`, keeps a compact ring buffer of snapshots in `localStorage`, and renders SVG sparklines + histogram bars. **Usage data persists server-side** in `VOTE_DATA_DIR`: counters survive restarts (restored from `counters.json` on boot) and a 5-min append-only history (`stats.jsonl`) is collected 24/7 regardless of whether anyone has the dashboard open. On login the dashboard fetches `GET /dashboard/history` (authed) and seeds the trend from server data, so a maintainer logging in after a month sees all-time totals + the full usage trend.
 
 Enabled only when `VOTE_DASHBOARD_SECRET` is set; login at `/dashboard/login` with the configured secret. If the data dir cannot be opened, the server runs without persistence (counters reset on restart, as before this feature) — failures are non-fatal.
 

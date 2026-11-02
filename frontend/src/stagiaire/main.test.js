@@ -31,8 +31,7 @@ describe('Stagiaire - Validation du code de session', () => {
     expect(validateSessionCode('')).toBeTruthy()
   })
 
-  it('should reject codes with more than 3 letters', () => {
-    expect(validateSessionCode('ABCD')).toBeTruthy()
+  it('should reject codes longer than 4 letters (S15: 4-char codes)', () => {
     expect(validateSessionCode('ABCDE')).toBeTruthy()
   })
 

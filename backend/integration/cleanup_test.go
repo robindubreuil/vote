@@ -124,7 +124,7 @@ func TestSessionCleanup(t *testing.T) {
 	}
 
 	// Verify Hub internal connection map
-	if count := h.GetConnectionCount(); count != 0 {
+	if count := h.SessionCount(); count != 0 {
 		t.Errorf("Hub connections map size: expected 0, got %d", count)
 	}
 }

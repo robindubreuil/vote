@@ -25,10 +25,12 @@ test.describe('UI E2E', () => {
     const codeBtn = trainerPage.getByTestId('session-code-btn');
     await expect(codeBtn).toBeVisible({ timeout: 10000 });
     const code = await codeBtn.textContent();
-    expect(code).toMatch(/^[A-HJ-NP-Y]{3}$/);
+    expect(code).toMatch(/^[A-HJ-NP-Y]{4}$/); // S15: 4-char codes
 
     await expect(trainerPage.getByTestId('start-vote-btn')).toBeVisible();
-    await expect(trainerPage.getByTestId('start-vote-btn')).toBeDisabled();
+    // Default preset selects 3 colors, so the button is enabled once the
+    // trainer WS connects (F24: enabled at >=2 selected && connected).
+    await expect(trainerPage.getByTestId('start-vote-btn')).toBeEnabled();
 
     const checkboxes = trainerPage.locator('.color-checkbox input[type="checkbox"]:checked');
     expect(await checkboxes.count()).toBe(3);
@@ -88,10 +90,9 @@ test.describe('UI E2E', () => {
     const instruction = stagiairePage.getByTestId('vote-instruction');
     await expect(instruction).toHaveClass(/multiple-choice/);
 
-    const checkbox = stagiairePage.getByTestId('vote-checkbox-rouge');
-    if (await checkbox.isVisible()) {
-      await checkbox.check();
-    }
+    // The native checkbox is display:none (styled-label UI) — click the
+    // label, which is what users actually interact with.
+    await stagiairePage.locator('label[for="color-rouge"]').click();
     await stagiairePage.getByTestId('submit-vote-btn').click();
     await expect(stagiairePage.getByTestId('voted-title')).toBeVisible({ timeout: 10000 });
 
@@ -132,8 +133,9 @@ test.describe('UI E2E', () => {
   test('trainer leave session', async () => {
     await trainerPage.getByTestId('session-code-btn').click();
 
-    trainerPage.once('dialog', dialog => dialog.accept());
-    await trainerPage.getByTestId('session-code-btn').click();
+    // Leaving is confirmed via the app's styled dialog (shared/ui.js
+    // showConfirmDialog), not window.confirm — click its OK button.
+    await trainerPage.locator('.confirm-ok').click();
 
     await expect(trainerPage.getByTestId('create-session-btn')).toBeVisible({ timeout: 10000 });
   });

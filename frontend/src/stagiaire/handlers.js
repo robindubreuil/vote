@@ -161,13 +161,20 @@ function renderBoard() {
   if (submitBtn) submitBtn.disabled = boardState.status !== 'playing' || !rowFull
   if (clearBtn) clearBtn.disabled = boardState.status !== 'playing' || boardState.currentRow.every((c) => c === null)
 
-  // Slot taps: clear individual slot
+  // Slot taps: clear individual slot. The slots carry role="button"
+  // tabindex="0", so Enter/Space must trigger the same action as a click.
   board.querySelectorAll('.game-slot[data-slot]').forEach((slot) => {
-    slot.onclick = () => {
+    const clearSlot = () => {
       if (game && game.status === 'playing') {
         game.clear(Number(slot.dataset.slot))
         renderBoard()
       }
+    }
+    slot.onclick = clearSlot
+    slot.onkeydown = (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      e.preventDefault()
+      clearSlot()
     }
   })
 
@@ -267,7 +274,7 @@ function showEndScreen(boardState) {
   if (levelUpEl) {
     if (boardState.leveledUp) {
       const newLevel = getDifficulty(boardState.best).level
-      levelUpEl.textContent = `Niveau ${newLevel} débloqué !`
+      levelUpEl.textContent = t.stagiaire.gameLevelUp(newLevel)
       levelUpEl.hidden = false
     } else {
       levelUpEl.hidden = true
@@ -289,7 +296,7 @@ function showEndScreen(boardState) {
     const chips = (boardState.secret || [])
       .map((id) => `<span class="game-slot game-slot-filled bg-${id}"></span>`)
       .join('')
-    secretEl.innerHTML = `<span class="game-screen-secret-label">Le code était</span><span class="game-screen-secret-chips">${chips}</span>`
+    secretEl.innerHTML = `<span class="game-screen-secret-label">${t.stagiaire.gameSecretCodeWas}</span><span class="game-screen-secret-chips">${chips}</span>`
   }
   showOverlayScreen('gameOverScreen')
 }
@@ -698,10 +705,27 @@ export function handleSubmitVote() {
 /**
  * Submit the vote to the server
  */
+
+// H3: vote-ack watchdog. If the server never answers a submitted vote
+// (half-open connection, silently dropped frame), the submit button
+// would spin forever. vote_accepted clears the timer; a timeout
+// restores the button and surfaces a connection error so the
+// stagiaire can retry. 10s covers the slowest classroom networks
+// while still feeling immediate.
+const VOTE_ACK_TIMEOUT_MS = 10000
+let voteAckTimer = null
+
+export function clearVoteAck() {
+  if (voteAckTimer) {
+    clearTimeout(voteAckTimer)
+    voteAckTimer = null
+  }
+}
+
 export function submitVote(triggerButton = null) {
   const client = getClient()
   if (!client) {
-    showError('Erreur de connexion')
+    showError(t.common.connectionError)
     return
   }
 
@@ -711,7 +735,7 @@ export function submitVote(triggerButton = null) {
   if (btn) {
     btn.disabled = true
     if (btn.id === 'submitVote') {
-      btn.innerHTML = `${loader(' class="icon icon-md spin"')} Envoi...`
+      btn.innerHTML = `${loader(' class="icon icon-md spin"')} ${t.stagiaire.sending}`
     } else {
       btn.style.opacity = '0.7'
       btn.style.cursor = 'wait'
@@ -731,8 +755,23 @@ export function submitVote(triggerButton = null) {
       btn.style.opacity = ''
       btn.style.cursor = ''
     }
-    showError('Erreur de connexion')
+    showError(t.common.connectionError)
+    return
   }
+
+  // H3: sent, but not yet acknowledged — arm the watchdog. Cleared by
+  // the vote_accepted handler in websocket.js.
+  clearVoteAck()
+  voteAckTimer = setTimeout(() => {
+    voteAckTimer = null
+    if (btn) {
+      btn.disabled = false
+      btn.innerHTML = originalContent
+      btn.style.opacity = ''
+      btn.style.cursor = ''
+    }
+    showError(t.common.connectionError)
+  }, VOTE_ACK_TIMEOUT_MS)
 }
 
 /**

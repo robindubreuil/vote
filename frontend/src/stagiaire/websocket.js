@@ -4,7 +4,7 @@ import { showError } from '@shared/ui.js'
 import { t } from '@shared/strings.js'
 import { state, AppState } from './state.js'
 import { render } from './renderers.js'
-import { pauseGameExternal, teardownGame, setFieldInvalid } from './handlers.js'
+import { pauseGameExternal, teardownGame, setFieldInvalid, clearVoteAck } from './handlers.js'
 import { safeSessionSet, safeSessionRemove } from '@shared/utils/safe-storage.js'
 import { resetHighScore, saveStreak } from '@shared/game-storage.js'
 
@@ -169,7 +169,11 @@ function handleMessage(msg) {
 
     case 'error': {
       let errorMessage = msg.message || t.stagiaire.connectionError
-      if (errorMessage === 'Session not found') {
+      // H1: branch on the server's stable machine-readable code. (The
+      // old text match compared against 'Session not found' — an
+      // English string the French-only server never sent, so this
+      // branch could never fire; it is kept working via codes now.)
+      if (msg.code === 'session_not_found') {
         errorMessage = t.stagiaire.sessionNotFound
       }
       // R8: if a rename is in-flight, route the rejection into the
@@ -199,11 +203,11 @@ function handleMessage(msg) {
       // once as a fresh identity. Without this, the auto-reconnect
       // loop would keep resending the same bad ID forever.
       //
-      // F9/F19: compare against the strings.js sentinel (kept in sync
-      // with the server's UserFacingError mapping in backend/internal/
-      // vote/errors.go) instead of an inline literal — a wording change
-      // is now a two-file edit instead of a silent break.
-      if (errorMessage === t.stagiaire.sessionExpired) {
+      // H1: match the stable wire code; the text comparison against
+      // the strings.js sentinel (kept in sync with the server's
+      // UserFacingError mapping) remains as a fallback for
+      // pre-upgrade servers.
+      if (msg.code === 'reclaim_expired' || errorMessage === t.stagiaire.sessionExpired) {
         delete state.stagiaireId
         delete state.reclaimToken
         safeSessionRemove('vote_stagiaire_id')
@@ -260,7 +264,8 @@ function handleMessage(msg) {
       break
 
     case 'vote_accepted':
-      // Vote accepté
+      // Vote accepté — H3: disarm the submit watchdog.
+      clearVoteAck()
       state.hasVoted = true
       state.appState = AppState.VOTED
       render()
@@ -320,5 +325,8 @@ function handleMessage(msg) {
       state.prenomEdit = false
       render()
       break
+
+    default:
+      console.debug('Unknown message type:', msg.type)
   }
 }

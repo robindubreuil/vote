@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Tableau de bord — vote</title>
+<link rel="stylesheet" href="/dashboard/assets/style.css">
+<script src="/dashboard/assets/app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>📈 Tableau de bord</h1>
+  <div class="meta">
+    <span><span class="dot" id="live"></span> <span id="liveText">en direct</span></span>
+    <span id="uptime"></span>
+    <form class="logout" method="POST" action="/dashboard/logout"><button type="submit">Déconnexion</button></form>
+  </div>
+</header>
+<main>
+  <div class="grid" id="counters"></div>
+  <section>
+    <h2>Activité des votes (en direct, dernière heure)</h2>
+    <div class="card"><svg class="spark" id="sparkVotes"></svg></div>
+  </section>
+  <section>
+    <h2>Répartition par session (depuis le démarrage)</h2>
+    <div class="grid">
+      <div class="card hist-wrap"><div class="label">Votes / session</div><div class="hist" id="histVotes"></div></div>
+      <div class="card hist-wrap"><div class="label">Stagiaires / session</div><div class="hist" id="histTrainees"></div></div>
+      <div class="card hist-wrap"><div class="label">Durée session (min)</div><div class="hist" id="histDuration"></div></div>
+    </div>
+  </section>
+  <section>
+    <h2>Instantané live</h2>
+    <div class="grid" id="liveGrid"></div>
+  </section>
+</main>
+<footer>Tendances persistées côté serveur (VOTE_DATA_DIR) — les compteurs survivent aux redémarrages. Échantillonnage périodique.</footer>
+</body>
+</html>

@@ -27,7 +27,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -559,6 +558,3 @@ func validCounters(c Counters) bool {
 		validHistogram(c.VotesPerSession) &&
 		validHistogram(c.TraineesPerSession)
 }
-
-// Compile-time guard that os.WriteFile's truncation path keeps the file mode.
-var _ fs.FileMode = 0o600

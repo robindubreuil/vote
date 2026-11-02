@@ -282,16 +282,18 @@ function handleMessage(msg) {
       console.error('Backend error:', msg.message)
       state.connecting = false
 
-      if (msg.message === 'Session introuvable') {
+      // H1: branch on the stable wire code, with the French text kept
+      // as a fallback for pre-upgrade servers.
+      if (msg.code === 'session_not_found' || msg.message === 'Session introuvable') {
         safeSessionRemove('vote_session_code')
         state.sessionCode = null
         cleanupAllListeners()
         renderLandingPage(app)
         attachLandingListenersWithHandlers()
-        setTimeout(() => {
-          showError(msg.message)
-          document.getElementById('joinSessionInput')?.focus()
-        }, 50)
+        // Both render helpers are synchronous (innerHTML + listener
+        // wiring), so the input exists already — no need to defer.
+        showError(msg.message)
+        document.getElementById('joinSessionInput')?.focus()
       } else {
         showError(msg.message)
         updateLandingPageLoadingState(false)

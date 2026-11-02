@@ -53,13 +53,21 @@ func TestCheckMessageRate(t *testing.T) {
 	}
 
 	denied := 0
-	for i := 0; i < MaxBurstMessages+10; i++ {
-		if !sec.CheckMessageRate(clientID) {
+	// True sliding window (R29): the first message plus the next
+	// MaxMessagesPerSecond-1 are accepted; anything tighter is denied.
+	allowed := 0
+	for i := 0; i < MaxMessagesPerSecond; i++ {
+		if sec.CheckMessageRate(clientID) {
+			allowed++
+		} else {
 			denied++
 		}
 	}
-	if denied == 0 {
-		t.Errorf("expected some messages to be denied after burst limit (%d), got 0 denials", MaxBurstMessages)
+	if allowed != MaxMessagesPerSecond-1 {
+		t.Errorf("expected %d further messages allowed in the window, got %d", MaxMessagesPerSecond-1, allowed)
+	}
+	if denied != 1 {
+		t.Errorf("expected the %dth tight message to be denied, got %d denials", MaxMessagesPerSecond, denied)
 	}
 }
 

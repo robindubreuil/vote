@@ -115,7 +115,7 @@ export function renderLandingPage(app) {
           <div class="landing-divider">${t.formateur.or}</div>
 
           <div class="input-group">
-            <input type="text" id="joinSessionInput" class="input-text" data-testid="join-session-input" placeholder="${t.formateur.sessionPlaceholder}" maxlength="3" pattern="[A-HJ-NP-Ya-hj-np-y]{3}" inputmode="text" autocapitalize="characters" autocomplete="off">
+            <input type="text" id="joinSessionInput" class="input-text" data-testid="join-session-input" placeholder="${t.formateur.sessionPlaceholder}" maxlength="4" minlength="3" pattern="[A-HJ-NP-Ya-hj-np-y]{3,4}" inputmode="text" autocapitalize="characters" autocomplete="off">
             <button id="joinSessionBtn" class="btn btn-secondary" data-testid="join-session-btn" title="${t.formateur.joinSession} — ${t.formateur.shortcutEnter}">
               ${t.formateur.joinSession}
             </button>
@@ -638,7 +638,7 @@ function renderPresetsSectionHTML() {
         .join('')
       const title = t.formateur.presetSwatchTitle(p.name, p.config.selectedColors.length)
       return `
-        <div class="preset-chip" data-preset-id="${escapeHtml(p.id)}" data-preset-action="apply" title="${escapeHtml(title)}" tabindex="0">
+        <div class="preset-chip" role="button" data-preset-id="${escapeHtml(p.id)}" data-preset-action="apply" title="${escapeHtml(title)}" tabindex="0">
           <span class="preset-chip-swatches">${swatches}</span>
           <span class="preset-chip-name">${escapeHtml(p.name)}</span>
           <button

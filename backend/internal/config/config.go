@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"log/slog"
 	"os"
 	"strconv"
@@ -101,6 +102,16 @@ func LoadConfig() *Config {
 		if colors := splitList(envColors); len(colors) > 0 {
 			config.ValidColors = colors
 		}
+	}
+
+	// S19: a short dashboard secret narrows the cookie-forging keyspace
+	// to something brute-forceable despite the HMAC and the failed-login
+	// backoff. Not fatal (rate limiting still applies) but the operator
+	// should hear about it at startup, not after a guess succeeds.
+	if config.DashboardSecret != "" && len(config.DashboardSecret) < 16 {
+		// Constant message: nothing env-derived flows into the log (gosec G706).
+		log.Print("WARNING: VOTE_DASHBOARD_SECRET is shorter than 16 characters — " +
+			"the dashboard cookie could be brute-forced; use a long random value")
 	}
 
 	return config

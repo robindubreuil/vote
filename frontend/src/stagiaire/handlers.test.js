@@ -799,8 +799,23 @@ describe('stagiaire handlers — submit / join / leave', () => {
 describe('stagiaire handlers — F15 prenom persistence', () => {
   let connectSpy
 
+  // Node 22+ ships an experimental global `localStorage` that resolves
+  // to undefined without --localstorage-file and shadows happy-dom's,
+  // so bare `localStorage` access throws in this environment (this is
+  // why these two tests failed before the stub). Spy-back the storage:
+  // it also lets the assertions prove nothing is ever WRITTEN to
+  // localStorage, which is the actual F15 contract.
+  let localStorageSpy
+
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorageSpy = {
+      clear: vi.fn(),
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn()
+    }
+    vi.stubGlobal('localStorage', localStorageSpy)
     document.body.innerHTML = '<div id="app"></div>'
     renderLayout(document.getElementById('app'))
 
@@ -812,12 +827,16 @@ describe('stagiaire handlers — F15 prenom persistence', () => {
     state.connected = false
 
     sessionStorage.clear()
-    localStorage.clear()
+    localStorageSpy.clear()
 
     connectSpy = vi.fn()
     setConnectToSession(connectSpy)
     // handleEditName path: getClient() returns an object with .send.
     mockGetClient.mockReturnValue({ send: vi.fn(() => true) })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   function fillJoinForm({ prenom, code }) {
@@ -838,7 +857,7 @@ describe('stagiaire handlers — F15 prenom persistence', () => {
     handleJoin(submitEvent())
 
     expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBe('Camille')
-    expect(localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
+    expect(window.localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
   })
 
   it('handleEditName does NOT persist prenom optimistically (R8: defers to name_updated)', () => {
@@ -859,7 +878,7 @@ describe('stagiaire handlers — F15 prenom persistence', () => {
 
     // Not committed — server may reject with ErrNameInUse.
     expect(sessionStorage.getItem('vote_stagiaire_prenom')).toBeNull()
-    expect(localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
+    expect(window.localStorage.getItem('vote_stagiaire_prenom')).toBeNull()
     expect(state.prenom).toBe('Old')
     expect(state.pendingRename).toBe('New')
   })

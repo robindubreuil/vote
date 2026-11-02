@@ -49,7 +49,7 @@ jobs:
           fi
 
       - name: Unit tests
-        run: go test -v -race -cover ./...
+        run: go test -v -race -cover $(go list ./... | grep -v /integration)
 
       - name: Integration tests
         run: go test -v -race -timeout 60s ./integration/...
@@ -139,6 +139,37 @@ jobs:
       - name: Stop backend
         if: always()
         run: kill $(cat /tmp/vote-server.pid) 2>/dev/null || true
+
+  e2e-ui:
+    name: E2E UI (Playwright + Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@5c8b8814e4fc0751426e0990525bc0b7ce176f47 # v5
+
+      - uses: actions/setup-go@4d8ff7ddde5bc2d6b7606eb2ddb6b4b6cb1b8677 # v6
+        with:
+          go-version: "1.24"
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      # No SKIP_VITE: playwright's dual webServer auto-starts the
+      # backend (go run) and Vite, then tears both down. This gates the
+      # browser-level suite that previously ran nowhere (X2).
+      - name: Run UI tests
+        run: npx playwright test ui.spec.ts
+        env:
+          VOTE_MAX_SESSIONS_PER_HOUR: "10000"
 
   docker:
     name: Docker Build

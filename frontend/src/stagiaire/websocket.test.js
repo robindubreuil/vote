@@ -54,6 +54,8 @@ const teardownSpy = vi.fn()
 vi.mock('./handlers.js', () => ({
   pauseGameExternal: (...a) => pauseSpy(...a),
   teardownGame: (...a) => teardownSpy(...a),
+  // H3: no-op watchdog disarm — vote_accepted calls it after send.
+  clearVoteAck: () => {},
   setFieldInvalid(input, invalid) {
     if (!input) return
     if (invalid) {

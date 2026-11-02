@@ -13,6 +13,10 @@ export const t = {
     // because both formateur and stagiaire bundles reach for it (F9).
     anonymous: 'Anonyme',
     unexpectedError: 'Une erreur inattendue est survenue',
+    // Shared by both bundles: surfaced when a WS send fails or no client
+    // exists (F24). The stagiaire namespace keeps its own alias for its
+    // pre-existing references.
+    connectionError: 'Erreur de connexion',
     sessionError: 'Session interrompue — rechargez la page si le problème persiste',
     // PWA toasts (pwa.js). Inlined in the code before F9; now centralised
     // so a wording change is a one-line edit (F9).
@@ -31,6 +35,7 @@ export const t = {
     validateVote: 'Valider mon vote',
     modifyVote: 'Modifier mon vote',
     voteRecorded: 'Vote enregistré !',
+    sending: 'Envoi...',
     voteClosed: 'Le vote est terminé',
     waiting: 'En attente du prochain vote...',
     hello: 'Bonjour',
@@ -44,7 +49,7 @@ export const t = {
     nameTooLong: 'Le prénom est trop long (maximum 16 caractères)',
     nameUsed: 'Ce nom est déjà utilisé',
     codeRequired: 'Le code session est requis',
-    invalidCode: 'Le code doit contenir 3 lettres',
+    invalidCode: 'Le code doit contenir 3 ou 4 lettres',
     connectionError: 'Erreur de connexion',
     // F25: shown when the WS client has permanently given up; the
     // stagiaire should reload to recover.
@@ -104,7 +109,9 @@ export const t = {
     gamePegWhiteDesc: 'bonne couleur, mauvaise position',
     gameRulesOk: 'OK',
     gameLevelProgressTitle: (toNext, level) => `Plus que ${toNext} pts → Niveau ${level}`,
-    gameLevelMax: 'Niveau maximum'
+    gameLevelUp: (n) => `Niveau ${n} débloqué !`,
+    gameLevelMax: 'Niveau maximum',
+    gameSecretCodeWas: 'Le code était'
   },
   formateur: {
     // From frontend-formateur main.js

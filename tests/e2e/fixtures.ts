@@ -2,7 +2,7 @@ const SESSION_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXY';
 
 export function generateSessionCode(): string {
   let code = '';
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     code += SESSION_ALPHABET[Math.floor(Math.random() * SESSION_ALPHABET.length)];
   }
   return code;

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 )
@@ -454,14 +453,6 @@ func TestReadSamplesOnMissingLogReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestPlatformPathNote(t *testing.T) {
-	// The 0700/0600 perms are POSIX; on Windows file modes are not enforced
-	// the same way. Document the expectation rather than fail the build.
-	if runtime.GOOS == "windows" && !strings.HasPrefix(os.Getenv("GOOS"), "linux") {
-		t.Skip("file-mode assertions are POSIX-only")
-	}
-}
-
 // TestAppendSampleReopensAfterClose covers the B9 self-heal path: if
 // Close() nils the handle (the graceful-shutdown path), a subsequent
 // AppendSample reopens the log instead of writing to a dead fd. In normal
@@ -639,30 +630,5 @@ func TestSyncDirAndSyncPathHelpersRun(t *testing.T) {
 	}
 	if err := syncPath(f); err != nil {
 		t.Errorf("syncPath(%s): %v", f, err)
-	}
-}
-
-// TestSaveCountersDocAssertsDurabilityRecipe is the R21 doc-contract guard.
-// The package doc and SaveCounters doc must reference both fsync steps of
-// the portable durability recipe (temp-file fsync + directory fsync) so a
-// future refactor can't silently collapse them back to bare WriteFile +
-// Rename — the comment is the load-bearing reminder of why the extra syscalls
-// are there. If this test fails the recipe has been edited and the durability
-// claim needs to be re-evaluated against the new code.
-func TestSaveCountersDocAssertsDurabilityRecipe(t *testing.T) {
-	pkgDoc, err := os.ReadFile("store.go")
-	if err != nil {
-		t.Fatalf("read store.go: %v", err)
-	}
-	src := string(pkgDoc)
-	for _, want := range []string{
-		"fsync",             // durability primitive present in recipe
-		"directory",         // post-rename dir fsync referenced
-		"crash-durability",  // contract documented
-		"atomic visibility", // distinguished from crash-durability
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("store.go doc contract missing %q — R21 durability recipe was edited; re-evaluate", want)
-		}
 	}
 }

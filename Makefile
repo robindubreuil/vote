@@ -69,11 +69,11 @@ uninstall:
 	@echo "$(COLOR_BOLD)$(COLOR_YELLOW)Uninstalling $(BINARY_NAME)...$(COLOR_RESET)"
 	rm -f /usr/local/bin/$(BINARY_NAME)
 
-## test: Run tests
+## test: Run unit tests (integration excluded — see test-integration)
 .PHONY: test
 test:
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)Running tests...$(COLOR_RESET)"
-	cd $(BINARY_PATH) && $(GOTEST) -v -race -cover ./...
+	cd $(BINARY_PATH) && $(GOTEST) -v -race -cover $$(go list ./... | grep -v /integration)
 
 ## test-short: Run short tests only
 .PHONY: test-short

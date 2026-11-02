@@ -37,7 +37,9 @@ export default defineConfig({
         },
         {
           command: 'cd ../../frontend && npx vite --port 5173',
-          url: 'http://localhost:5173',
+          // MPA: no index.html at the root (vite would 404 '/') — poll a
+          // real page or readiness never succeeds.
+          url: 'http://localhost:5173/formateur/',
           reuseExistingServer: !process.env.CI,
           timeout: 30 * 1000,
         },

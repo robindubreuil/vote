@@ -11,10 +11,18 @@ const (
 	MaxNameLength  = 16
 	MaxLabelLength = 12 // Matches frontend maxlength for UI brevity
 
-	// Session codes are 3 uppercase letters drawn from a disambiguation-safe
+	// Session codes are uppercase letters drawn from a disambiguation-safe
 	// alphabet (no I/O/Z, which are easily confused with 1/0/2 on a phone
 	// screen or read aloud in a classroom).
-	SessionCodeLength = 3
+	//
+	// S15: codes are 4 characters. The old 3-char space (23^3 = 12,167
+	// codes) was enumerable within the join-rate backoff budget (~20
+	// minutes of scripted guessing); 4 chars multiplies the space by 23
+	// (≈280k) at negligible typing cost. Validation still accepts the
+	// legacy 3-char length so pre-upgrade sessions and pinned test
+	// fixtures keep working — all freshly generated codes are 4 chars,
+	// which is what matters for enumeration resistance.
+	SessionCodeLength = 4
 	SessionAlphabet   = "ABCDEFGHJKLMNPQRSTUVWXY"
 
 	// Server-generated identifiers
@@ -25,7 +33,8 @@ var (
 	// sessionCodeRegex strictly enforces membership in SessionAlphabet so that
 	// typos involving excluded letters (I, O, Z) are rejected with a clear
 	// "invalid code" rather than producing a "session not found" downstream.
-	sessionCodeRegex = regexp.MustCompile(`^[ABCDEFGHJKLMNPQRSTUVWXY]{3}$`)
+	// {3,4}: 4 is the generation length (S15); 3 keeps legacy codes valid.
+	sessionCodeRegex = regexp.MustCompile(`^[ABCDEFGHJKLMNPQRSTUVWXY]{3,4}$`)
 	stagiaireIDRegex = regexp.MustCompile(stagiaireIDPattern)
 )
 

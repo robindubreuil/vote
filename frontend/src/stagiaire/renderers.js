@@ -238,11 +238,11 @@ function renderJoinHTML() {
             id="sessionCode"
             data-testid="session-code-input"
             class="session-input"
-            placeholder="ABC"
-            maxlength="3"
+            placeholder="ABCD"
+            maxlength="4"
             inputmode="text"
             autocapitalize="characters"
-            pattern="[A-HJ-NP-Ya-hj-np-y]{3}"
+            pattern="[A-HJ-NP-Ya-hj-np-y]{3,4}"
             value="${escapeHtml(state.sessionCode)}"
             autocomplete="off"
             aria-describedby="join-error"
@@ -373,7 +373,7 @@ function renderSingleChoiceHTML(activeColors) {
           data-testid="vote-btn-${color.id}"
           role="radio"
           aria-checked="${selected}"
-          aria-label="${label}"
+          aria-label="${escapeHtml(label)}"
           tabindex="${tabIndex}"
           ${!isConnected ? 'disabled' : ''}
         >
@@ -477,7 +477,7 @@ function renderClosedHTML() {
           return `
         <div class="score-feedback ${positive ? 'positive' : 'negative'}">
           <div class="score-feedback-vote">${scoreText} pts</div>
-          <div class="score-feedback-total">${t.stagiaire.totalScoreLabel || 'Total'} : ${state.totalScore} pts</div>
+          <div class="score-feedback-total">${t.stagiaire.totalScoreLabel} : ${state.totalScore} pts</div>
           <div class="score-feedback-rank">${state.rank}${rankSuffix} / ${state.totalStagiaires}</div>
         </div>
       `

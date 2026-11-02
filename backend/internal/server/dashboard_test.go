@@ -32,7 +32,7 @@ func newTestServer(t *testing.T, secret string) *Server {
 func TestDashboardDisabledWhenNoSecret(t *testing.T) {
 	srv := newTestServer(t, "")
 
-	for _, path := range []string{"/dashboard", "/dashboard/login", "/dashboard/logout"} {
+	for _, path := range []string{"/dashboard", "/dashboard/login", "/dashboard/logout", "/dashboard/assets/app.js"} {
 		w := httptest.NewRecorder()
 		method := "GET"
 		if path == "/dashboard/logout" {
@@ -58,6 +58,9 @@ func TestDashboardLoginGetReturnsForm(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "name=\"password\"") {
 		t.Error("login page should contain a password field")
 	}
+	if strings.Contains(w.Body.String(), "Secret incorrect.") {
+		t.Error("plain login page must not show the wrong-secret error banner")
+	}
 }
 
 func TestDashboardLoginWrongPassword(t *testing.T) {
@@ -69,6 +72,68 @@ func TestDashboardLoginWrongPassword(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for wrong password, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Secret incorrect.") {
+		t.Error("failed login page should show the wrong-secret error banner")
+	}
+}
+
+// TestDashboardAssetsServedWithoutAuth pins the asset-serving contract: the
+// files under /dashboard/assets are inert (no data, no secrets) and thus
+// deliberately served without auth, while the shell page and data endpoints
+// keep theirs (covered by TestDashboardRequiresAuth).
+func TestDashboardAssetsServedWithoutAuth(t *testing.T) {
+	srv := newTestServer(t, "s3cr3t")
+	for path, ctype := range map[string]string{
+		"/dashboard/assets/app.js":    "text/javascript; charset=utf-8",
+		"/dashboard/assets/style.css": "text/css; charset=utf-8",
+		"/dashboard/assets/login.css": "text/css; charset=utf-8",
+	} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		srv.router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: expected 200 without auth, got %d", path, w.Code)
+			continue
+		}
+		if got := w.Header().Get("Content-Type"); got != ctype {
+			t.Errorf("%s: expected Content-Type %q, got %q", path, ctype, got)
+		}
+		if w.Body.Len() == 0 {
+			t.Errorf("%s: empty body", path)
+		}
+	}
+}
+
+// TestDashboardStrictSecurityHeaders pins the strict CSP for the dashboard
+// group — in particular that 'unsafe-inline' is gone from script-src (and
+// everywhere else) now that scripts/styles are external same-origin files —
+// and that the other security headers survived the change.
+func TestDashboardStrictSecurityHeaders(t *testing.T) {
+	srv := newTestServer(t, "s3cr3t")
+
+	// The login page needs no auth, which makes it the easiest probe.
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/dashboard/login", nil)
+	srv.router.ServeHTTP(w, req)
+
+	const wantCSP = "default-src 'none'; script-src 'self'; style-src 'self'; " +
+		"img-src 'self' data:; connect-src 'self'; base-uri 'none'; " +
+		"frame-ancestors 'none'; form-action 'self'"
+	if got := w.Header().Get("Content-Security-Policy"); got != wantCSP {
+		t.Errorf("CSP mismatch:\n got: %s\nwant: %s", got, wantCSP)
+	}
+	if strings.Contains(w.Header().Get("Content-Security-Policy"), "unsafe-inline") {
+		t.Error("CSP must not contain 'unsafe-inline'")
+	}
+	for header, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	} {
+		if got := w.Header().Get(header); got != want {
+			t.Errorf("%s: expected %q, got %q", header, want, got)
+		}
 	}
 }
 
@@ -156,6 +221,24 @@ func TestDashboardAccessibleWithValidCookie(t *testing.T) {
 	// CSRF vector and the route is POST-only).
 	if !strings.Contains(body, `method="POST" action="/dashboard/logout"`) {
 		t.Error("dashboard must contain a POST logout form")
+	}
+	// The shell must load the external asset files (strict CSP, no inline
+	// script/style) and must not carry any inline style block or event
+	// handler that would require 'unsafe-inline'.
+	if !strings.Contains(body, `src="/dashboard/assets/app.js"`) {
+		t.Error("dashboard shell must load /dashboard/assets/app.js")
+	}
+	if !strings.Contains(body, `href="/dashboard/assets/style.css"`) {
+		t.Error("dashboard shell must load /dashboard/assets/style.css")
+	}
+	if strings.Contains(body, "<style") {
+		t.Error("dashboard shell must not contain an inline <style> block")
+	}
+	if strings.Contains(body, "style=") {
+		t.Error("dashboard shell must not contain style=\"\" attributes")
+	}
+	if strings.Contains(body, "onload=") || strings.Contains(body, "onclick=") {
+		t.Error("dashboard shell must not contain inline event handlers")
 	}
 }
 

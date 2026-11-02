@@ -17,7 +17,6 @@ const (
 	MaxBackoffMs             = 300000 // 5 minutes max backoff
 	BackoffJitter            = 0.25   // ±25% jitter to prevent timing attacks
 	MaxMessagesPerSecond     = 10
-	MaxBurstMessages         = 20
 	RateLimitCleanupInterval = 5 * time.Minute
 	FailedAttemptWindow      = 10 * time.Minute
 
@@ -44,10 +43,16 @@ type FailedJoinAttempt struct {
 	LastBackoffUntil time.Time
 }
 
+// MessageRateLimiter enforces a true sliding one-second window (R29):
+// at most MaxMessagesPerSecond frames from one client in ANY one-second
+// span. It replaces the old fixed-window + burst hybrid, which let a
+// client pacing just over 1/MaxMessagesPerSecond sustain
+// MaxBurstMessages (2× the advertised rate) forever by straddling
+// window boundaries. The slice holds at most MaxMessagesPerSecond
+// timestamps, so pruning is bounded and allocation-free in steady
+// state.
 type MessageRateLimiter struct {
-	lastMessage  time.Time
-	messageCount int
-	windowStart  time.Time
+	timestamps []time.Time
 }
 
 type Security struct {
@@ -309,30 +314,27 @@ func (s *Security) CheckMessageRate(clientID string) bool {
 
 	if !exists {
 		s.messageRates[clientID] = &MessageRateLimiter{
-			lastMessage:  now,
-			messageCount: 1,
-			windowStart:  now,
+			timestamps: []time.Time{now},
 		}
 		return true
 	}
 
-	if now.Sub(limiter.windowStart) >= time.Second {
-		limiter.windowStart = now
-		limiter.messageCount = 1
-		limiter.lastMessage = now
-		return true
+	// Prune timestamps older than the window in place so the count
+	// reflects only the trailing second — a burst cannot straddle a
+	// window boundary to double its budget.
+	fresh := limiter.timestamps[:0]
+	for _, ts := range limiter.timestamps {
+		if now.Sub(ts) < time.Second {
+			fresh = append(fresh, ts)
+		}
 	}
 
-	if limiter.messageCount >= MaxBurstMessages {
+	if len(fresh) >= MaxMessagesPerSecond {
+		limiter.timestamps = fresh
 		return false
 	}
-
-	if now.Sub(limiter.lastMessage) < time.Second/MaxMessagesPerSecond && limiter.messageCount >= MaxMessagesPerSecond {
-		return false
-	}
-
-	limiter.messageCount++
-	limiter.lastMessage = now
+	fresh = append(fresh, now)
+	limiter.timestamps = fresh
 	return true
 }
 
@@ -370,7 +372,16 @@ func (s *Security) cleanup() {
 	}
 
 	for clientID, limiter := range s.messageRates {
-		if now.Sub(limiter.lastMessage) > time.Minute {
+		// Prune idle buckets: the sliding window only ever retains the
+		// last second of activity, so a client silent for a minute is
+		// long past recovery.
+		last := time.Time{}
+		for _, ts := range limiter.timestamps {
+			if ts.After(last) {
+				last = ts
+			}
+		}
+		if now.Sub(last) > time.Minute {
 			delete(s.messageRates, clientID)
 		}
 	}

@@ -9,18 +9,20 @@ func TestIsValidSessionCode(t *testing.T) {
 		code string
 		want bool
 	}{
-		{"ABC", true},
-		{"KQR", true},
+		{"ABC", true},  // legacy 3-char length still accepted (S15)
+		{"KQR", true},  // legacy 3-char length still accepted (S15)
+		{"ABCD", true}, // generation length since S15
+		{"KQRT", true}, // generation length since S15
 		{"XYZ", false}, // Z is excluded from the alphabet
 		{"IOA", false}, // I and O are excluded
 		{"", false},
-		{"AB", false},   // too short
-		{"ABCD", false}, // too long
-		{"ab", false},   // lowercase, too short
-		{"abc", false},  // lowercase
-		{"AB1", false},  // digit
-		{"A C", false},  // whitespace
-		{"A.C", false},  // punctuation
+		{"AB", false},    // too short
+		{"ABCDE", false}, // too long
+		{"ab", false},    // lowercase, too short
+		{"abc", false},   // lowercase
+		{"AB1", false},   // digit
+		{"A C", false},   // whitespace
+		{"A.C", false},   // punctuation
 	}
 
 	for _, tt := range tests {

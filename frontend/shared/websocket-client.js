@@ -26,6 +26,16 @@ export class VoteClient {
       // every client to permanent-close on any outage longer than a
       // coffee break.
       maxReconnectAttempts: 2500,
+      // H2 heartbeat: the browser answers the server's protocol-level
+      // WS pings transparently, so JS never sees them — a half-open
+      // TCP connection (laptop lid, AP roam) keeps readyState === OPEN
+      // and the UI showing "connected" while votes vanish. The client
+      // therefore sends an app-level {type:'ping'} (server replies
+      // {type:'pong'}) and treats silence beyond staleTimeout as a
+      // dead connection, forcing the reconnect path the browser
+      // cannot trigger on its own.
+      heartbeatInterval: 15000,
+      staleTimeout: 25000,
       ...options
     }
 
@@ -36,6 +46,8 @@ export class VoteClient {
     this.isPermanentlyClosed = false
     this.isConnecting = false
     this.connectionId = 0 // Track connection attempts to prevent race conditions
+    this.heartbeatId = null
+    this.lastMessageAt = 0
 
     // navigator.onLine is `undefined` in non-browser environments (SSR,
     // test runs without a DOM). Treat that as "always online" so we don't
@@ -130,6 +142,7 @@ export class VoteClient {
       this.ws.close()
       this.ws = null
     }
+    this._stopHeartbeat()
 
     if (this.reconnectTimeoutId) {
       clearTimeout(this.reconnectTimeoutId)
@@ -144,6 +157,7 @@ export class VoteClient {
       this.ws.onopen = () => {
         this.isConnecting = false
         this.reconnectAttempts = 0
+        this._startHeartbeat()
         this.options.onStatusChange(true)
         this.options.onOpen()
       }
@@ -151,6 +165,10 @@ export class VoteClient {
       const currentConnectionId = this.connectionId
 
       this.ws.onmessage = (event) => {
+        // Any inbound frame — pong, broadcast, error — proves the
+        // connection is alive; this is the liveness signal for the
+        // heartbeat watchdog.
+        this.lastMessageAt = Date.now()
         try {
           const msg = JSON.parse(event.data)
           this.options.onMessage(msg)
@@ -168,6 +186,7 @@ export class VoteClient {
         }
 
         this.isConnecting = false
+        this._stopHeartbeat()
         this.options.onStatusChange(false)
 
         if (!this.isExplicitlyClosed) {
@@ -228,19 +247,68 @@ export class VoteClient {
     const jittered = base * (0.5 + Math.random() * 0.5)
     const delay = Math.min(jittered, this.options.maxReconnectDelay)
 
-    this.reconnectAttempts++
-
     // If the browser is offline, don't schedule — the `online` event will
-    // trigger an immediate retry via _onOnline.
+    // trigger an immediate retry via _onOnline. Bail out BEFORE burning a
+    // reconnect attempt: each onclose while offline is one drop, not one
+    // failed retry.
     if (!this.online) {
       return
     }
+
+    this.reconnectAttempts++
 
     this.reconnectTimeoutId = setTimeout(() => {
       this.reconnectTimeoutId = null
       this.isConnecting = false
       this._doConnect()
     }, delay)
+  }
+
+  /**
+   * H2: app-level heartbeat. Ticks while the socket is OPEN:
+   *  - sends {type:'ping'} (server replies {type:'pong'});
+   *  - if no inbound message has arrived within staleTimeout, the
+   *    connection is half-open — the browser cannot know the peer is
+   *    dead and will keep readyState at OPEN indefinitely, so we detach
+   *    the dead socket's handlers, close it, and drive the normal
+   *    reconnect path ourselves.
+   */
+  _startHeartbeat() {
+    this._stopHeartbeat()
+    this.lastMessageAt = Date.now()
+    this.heartbeatId = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        return
+      }
+      if (Date.now() - this.lastMessageAt > this.options.staleTimeout) {
+        console.warn('WebSocket stale for over ' + this.options.staleTimeout + 'ms — forcing reconnect')
+        const dead = this.ws
+        // Neutralise the dead socket so its (eventual) close event
+        // cannot double-fire status changes or reconnects.
+        dead.onopen = null
+        dead.onmessage = null
+        dead.onerror = null
+        dead.onclose = null
+        try {
+          dead.close()
+        } catch {
+          /* already closing — the point was to abandon it */
+        }
+        this.ws = null
+        this.options.onStatusChange(false)
+        this.options.onClose({ code: 1006, reason: 'heartbeat timeout' })
+        this.scheduleReconnect()
+        return
+      }
+      this.send({ type: 'ping' })
+    }, this.options.heartbeatInterval)
+  }
+
+  _stopHeartbeat() {
+    if (this.heartbeatId) {
+      clearInterval(this.heartbeatId)
+      this.heartbeatId = null
+    }
   }
 
   send(data) {
@@ -269,6 +337,7 @@ export class VoteClient {
   close() {
     this.isExplicitlyClosed = true
     this.isConnecting = false
+    this._stopHeartbeat()
     if (this.reconnectTimeoutId) {
       clearTimeout(this.reconnectTimeoutId)
       this.reconnectTimeoutId = null

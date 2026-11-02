@@ -72,7 +72,7 @@ describe('formateur renderers — idempotency snapshots', () => {
       renderLandingPage(document.getElementById('app'))
       expect(document.getElementById('createSessionBtn')).not.toBeNull()
       expect(document.getElementById('joinSessionInput')).not.toBeNull()
-      expect(document.getElementById('joinSessionInput').getAttribute('maxlength')).toBe('3')
+      expect(document.getElementById('joinSessionInput').getAttribute('maxlength')).toBe('4')
     })
   })
 

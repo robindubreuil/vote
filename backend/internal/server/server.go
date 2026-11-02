@@ -263,15 +263,18 @@ func (s *Server) setupRoutes() {
 	// the routes do not exist at all when the feature is disabled.
 	if s.auth.enabled() {
 		dash := s.router.Group("/dashboard").Use(func(c *gin.Context) {
-			c.Header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+			c.Header("Content-Security-Policy", dashboardCSP)
 			c.Header("X-Content-Type-Options", "nosniff")
 			c.Header("X-Frame-Options", "DENY")
 			c.Header("Referrer-Policy", "no-referrer")
 			c.Next()
 		})
-		dash.GET("", s.requireAuth(), func(c *gin.Context) {
-			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(dashboardHTML))
-		})
+		dash.GET("", s.requireAuth(), s.handleDashboardIndex)
+		// Static assets are inert (no data, no secrets) and served without
+		// auth; the shell page and data endpoints keep theirs.
+		dash.GET("/assets/app.js", s.serveDashboardAsset("app.js", "text/javascript; charset=utf-8"))
+		dash.GET("/assets/style.css", s.serveDashboardAsset("style.css", "text/css; charset=utf-8"))
+		dash.GET("/assets/login.css", s.serveDashboardAsset("login.css", "text/css; charset=utf-8"))
 		dash.GET("/login", s.handleDashboardLogin)
 		dash.POST("/login", s.handleDashboardLogin)
 		dash.POST("/logout", s.handleDashboardLogout)

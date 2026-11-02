@@ -57,7 +57,8 @@ export function validateSessionCode(code) {
 
   const normalized = CONSTANTS.SESSION_CODE_NORMALIZE(code)
   if (!CONSTANTS.SESSION_CODE_REGEX.test(normalized)) {
-    return `Le code doit contenir ${CONSTANTS.SESSION_CODE_LENGTH} lettres`
+    // S15: codes are 4 chars; legacy 3-char codes stay valid ({3,4}).
+    return 'Le code doit contenir 3 ou 4 lettres'
   }
 
   return null

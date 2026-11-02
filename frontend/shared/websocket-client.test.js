@@ -664,4 +664,68 @@ describe('VoteClient', () => {
       removeSpy.mockRestore()
     })
   })
+
+  describe('heartbeat / staleness watchdog (H2)', () => {
+    const HEARTBEAT = 15000
+    const STALE = 25000
+
+    function openClient() {
+      const onStatusChange = vi.fn()
+      const client = new VoteClient('ws://x', { onStatusChange })
+      client.connect()
+      const ws = MockWebSocket.instances.at(-1)
+      ws.fireOpen()
+      return { client, ws, onStatusChange }
+    }
+
+    it('sends app-level pings while the connection is open', () => {
+      const { client, ws } = openClient()
+      // Each tick sends a ping; the pong reply resets the staleness
+      // clock, so the connection keeps pinging instead of being
+      // culled by the watchdog after staleTimeout.
+      for (let i = 0; i < 3; i++) {
+        vi.advanceTimersByTime(HEARTBEAT)
+        ws.fireMessage({ type: 'pong' })
+      }
+      const pings = ws.sent.filter((d) => d === JSON.stringify({ type: 'ping' }))
+      expect(pings.length).toBe(3)
+      client.close()
+    })
+
+    it('stops pinging after close()', () => {
+      const { client, ws } = openClient()
+      client.close()
+      ws.sent.length = 0
+      vi.advanceTimersByTime(HEARTBEAT * 10)
+      expect(ws.sent.length).toBe(0)
+    })
+
+    it('forces a reconnect when no message arrives within staleTimeout (half-open socket)', () => {
+      const { client, ws, onStatusChange } = openClient()
+      // Silence past the staleness threshold: the watchdog must detach
+      // the dead socket, report disconnection, and schedule a
+      // reconnect WITHOUT waiting for the browser's onclose (which a
+      // half-open TCP peer never sends).
+      vi.advanceTimersByTime(STALE + HEARTBEAT)
+      expect(ws.closeCallCount).toBe(1)
+      expect(ws.onclose).toBeNull()
+      expect(onStatusChange).toHaveBeenLastCalledWith(false)
+      // Reconnect timer (pinned jitter → initial 2000ms × 2^0 × 0.5 = 1000ms)
+      vi.advanceTimersByTime(1000)
+      expect(MockWebSocket.instances.length).toBe(2)
+      client.close()
+    })
+
+    it('any inbound message resets the staleness clock', () => {
+      const { client, ws } = openClient()
+      // Keep the connection alive with pongs just under the threshold.
+      for (let i = 0; i < 5; i++) {
+        vi.advanceTimersByTime(HEARTBEAT)
+        ws.fireMessage({ type: 'pong' })
+      }
+      expect(ws.closeCallCount).toBe(0)
+      expect(ws.readyState).toBe(1)
+      client.close()
+    })
+  })
 })

@@ -1,5 +1,6 @@
 import { COLORS, escapeHtml, sanitizeColor } from '@shared/colors.js'
 import { icons } from '@shared/icons.js'
+import { t } from '@shared/strings.js'
 import { state } from './state.js'
 import { getColorCounts } from './vote-data.js'
 import { renderCombinationsHTML, renderStagiairesVotesHTML } from './renderers.js'
@@ -125,7 +126,7 @@ export function updateVoteResults() {
   // Update vote count
   const voteCountEl = document.querySelector('.vote-count')
   if (voteCountEl) {
-    voteCountEl.innerHTML = `${icons.chart(' class="icon icon-sm"')} ${voteCount} / ${state.connectedCount} votes`
+    voteCountEl.innerHTML = `${icons.chart(' class="icon icon-sm"')} ${voteCount} / ${state.connectedCount} ${t.formateur.votes}`
   }
 
   const activeColors = COLORS.filter((c) => state.selectedColors.has(c.id))

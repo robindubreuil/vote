@@ -64,22 +64,26 @@ describe('validateName — trim-first (F18)', () => {
 })
 
 describe('validateSessionCode', () => {
-  it('accepts a valid 3-letter uppercase code', () => {
+  it('accepts a valid 4-letter uppercase code', () => {
+    expect(validateSessionCode('ABCD')).toBeNull()
+  })
+
+  it('accepts a legacy 3-letter code (S15: {3,4})', () => {
     expect(validateSessionCode('ABC')).toBeNull()
   })
 
   it('accepts lowercase (frontend regex is case-insensitive; caller normalises)', () => {
-    expect(validateSessionCode('abc')).toBeNull()
+    expect(validateSessionCode('abcd')).toBeNull()
   })
 
   it('rejects codes containing disambiguation-risky letters (I, O, Z)', () => {
-    expect(validateSessionCode('IOA')).toMatch(/Le code doit contenir 3 lettres/)
-    expect(validateSessionCode('XYZ')).toMatch(/Le code doit contenir 3 lettres/)
+    expect(validateSessionCode('IOA')).toMatch(/Le code doit contenir 3 ou 4 lettres/)
+    expect(validateSessionCode('XYZ')).toMatch(/Le code doit contenir 3 ou 4 lettres/)
   })
 
   it('rejects too-short / too-long codes', () => {
-    expect(validateSessionCode('AB')).toMatch(/Le code doit contenir 3 lettres/)
-    expect(validateSessionCode('ABCD')).toMatch(/Le code doit contenir 3 lettres/)
+    expect(validateSessionCode('AB')).toMatch(/Le code doit contenir 3 ou 4 lettres/)
+    expect(validateSessionCode('ABCDE')).toMatch(/Le code doit contenir 3 ou 4 lettres/)
   })
 
   it('rejects empty input', () => {
